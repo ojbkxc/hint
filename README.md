@@ -88,6 +88,17 @@ cargo test -p hint-stt --no-default-features
 本机实测即由此失败。CI 使用 MSVC 工具链（含 `ilammy/msvc-dev-cmd`），不受影响。
 默认引擎的完整测试与打包请以 CI 的 MSVC 结果为准。
 
+## 产物
+
+GitHub Actions 每次构建会在 run 页面提供 artifact：
+
+| 文件 | 体积（实测） |
+|---|---|
+| `hint.exe` | 约 27 MB（含静态链接的 sherpa-onnx + onnxruntime） |
+| `hint_0.1.0_x64-setup.exe`（NSIS） | 约 7.8 MB |
+
+安装包体积小于 exe 是因为 NSIS 使用 LZMA 压缩。语音模型不在包内，首次使用时按需下载约 241 MB。
+
 ## 隐私
 
 - 简历、项目资料、会话记录只存在本机。
