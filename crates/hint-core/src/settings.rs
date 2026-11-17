@@ -48,6 +48,12 @@ pub struct Settings {
     pub projects: String,
     pub answer_style: AnswerStyle,
     pub trigger_mode: TriggerMode,
+    /// 麦克风设备 ID；空串表示系统默认输入设备。
+    #[serde(default)]
+    pub mic_device: String,
+    /// 系统声输出设备 ID；空串表示系统默认播放设备。
+    #[serde(default)]
+    pub output_device: String,
 }
 
 impl Default for Settings {
@@ -60,25 +66,50 @@ impl Default for Settings {
             projects: String::new(),
             answer_style: AnswerStyle::Concise,
             trigger_mode: TriggerMode::Auto,
+            mic_device: String::new(),
+            output_device: String::new(),
         }
     }
 }
 
 impl Settings {
-    /// 读取配置；文件不存在或损坏时回退到默认值。
+    /// 读取配置；文件不存在时回退默认值。
+    ///
+    /// 解析失败说明文件已损坏（例如上次写入中途断电）：把坏文件重命名为
+    /// `settings.json.bad` 留证，再回退默认值，避免下次保存时静默覆盖用户资料。
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(_) => return Self::default(),
+        };
+        match serde_json::from_str(&raw) {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "配置文件损坏，已备份并回退默认值");
+                let _ = std::fs::rename(path, path.with_extension("json.bad"));
+                Self::default()
+            }
+        }
     }
 
+    /// 原子写入：先写临时文件，再替换目标，避免中途崩溃留下半截 JSON。
+    ///
+    /// Windows 的 `rename` 不能覆盖已存在的目标，因此失败时先删除再重试；
+    /// 这段时间窗口极小，且临时文件内容始终完整。
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, serde_json::to_string_pretty(self)?)?;
+        match std::fs::rename(&temp, path) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let _ = std::fs::remove_file(path);
+                std::fs::rename(&temp, path)?;
+                Ok(())
+            }
+        }
     }
 
     /// 组装系统提示词。简历与项目资料为空时不注入对应段落。
@@ -87,9 +118,7 @@ impl Settings {
             AnswerStyle::Concise => {
                 "用候选人第一人称口语化回答：先给结论，再给 2-4 个要点，总长不超过 150 字，不要复述问题。"
             }
-            AnswerStyle::Outline => {
-                "用候选人第一人称给出 5-7 条要点提纲，每条一行，不要展开长篇。"
-            }
+            AnswerStyle::Outline => "用候选人第一人称给出 5-7 条要点提纲，每条一行，不要展开长篇。",
         };
 
         let mut prompt = format!(

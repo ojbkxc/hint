@@ -1,0 +1,46 @@
+import type { LevelsState } from "./types";
+
+type Props = {
+  levels: LevelsState;
+  model: string;
+  ttftMs: number | null;
+  streaming: boolean;
+};
+
+export default function StatusBar({ levels, model, ttftMs, streaming }: Props) {
+  return (
+    <footer className="overlay-footer">
+      <span className="footer-group">
+        <LevelBar label="麦克风" value={levels.mic} tone="mic" />
+        <LevelBar label="系统声" value={levels.system} tone="system" />
+      </span>
+      <span className="footer-group">
+        <span className="footer-item" title={model || "尚未连接模型"}>
+          {model || "未连接模型"}
+        </span>
+        <span className="footer-item" title="首字延迟">
+          {ttftText(ttftMs, streaming)}
+        </span>
+      </span>
+    </footer>
+  );
+}
+
+function LevelBar({ label, value, tone }: { label: string; value: number; tone: "mic" | "system" }) {
+  const percent = Math.round(Math.min(1, Math.max(0, value)) * 100);
+  return (
+    <span className={`level level-${tone}`} title={`${label}电平 ${percent}%`}>
+      <span className="level-label">{label}</span>
+      <span className="level-track">
+        <span className="level-fill" style={{ width: `${Math.max(3, percent)}%` }} />
+      </span>
+    </span>
+  );
+}
+
+function ttftText(ttftMs: number | null, streaming: boolean): string {
+  if (ttftMs !== null) {
+    return `首字 ${(ttftMs / 1000).toFixed(1)}s`;
+  }
+  return streaming ? "首字 …" : "首字 —";
+}

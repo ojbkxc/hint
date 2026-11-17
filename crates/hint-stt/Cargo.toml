@@ -1,0 +1,31 @@
+[package]
+name = "hint-stt"
+version = "0.1.0"
+edition = "2024"
+description = "hint 的本地语音识别：模型下载、sidecar worker、SenseVoice 推理"
+license = "MIT"
+
+[features]
+# 默认编译真实推理引擎。没有 C/C++ 工具链的机器可用
+# `cargo check -p hint-stt --no-default-features` 绕过 sherpa-onnx 的构建脚本。
+default = ["engine"]
+engine = ["dep:sherpa-onnx"]
+
+[dependencies]
+sherpa-onnx = { version = "2.0.1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+# 下载器与 worker 全部走同步阻塞 IO。`ureq` 使用系统 TLS（Windows 上是 schannel），
+# 不需要 C 工具链；它也是 sherpa-onnx-sys 的构建依赖，版本统一。
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+thiserror = "2"
+tracing = "0.1"
+subtle = "2"
+getrandom = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

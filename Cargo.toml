@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/hint-core", "src-tauri"]
+members = [
+    "crates/hint-core",
+    "crates/hint-audio",
+    "crates/hint-stt",
+    "crates/hint-store",
+    "src-tauri",
+]
 
 [profile.release]
 codegen-units = 1

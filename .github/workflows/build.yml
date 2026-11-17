@@ -20,6 +20,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: 配置 MSVC 环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -30,8 +35,26 @@ jobs:
       - name: TypeScript 类型检查
         run: npx tsc --noEmit
 
+      - name: 前端生产构建
+        run: npm run build
+
       - name: 核心库检查
-        run: cargo check -p hint-core
+        run: cargo check -p hint-core -p hint-store -p hint-audio
+
+      - name: 核心库测试
+        run: cargo test -p hint-core -p hint-store -p hint-audio
+
+      - name: 语音平台无关部分检查
+        run: cargo check -p hint-stt --no-default-features
+
+      - name: 语音平台无关部分测试
+        run: cargo test -p hint-stt --no-default-features
+
+      - name: 语音推理引擎编译（sherpa-onnx 预编译库，需联网）
+        run: cargo check -p hint-stt
+
+      - name: Tauri 集成编译检查
+        run: cargo check -p hint --bins
 
   build:
     name: 构建 Windows 安装包
@@ -46,6 +69,11 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: 配置 MSVC 环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - uses: Swatinem/rust-cache@v2
         with:

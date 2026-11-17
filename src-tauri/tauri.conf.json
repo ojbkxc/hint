@@ -35,6 +35,19 @@
         "shadow": false,
         "focus": false,
         "visible": false
+      },
+      {
+        "label": "capture",
+        "title": "hint capture",
+        "width": 1920,
+        "height": 1080,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": true,
+        "visible": false
       }
     ],
     "security": {

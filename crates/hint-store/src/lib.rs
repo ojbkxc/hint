@@ -1,0 +1,1074 @@
+//! 本地会话存储：SQLite。
+//!
+//! 存储面试过程中的转录段落与答案，供复盘页展示和 Markdown 导出。
+//!
+//! 设计要点：
+//! - 不存原始音频，只存文本与延迟指标；
+//! - `segments.start_ms` / `end_ms` 是相对会话开始时刻的毫秒偏移，
+//!   `sessions.started_at` / `ended_at` 是 Unix 毫秒时间戳；
+//! - 表结构通过 `PRAGMA user_version` 做版本化迁移，打开旧库会自动升级；
+//! - 删除会话时依赖外键级联清掉段落与答案（连接创建时开启 `foreign_keys`）。
+//!
+//! 典型用法：
+//! ```no_run
+//! # fn main() -> hint_store::Result<()> {
+//! let store = hint_store::Store::open("hint.db")?;
+//! let session = store.create_session("openai", "deepseek-chat", None)?;
+//! let segment = store.add_segment(
+//!     session,
+//!     hint_store::CHANNEL_SYSTEM,
+//!     0,
+//!     2_400,
+//!     "你能说说这个项目的难点吗？",
+//!     false,
+//! )?;
+//! store.add_answer(
+//!     session,
+//!     Some(segment),
+//!     "难点主要有三点……",
+//!     "deepseek-chat",
+//!     hint_store::AnswerMetrics::default(),
+//! )?;
+//! store.end_session(session)?;
+//! println!("{}", store.export_markdown(session)?);
+//! # Ok(())
+//! # }
+//! ```
+
+use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use chrono::{DateTime, Local};
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
+use thiserror::Error;
+
+/// 通道名：麦克风（候选人本人）。
+pub const CHANNEL_MIC: &str = "mic";
+
+/// 通道名：系统声（面试官）。
+pub const CHANNEL_SYSTEM: &str = "system";
+
+/// 当前 schema 版本。新增表结构变更时追加迁移语句并递增。
+const SCHEMA_V1: &str = r#"
+CREATE TABLE IF NOT EXISTS sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at  INTEGER NOT NULL,
+    ended_at    INTEGER,
+    provider_id TEXT    NOT NULL,
+    model_id    TEXT    NOT NULL,
+    note        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS segments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    channel    TEXT    NOT NULL,
+    start_ms   INTEGER NOT NULL,
+    end_ms     INTEGER NOT NULL,
+    text       TEXT    NOT NULL,
+    is_echo    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id, start_ms);
+
+CREATE TABLE IF NOT EXISTS answers (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id          INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    question_segment_id INTEGER REFERENCES segments(id) ON DELETE SET NULL,
+    text                TEXT    NOT NULL,
+    model_id            TEXT    NOT NULL,
+    ttft_ms             INTEGER,
+    total_ms            INTEGER,
+    token_in            INTEGER,
+    token_out           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_answers_session ON answers(session_id);
+
+CREATE TABLE IF NOT EXISTS profiles (
+    kind       TEXT    NOT NULL,
+    name       TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, name)
+);
+"#;
+
+/// 按顺序执行的迁移脚本，下标即目标版本。
+const MIGRATIONS: &[&str] = &[SCHEMA_V1];
+
+/// 存储层错误。
+#[derive(Debug, Error)]
+pub enum StoreError {
+    #[error("数据库错误：{0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("未找到会话 {0}")]
+    SessionNotFound(i64),
+}
+
+/// 存储层 Result 别名。
+pub type Result<T> = std::result::Result<T, StoreError>;
+
+/// 一次面试会话。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub id: i64,
+    /// Unix 毫秒时间戳。
+    pub started_at: i64,
+    /// Unix 毫秒时间戳；未结束时为 `None`。
+    pub ended_at: Option<i64>,
+    pub provider_id: String,
+    pub model_id: String,
+    pub note: Option<String>,
+}
+
+/// 会话列表项，附带段落与答案条数，供复盘页列表展示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub session: Session,
+    pub segment_count: i64,
+    pub answer_count: i64,
+}
+
+/// 一条转录段落。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub id: i64,
+    pub session_id: i64,
+    pub channel: String,
+    /// 相对会话开始的毫秒偏移。
+    pub start_ms: i64,
+    /// 相对会话开始的毫秒偏移。
+    pub end_ms: i64,
+    pub text: String,
+    pub is_echo: bool,
+}
+
+impl Segment {
+    /// 通道对应的中文标签。
+    pub fn speaker_label(&self) -> &str {
+        channel_label(&self.channel)
+    }
+}
+
+/// 通道名转中文标签；未知通道原样返回。
+pub fn channel_label(channel: &str) -> &str {
+    match channel {
+        CHANNEL_MIC => "我",
+        CHANNEL_SYSTEM => "面试官",
+        other => other,
+    }
+}
+
+/// 一条生成的答案。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Answer {
+    pub id: i64,
+    pub session_id: i64,
+    /// 触发生成的提问段落；配对失败时为 `None`。
+    pub question_segment_id: Option<i64>,
+    pub text: String,
+    pub model_id: String,
+    /// 首 token 耗时（毫秒）。
+    pub ttft_ms: Option<i64>,
+    /// 总耗时（毫秒）。
+    pub total_ms: Option<i64>,
+    pub token_in: Option<i64>,
+    pub token_out: Option<i64>,
+}
+
+/// 生成答案时的可选延迟/用量指标。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AnswerMetrics {
+    pub ttft_ms: Option<i64>,
+    pub total_ms: Option<i64>,
+    pub token_in: Option<i64>,
+    pub token_out: Option<i64>,
+}
+
+/// 本地资料（简历或项目），`kind` 区分类型。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    /// 资料类型：`resume` | `project`。
+    pub kind: String,
+    pub name: String,
+    pub content: String,
+    pub updated_at: i64,
+}
+
+/// 会话详情：会话本身 + 全部段落 + 全部答案。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetail {
+    pub session: Session,
+    pub segments: Vec<Segment>,
+    pub answers: Vec<Answer>,
+}
+
+/// SQLite 存储句柄。
+///
+/// 内部持有一个 [`rusqlite::Connection`]；不是 `Sync`，跨线程使用时请包
+/// `Mutex` 或把 `Store` 放在单独的工作线程里。
+pub struct Store {
+    conn: Connection,
+}
+
+impl Store {
+    /// 打开（或创建）数据库文件，自动建表并升级 schema。
+    ///
+    /// 传 `":memory:"` 或使用 [`Store::open_in_memory`] 可得到内存库（测试用）。
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = if path.as_ref() == Path::new(":memory:") {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
+        Self::from_connection(conn)
+    }
+
+    /// 打开内存数据库，仅用于测试与临时场景。
+    pub fn open_in_memory() -> Result<Self> {
+        Self::from_connection(Connection::open_in_memory()?)
+    }
+
+    fn from_connection(conn: Connection) -> Result<Self> {
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")?;
+        // WAL 对文件库有并发收益；内存库返回 "memory"，忽略结果即可。
+        let _ = conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()));
+        migrate(&conn)?;
+        Ok(Self { conn })
+    }
+
+    /// 读取底层连接，供集成方执行只读查询（如统计）。
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    // ----- 会话 -----
+
+    /// 创建会话并返回 id。`started_at` 取当前时间。
+    pub fn create_session(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        note: Option<&str>,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO sessions (started_at, provider_id, model_id, note) VALUES (?, ?, ?, ?)",
+            params![now_ms(), provider_id, model_id, note],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// 标记会话结束。重复调用会刷新结束时间。
+    pub fn end_session(&self, id: i64) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE sessions SET ended_at = ? WHERE id = ?",
+            params![now_ms(), id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::SessionNotFound(id));
+        }
+        Ok(())
+    }
+
+    /// 按开始时间倒序列出最近 `limit` 个会话（含段落/答案计数）。
+    pub fn list_sessions(&self, limit: usize) -> Result<Vec<SessionSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.started_at, s.ended_at, s.provider_id, s.model_id, s.note,
+                    (SELECT COUNT(*) FROM segments WHERE session_id = s.id),
+                    (SELECT COUNT(*) FROM answers  WHERE session_id = s.id)
+             FROM sessions s
+             ORDER BY s.started_at DESC, s.id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(SessionSummary {
+                session: Session {
+                    id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    ended_at: row.get(2)?,
+                    provider_id: row.get(3)?,
+                    model_id: row.get(4)?,
+                    note: row.get(5)?,
+                },
+                segment_count: row.get(6)?,
+                answer_count: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 读取单个会话。
+    pub fn get_session(&self, id: i64) -> Result<Session> {
+        self.conn
+            .query_row(
+                "SELECT id, started_at, ended_at, provider_id, model_id, note
+                 FROM sessions WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Session {
+                        id: row.get(0)?,
+                        started_at: row.get(1)?,
+                        ended_at: row.get(2)?,
+                        provider_id: row.get(3)?,
+                        model_id: row.get(4)?,
+                        note: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::SessionNotFound(id))
+    }
+
+    /// 会话详情：会话 + 段落（按开始时间排序）+ 答案（按生成顺序）。
+    pub fn session_detail(&self, id: i64) -> Result<SessionDetail> {
+        let session = self.get_session(id)?;
+        Ok(SessionDetail {
+            session,
+            segments: self.segments_of(id)?,
+            answers: self.answers_of(id)?,
+        })
+    }
+
+    /// 删除会话及其全部段落、答案。返回是否真的删除了记录。
+    pub fn delete_session(&self, id: i64) -> Result<bool> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        Ok(changed > 0)
+    }
+
+    /// 删除全部会话，返回删除条数。
+    pub fn delete_all_sessions(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM sessions", [])?)
+    }
+
+    /// 删除开始时间早于 `days` 天前的会话，返回删除条数。
+    pub fn cleanup_older_than_days(&self, days: u32) -> Result<usize> {
+        let cutoff = now_ms() - i64::from(days) * 24 * 60 * 60 * 1_000;
+        Ok(self.conn.execute(
+            "DELETE FROM sessions WHERE started_at < ?1",
+            params![cutoff],
+        )?)
+    }
+
+    // ----- 段落与答案 -----
+
+    /// 追加一条转录段落，返回段落 id。
+    ///
+    /// `start_ms` / `end_ms` 为相对会话开始的毫秒偏移；`is_echo` 由
+    /// `hint-core` 的 `is_echo` 判定后传入，回声段也应落库（便于复盘），
+    /// 但不参与提示词上下文。
+    pub fn add_segment(
+        &self,
+        session_id: i64,
+        channel: &str,
+        start_ms: i64,
+        end_ms: i64,
+        text: &str,
+        is_echo: bool,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO segments (session_id, channel, start_ms, end_ms, text, is_echo)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![session_id, channel, start_ms, end_ms, text, is_echo as i64],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// 追加一条答案，返回答案 id。
+    ///
+    /// `question_segment_id` 应与 `session_id` 属于同一会话；跨会话的 id 不会
+    /// 被外键拦截，调用方需自行保证。
+    pub fn add_answer(
+        &self,
+        session_id: i64,
+        question_segment_id: Option<i64>,
+        text: &str,
+        model_id: &str,
+        metrics: AnswerMetrics,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO answers
+                (session_id, question_segment_id, text, model_id,
+                 ttft_ms, total_ms, token_in, token_out)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                session_id,
+                question_segment_id,
+                text,
+                model_id,
+                metrics.ttft_ms,
+                metrics.total_ms,
+                metrics.token_in,
+                metrics.token_out
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// 会话的全部段落，按 `start_ms` 升序。
+    pub fn segments_of(&self, session_id: i64) -> Result<Vec<Segment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, channel, start_ms, end_ms, text, is_echo
+             FROM segments WHERE session_id = ?1 ORDER BY start_ms, id",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(Segment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                channel: row.get(2)?,
+                start_ms: row.get(3)?,
+                end_ms: row.get(4)?,
+                text: row.get(5)?,
+                is_echo: row.get::<_, i64>(6)? != 0,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 会话的全部答案，按生成顺序。
+    pub fn answers_of(&self, session_id: i64) -> Result<Vec<Answer>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, question_segment_id, text, model_id,
+                    ttft_ms, total_ms, token_in, token_out
+             FROM answers WHERE session_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(Answer {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                question_segment_id: row.get(2)?,
+                text: row.get(3)?,
+                model_id: row.get(4)?,
+                ttft_ms: row.get(5)?,
+                total_ms: row.get(6)?,
+                token_in: row.get(7)?,
+                token_out: row.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    // ----- 资料 -----
+
+    /// 保存（或覆盖）一条资料。`kind` 建议用 `resume` / `project`。
+    pub fn save_profile(&self, kind: &str, name: &str, content: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO profiles (kind, name, content, updated_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT(kind, name)
+             DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
+            params![kind, name, content, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// 读取一条资料；不存在时返回 `None`。
+    pub fn get_profile(&self, kind: &str, name: &str) -> Result<Option<Profile>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT kind, name, content, updated_at
+                 FROM profiles WHERE kind = ?1 AND name = ?2",
+                params![kind, name],
+                |row| {
+                    Ok(Profile {
+                        kind: row.get(0)?,
+                        name: row.get(1)?,
+                        content: row.get(2)?,
+                        updated_at: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// 列出某一类资料，按更新时间倒序。
+    pub fn list_profiles(&self, kind: &str) -> Result<Vec<Profile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, name, content, updated_at
+             FROM profiles WHERE kind = ?1 ORDER BY updated_at DESC, name",
+        )?;
+        let rows = stmt.query_map(params![kind], |row| {
+            Ok(Profile {
+                kind: row.get(0)?,
+                name: row.get(1)?,
+                content: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 删除一条资料，返回是否真的删除了记录。
+    pub fn delete_profile(&self, kind: &str, name: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            "DELETE FROM profiles WHERE kind = ?1 AND name = ?2",
+            params![kind, name],
+        )?;
+        Ok(changed > 0)
+    }
+
+    // ----- 导出 -----
+
+    /// 把一次会话导出为 Markdown 文本：转录与问答按时间轴交错排列。
+    ///
+    /// 无法关联到具体提问的答案会单独列在文末「其他回答」一节。
+    pub fn export_markdown(&self, id: i64) -> Result<String> {
+        let detail = self.session_detail(id)?;
+        let session = &detail.session;
+
+        let mut out = String::new();
+        out.push_str(&format!("# 面试记录 #{}\n\n", session.id));
+        out.push_str(&format!(
+            "- 开始时间：{}\n",
+            format_datetime(session.started_at)
+        ));
+        match session.ended_at {
+            Some(ended_at) => out.push_str(&format!("- 结束时间：{}\n", format_datetime(ended_at))),
+            None => out.push_str("- 结束时间：（未结束）\n"),
+        }
+        out.push_str(&format!(
+            "- 模型：{} / {}\n",
+            session.provider_id, session.model_id
+        ));
+        if let Some(note) = session
+            .note
+            .as_deref()
+            .filter(|note| !note.trim().is_empty())
+        {
+            out.push_str(&format!("- 备注：{}\n", note.trim()));
+        }
+        out.push('\n');
+
+        if detail.segments.is_empty() && detail.answers.is_empty() {
+            out.push_str("_本次会话没有转录内容。_\n");
+            return Ok(out);
+        }
+
+        out.push_str("## 转录与问答\n\n");
+        let mut orphan_answers: Vec<&Answer> = Vec::new();
+        let linked: Vec<Option<&Answer>> = detail
+            .segments
+            .iter()
+            .map(|segment| {
+                detail
+                    .answers
+                    .iter()
+                    .find(|answer| answer.question_segment_id == Some(segment.id))
+            })
+            .collect();
+
+        for (segment, answer) in detail.segments.iter().zip(&linked) {
+            let time = format_clock(session.started_at + segment.start_ms);
+            out.push_str(&format!(
+                "**{}**（{}）：{}\n",
+                segment.speaker_label(),
+                time,
+                segment.text.trim()
+            ));
+            if segment.is_echo {
+                out.push_str("（回声，已排除）\n");
+            }
+            out.push('\n');
+
+            if let Some(answer) = answer {
+                render_answer(&mut out, answer);
+            }
+        }
+
+        for answer in &detail.answers {
+            let linked_already = detail
+                .segments
+                .iter()
+                .any(|segment| answer.question_segment_id == Some(segment.id));
+            if !linked_already {
+                orphan_answers.push(answer);
+            }
+        }
+        if !orphan_answers.is_empty() {
+            out.push_str("## 其他回答\n\n");
+            for answer in orphan_answers {
+                render_answer(&mut out, answer);
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+/// 渲染一条答案到 Markdown。
+fn render_answer(out: &mut String, answer: &Answer) {
+    let mut meta: Vec<String> = Vec::new();
+    if let Some(ttft) = answer.ttft_ms {
+        meta.push(format!("首字 {}", format_seconds(ttft)));
+    }
+    if let Some(total) = answer.total_ms {
+        meta.push(format!("总耗时 {}", format_seconds(total)));
+    }
+    if answer.token_in.is_some() || answer.token_out.is_some() {
+        meta.push(format!(
+            "tokens {}/{}",
+            answer.token_in.unwrap_or(0),
+            answer.token_out.unwrap_or(0)
+        ));
+    }
+    if meta.is_empty() {
+        out.push_str("**回答**\n\n");
+    } else {
+        out.push_str(&format!("**回答**（{}）\n\n", meta.join(" · ")));
+    }
+    out.push_str(answer.text.trim());
+    out.push_str("\n\n");
+}
+
+/// 把毫秒耗时格式化为秒，保留一位小数。
+fn format_seconds(ms: i64) -> String {
+    format!("{:.1}s", ms as f64 / 1000.0)
+}
+
+/// Unix 毫秒 → 本地时间 `YYYY-MM-DD HH:MM:SS`；越界时退回原始数字。
+fn format_datetime(ms: i64) -> String {
+    match DateTime::from_timestamp_millis(ms) {
+        Some(utc) => utc
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        None => ms.to_string(),
+    }
+}
+
+/// Unix 毫秒 → 本地时间 `HH:MM:SS`。
+fn format_clock(ms: i64) -> String {
+    match DateTime::from_timestamp_millis(ms) {
+        Some(utc) => utc.with_timezone(&Local).format("%H:%M:%S").to_string(),
+        None => ms.to_string(),
+    }
+}
+
+/// 当前 Unix 毫秒时间戳；系统时间早于 1970 时退化为 0（不 panic）。
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 按 `PRAGMA user_version` 依次执行未应用的迁移。
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    for (index, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
+        let next_version = index as i64 + 1;
+        conn.execute_batch(&format!(
+            "BEGIN;\n{sql}\nPRAGMA user_version = {next_version};\nCOMMIT;"
+        ))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一个内存库并开好会话。
+    fn store_with_session() -> (Store, i64) {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let session = store
+            .create_session("openai", "deepseek-chat", Some("技术面"))
+            .expect("创建会话");
+        (store, session)
+    }
+
+    #[test]
+    fn migration_runs_once_and_is_idempotent() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        // 再跑一遍迁移不应报错，也不重复建表。
+        migrate(&store.conn).expect("重复迁移");
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("读取版本");
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn create_and_end_session_roundtrip() {
+        let (store, id) = store_with_session();
+        let session = store.get_session(id).expect("读取会话");
+        assert_eq!(session.provider_id, "openai");
+        assert_eq!(session.model_id, "deepseek-chat");
+        assert_eq!(session.note.as_deref(), Some("技术面"));
+        assert!(session.ended_at.is_none());
+        assert!(session.started_at > 0);
+
+        store.end_session(id).expect("结束会话");
+        let ended = store.get_session(id).expect("再次读取");
+        assert!(ended.ended_at.is_some());
+        assert!(ended.ended_at >= Some(ended.started_at));
+    }
+
+    #[test]
+    fn end_missing_session_reports_not_found() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        match store.end_session(999) {
+            Err(StoreError::SessionNotFound(id)) => assert_eq!(id, 999),
+            other => panic!("应返回 SessionNotFound，实际：{other:?}"),
+        }
+        assert!(store.session_detail(999).is_err());
+    }
+
+    #[test]
+    fn list_sessions_orders_and_limits() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let first = store.create_session("openai", "m1", None).expect("会话一");
+        let second = store
+            .create_session("anthropic", "m2", None)
+            .expect("会话二");
+        store
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false)
+            .expect("段落");
+        store
+            .add_answer(first, None, "答", "m1", AnswerMetrics::default())
+            .expect("答案");
+
+        let all = store.list_sessions(10).expect("列表");
+        assert_eq!(all.len(), 2);
+        // 同一毫秒创建时按 id 倒序，最后创建的在前。
+        assert_eq!(all[0].session.id, second);
+        assert_eq!(all[1].session.id, first);
+        assert_eq!(all[1].segment_count, 1);
+        assert_eq!(all[1].answer_count, 1);
+        assert_eq!(all[0].segment_count, 0);
+
+        let limited = store.list_sessions(1).expect("限制条数");
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].session.id, second);
+    }
+
+    #[test]
+    fn segments_and_answers_roundtrip_in_detail() {
+        let (store, session) = store_with_session();
+        let q = store
+            .add_segment(
+                session,
+                CHANNEL_SYSTEM,
+                100,
+                2_300,
+                "你能说说这个项目的难点吗？",
+                false,
+            )
+            .expect("提问段落");
+        let echo = store
+            .add_segment(session, CHANNEL_MIC, 2_400, 3_100, "你能说说这个项目", true)
+            .expect("回声段落");
+        let a = store
+            .add_segment(
+                session,
+                CHANNEL_MIC,
+                3_200,
+                9_000,
+                "我主要负责自动化测试。",
+                false,
+            )
+            .expect("回答段落");
+        let _answer = store
+            .add_answer(
+                session,
+                Some(q),
+                "难点主要有三点：……",
+                "deepseek-chat",
+                AnswerMetrics {
+                    ttft_ms: Some(420),
+                    total_ms: Some(1_830),
+                    token_in: Some(320),
+                    token_out: Some(96),
+                },
+            )
+            .expect("答案");
+
+        let detail = store.session_detail(session).expect("详情");
+        assert_eq!(detail.segments.len(), 3);
+        assert_eq!(detail.segments[0].id, q);
+        assert_eq!(detail.segments[1].id, echo);
+        assert!(detail.segments[1].is_echo);
+        assert!(!detail.segments[2].is_echo);
+        assert_eq!(detail.segments[2].id, a);
+        assert_eq!(detail.segments[0].speaker_label(), "面试官");
+        assert_eq!(detail.segments[2].speaker_label(), "我");
+
+        assert_eq!(detail.answers.len(), 1);
+        let answer = &detail.answers[0];
+        assert_eq!(answer.question_segment_id, Some(q));
+        assert_eq!(answer.ttft_ms, Some(420));
+        assert_eq!(answer.total_ms, Some(1_830));
+        assert_eq!(answer.token_in, Some(320));
+        assert_eq!(answer.token_out, Some(96));
+    }
+
+    #[test]
+    fn segments_order_by_start_ms_not_insert_order() {
+        let (store, session) = store_with_session();
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 500, 900, "后", false)
+            .expect("段落一");
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 100, 400, "先", false)
+            .expect("段落二");
+        let segments = store.segments_of(session).expect("段落列表");
+        assert_eq!(segments[0].text, "先");
+        assert_eq!(segments[1].text, "后");
+    }
+
+    #[test]
+    fn delete_session_cascades_segments_and_answers() {
+        let (store, session) = store_with_session();
+        let q = store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false)
+            .expect("段落");
+        store
+            .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
+            .expect("答案");
+
+        assert!(store.delete_session(session).expect("删除会话"));
+        assert!(!store.delete_session(session).expect("再次删除"));
+        assert!(store.get_session(session).is_err());
+
+        let segments: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))
+            .expect("统计段落");
+        let answers: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM answers", [], |row| row.get(0))
+            .expect("统计答案");
+        assert_eq!(segments, 0);
+        assert_eq!(answers, 0);
+    }
+
+    #[test]
+    fn delete_all_sessions_clears_everything() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        store.create_session("p", "m", None).expect("会话一");
+        store.create_session("p", "m", None).expect("会话二");
+        assert_eq!(store.delete_all_sessions().expect("全部删除"), 2);
+        assert!(store.list_sessions(10).expect("列表").is_empty());
+    }
+
+    #[test]
+    fn cleanup_removes_only_expired_sessions() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let old = store.create_session("p", "m", None).expect("旧会话");
+        let recent = store.create_session("p", "m", None).expect("新会话");
+
+        // 把旧会话的开始时间改到 40 天前。
+        let long_ago = now_ms() - 40 * 24 * 60 * 60 * 1_000;
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET started_at = ?1 WHERE id = ?2",
+                params![long_ago, old],
+            )
+            .expect("改时间");
+        store
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧段落", false)
+            .expect("旧段落");
+
+        let deleted = store.cleanup_older_than_days(30).expect("清理");
+        assert_eq!(deleted, 1);
+        assert!(store.get_session(old).is_err());
+        assert!(store.get_session(recent).is_ok());
+
+        // 再清理一次没有可删的。
+        assert_eq!(store.cleanup_older_than_days(30).expect("再次清理"), 0);
+    }
+
+    #[test]
+    fn cleanup_with_zero_days_keeps_recent_sessions() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let session = store.create_session("p", "m", None).expect("会话");
+        assert_eq!(store.cleanup_older_than_days(0).expect("清理"), 0);
+        assert!(store.get_session(session).is_ok());
+    }
+
+    #[test]
+    fn profiles_upsert_get_list_and_delete() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        assert!(
+            store
+                .get_profile("resume", "default")
+                .expect("读取")
+                .is_none()
+        );
+
+        store
+            .save_profile("resume", "default", "张三，五年测试开发")
+            .expect("保存简历");
+        store
+            .save_profile("project", "hint", "面试提词器")
+            .expect("保存项目一");
+        store
+            .save_profile("project", "atlas", "Playwright 测试平台")
+            .expect("保存项目二");
+        store
+            .save_profile("resume", "default", "张三，六年测试开发")
+            .expect("覆盖简历");
+
+        let resume = store
+            .get_profile("resume", "default")
+            .expect("读取简历")
+            .expect("简历存在");
+        assert_eq!(resume.content, "张三，六年测试开发");
+        assert!(resume.updated_at > 0);
+
+        let projects = store.list_profiles("project").expect("项目列表");
+        assert_eq!(projects.len(), 2);
+        assert_eq!(store.list_profiles("resume").expect("简历列表").len(), 1);
+
+        assert!(store.delete_profile("project", "hint").expect("删除项目"));
+        assert!(!store.delete_profile("project", "hint").expect("再次删除"));
+        assert_eq!(store.list_profiles("project").expect("项目列表").len(), 1);
+    }
+
+    #[test]
+    fn markdown_export_contains_timeline_and_metrics() {
+        let (store, session) = store_with_session();
+        let q = store
+            .add_segment(
+                session,
+                CHANNEL_SYSTEM,
+                0,
+                2_300,
+                "你能说说这个项目的难点吗？",
+                false,
+            )
+            .expect("提问");
+        store
+            .add_segment(session, CHANNEL_MIC, 2_400, 3_000, "你能说说这个项目", true)
+            .expect("回声");
+        store
+            .add_answer(
+                session,
+                Some(q),
+                "难点主要有三点：第一，环境不稳定。",
+                "deepseek-chat",
+                AnswerMetrics {
+                    ttft_ms: Some(400),
+                    total_ms: Some(1_800),
+                    token_in: Some(300),
+                    token_out: Some(80),
+                },
+            )
+            .expect("答案");
+        store.end_session(session).expect("结束会话");
+
+        let markdown = store.export_markdown(session).expect("导出");
+        assert!(markdown.starts_with("# 面试记录 #"));
+        assert!(markdown.contains("开始时间："));
+        assert!(markdown.contains("模型：openai / deepseek-chat"));
+        assert!(markdown.contains("备注：技术面"));
+        assert!(markdown.contains("**面试官**（"));
+        assert!(markdown.contains("你能说说这个项目的难点吗？"));
+        assert!(markdown.contains("（回声，已排除）"));
+        assert!(markdown.contains("**回答**（首字 0.4s · 总耗时 1.8s · tokens 300/80）"));
+        assert!(markdown.contains("难点主要有三点：第一，环境不稳定。"));
+        assert!(!markdown.contains("其他回答"));
+    }
+
+    #[test]
+    fn markdown_export_places_orphan_answers_last() {
+        let (store, session) = store_with_session();
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "介绍下自己", false)
+            .expect("段落");
+        store
+            .add_answer(session, None, "我是张三。", "m", AnswerMetrics::default())
+            .expect("游离答案");
+        let markdown = store.export_markdown(session).expect("导出");
+        assert!(markdown.contains("## 其他回答"));
+        assert!(markdown.contains("我是张三。"));
+    }
+
+    #[test]
+    fn markdown_export_handles_empty_session() {
+        let (store, session) = store_with_session();
+        let markdown = store.export_markdown(session).expect("导出");
+        assert!(markdown.contains("没有转录内容"));
+        assert!(!markdown.contains("## 转录与问答"));
+    }
+
+    #[test]
+    fn markdown_export_missing_session_errors() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        assert!(store.export_markdown(42).is_err());
+    }
+
+    #[test]
+    fn segments_and_answers_are_scoped_per_session() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let first = store.create_session("p", "m", None).expect("会话一");
+        let second = store.create_session("p", "m", None).expect("会话二");
+        store
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false)
+            .expect("段落一");
+        store
+            .add_segment(second, CHANNEL_SYSTEM, 0, 100, "二", false)
+            .expect("段落二");
+
+        let detail = store.session_detail(first).expect("详情");
+        assert_eq!(detail.segments.len(), 1);
+        assert_eq!(detail.segments[0].text, "一");
+        assert_eq!(detail.answers.len(), 0);
+    }
+
+    #[test]
+    fn data_persists_across_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "hint-store-test-{}-{}.db",
+            std::process::id(),
+            now_ms()
+        ));
+        let session = {
+            let store = Store::open(&path).expect("打开文件库");
+            let session = store.create_session("openai", "m", None).expect("创建会话");
+            store
+                .add_segment(session, CHANNEL_SYSTEM, 0, 100, "持久化段落", false)
+                .expect("段落");
+            session
+        };
+        {
+            let store = Store::open(&path).expect("重新打开");
+            let detail = store.session_detail(session).expect("详情");
+            assert_eq!(detail.segments.len(), 1);
+            assert_eq!(detail.segments[0].text, "持久化段落");
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn foreign_key_violation_is_reported() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        assert!(
+            store
+                .add_segment(12345, CHANNEL_SYSTEM, 0, 100, "无主段落", false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn format_helpers_handle_out_of_range_timestamps() {
+        assert_eq!(format_datetime(i64::MIN), i64::MIN.to_string());
+        assert_eq!(format_clock(i64::MIN), i64::MIN.to_string());
+        assert_eq!(format_seconds(1_830), "1.8s");
+    }
+}

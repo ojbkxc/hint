@@ -1,0 +1,19 @@
+[package]
+name = "hint-audio"
+version = "0.1.0"
+edition = "2024"
+description = "hint 的双通道音频采集：麦克风 + 系统声 loopback"
+license = "MIT"
+
+[dependencies]
+cpal = "0.18"
+rubato = "5"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+
+[dev-dependencies]
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.27"

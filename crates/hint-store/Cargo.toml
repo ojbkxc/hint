@@ -1,0 +1,13 @@
+[package]
+name = "hint-store"
+version = "0.1.0"
+edition = "2024"
+description = "hint 的本地会话存储：SQLite"
+license = "MIT"
+
+[dependencies]
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+# 仅用于把 Unix 毫秒时间戳格式化为本地时间（Markdown 导出）；lock 中已有该版本。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

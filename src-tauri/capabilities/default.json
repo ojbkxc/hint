@@ -1,10 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "hint 主窗口与浮层的基础权限",
-  "windows": ["main", "overlay"],
+  "description": "hint 主窗口、浮层与截图窗口的基础权限",
+  "windows": ["main", "overlay", "capture"],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging"
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen"
   ]
 }

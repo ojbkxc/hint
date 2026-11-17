@@ -1,5 +1,6 @@
 pub mod error;
 pub mod llm;
+pub mod pipeline;
 pub mod secret;
 pub mod settings;
 

@@ -8,26 +8,29 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 
 ## 当前进度
 
-M0 骨架已完成：
+M0–M4 主链路已实现，M5 仅预留窗口与命令：
 
-- Tauri 2 + React 19 + TypeScript
-- 托盘菜单（打开设置 / 显示浮层 / 退出）
-- 全局热键 `Ctrl+Shift+Space` 显示或隐藏浮层
-- 透明置顶浮层（无边框、可拖动、可缩放）
-- 设置页：三种 LLM 协议、简历与项目资料、回答风格、触发方式
-- API Key 写入 Windows 凭据管理器（`keyring`），不落明文
-- 一次非流式 LLM 调用（连接测试）
+- Tauri 2 + React 19 + TypeScript，托盘、透明置顶浮层、全局热键
+- 设置页：三种 LLM 协议、简历与项目资料、回答风格、触发方式、音频设备
+- API Key 只写入 Windows 凭据管理器（`keyring`），不落配置文件
+- 三协议流式 LLM（OpenAI 兼容 / Anthropic Messages / Gemini），支持取消与重新生成
+- 双通道采集：cpal 麦克风 + WASAPI loopback，16k 单声道重采样与电平上报
+- 本地 STT：sherpa-onnx 2.0.1 + SenseVoice Small INT8 + Silero VAD，模型按需下载（断点续传、sha256 校验）
+- 问题判定、回声过滤、SQLite 会话留存、Markdown 导出与会话复盘页
+- 设置页内置「语音模型」与「面试会话」卡片：下载/取消/删除模型，开始/结束面试
+- M5 截图问答：选区窗口、`start_capture` / `cancel_capture` / `finish_capture` 已预留，返回「尚未启用」
 
 ## 路线图
 
-| 阶段 | 内容 |
-|---|---|
-| M1 | 三协议流式输出：OpenAI 兼容 / Anthropic Messages / Gemini |
-| M2 | 双通道采集：cpal 麦克风 + WASAPI loopback，16k 重采样，电平显示 |
-| M3 | 本地 STT：sherpa-onnx 静态链接 + SenseVoice Small INT8 + Silero VAD |
-| M4 | 问题判定、自动/按键生成、麦克风回声过滤、会话存储 |
-| M5 | 截图区域问答（架构已预留） |
-| M6 | NSIS 安装包与分发 |
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| M0 | Tauri 骨架、托盘、热键、浮层、设置、keyring | 完成 |
+| M1 | 三协议流式输出 | 完成 |
+| M2 | 双通道采集与 16k 重采样 | 完成 |
+| M3 | 本地 STT（sherpa-onnx + SenseVoice + Silero VAD） | 完成 |
+| M4 | 问题判定、回声过滤、会话存储 | 完成 |
+| M5 | 截图区域问答 | 仅预留 |
+| M6 | NSIS 安装包与分发 | CI 构建，待真机验收 |
 
 ## 技术栈
 
@@ -42,43 +45,55 @@ M0 骨架已完成：
 
 ```
 hint/
-├── crates/hint-core/        # 不依赖 UI 的核心逻辑
-│   └── src/
-│       ├── settings.rs      # 配置结构与提示词组装
-│       ├── secret.rs        # Windows 凭据管理器封装
-│       ├── llm.rs           # 三协议 LLM 调用
-│       └── error.rs
-├── src-tauri/               # Tauri 壳：窗口、托盘、热键、命令
-├── src/                     # React：设置页与浮层
+├── crates/
+│   ├── hint-core/           # 不依赖 UI：配置、凭证、LLM、问题判定/回声
+│   ├── hint-audio/          # cpal 麦克风 + WASAPI loopback、重采样、电平
+│   ├── hint-stt/            # 模型下载、sidecar worker、SenseVoice + Silero VAD
+│   └── hint-store/          # SQLite 会话、段落、答案与 Markdown 导出
+├── src-tauri/               # Tauri 壳：窗口、托盘、热键、命令、会话编排
+├── src/                     # React：设置页、浮层、复盘页、截图选区
 ├── .github/workflows/       # 云端构建
-└── Cargo.toml               # Cargo workspace
+└── Cargo.toml               # Cargo workspace（release profile 在此）
 ```
 
-## 构建
+## 构建与测试
 
-本项目在 GitHub Actions 的 `windows-latest` 上构建，本机不需要安装 Visual Studio 或 Windows SDK。
+完整安装包在 GitHub Actions 的 `windows-latest` 上构建（`.github/workflows/build.yml`），
+CI 使用 `x86_64-pc-windows-msvc` 工具链，产出 `hint.exe` 与 NSIS 安装包。
 
-推送到 `main` 后，Actions 会产出：
+本地构建需要：
 
-- `hint.exe`
-- NSIS 安装包
-
-也可以在本地构建，但需要：
-
-1. Visual Studio Build Tools 2022（C++ 桌面开发工作负载）
+1. Visual Studio Build Tools 2022（C++ 桌面开发工作负载）或等价的 MSVC 链接器
 2. Rust MSVC 工具链：`rustup default stable-x86_64-pc-windows-msvc`
-3. Node.js 20+
+3. Node.js 22+（Vite 8 要求）
+4. 首次编译 `hint-stt` 需要联网：`sherpa-onnx-sys` 会从 GitHub Release 下载预编译静态库
 
 ```bash
-npm install
+npm ci
 npm run tauri build
 ```
+
+只做前端与平台无关部分检查（不需要 MSVC / 网络下载静态库）：
+
+```bash
+npx tsc --noEmit
+npm run build
+cargo test -p hint-core -p hint-store
+cargo test -p hint-audio
+cargo test -p hint-stt --no-default-features
+```
+
+注意：若 Rust 宿主是 `x86_64-pc-windows-gnu` 且 PATH 中没有 MinGW 的 `gcc.exe` / `windres.exe`，
+`cargo test -p hint-stt`（默认引擎）与 `cargo check -p hint` 的 Windows 资源嵌入步骤会失败；
+本机实测即由此失败。CI 使用 MSVC 工具链（含 `ilammy/msvc-dev-cmd`），不受影响。
+默认引擎的完整测试与打包请以 CI 的 MSVC 结果为准。
 
 ## 隐私
 
 - 简历、项目资料、会话记录只存在本机。
-- API Key 存在 Windows 凭据管理器，不写配置文件。
-- 原始音频不落盘（M2 起生效）。
+- API Key 存在 Windows 凭据管理器，不写配置文件，也不进日志。
+- 原始音频不落盘：采集 → 分段 → WAV 内存 → sidecar 推理，全程无文件写入。
+- 下载日志只记录经过脱敏的 URL（去掉 query 与临时签名）。
 - 除了你自己配置的模型接口，不向任何第三方发送数据。
 
 ## 边界

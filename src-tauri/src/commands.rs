@@ -1,0 +1,480 @@
+//! Tauri 命令层。所有命令统一返回 `Result<_, String>`，绝不 panic。
+//!
+//! 规则：async 命令里不长时间持锁；STT / 下载等阻塞 API 一律走
+//! `spawn_blocking`；事件发送失败只记日志。
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use hint_core::{llm, secret, settings::Settings};
+use hint_stt::download::user_message_for;
+use serde_json::{Value, json};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
+
+use crate::session::{self, EVT_MODEL_PROGRESS};
+use crate::{AppState, lock};
+
+pub(crate) const CAPTURE_WINDOW: &str = "capture";
+
+// ---------------------------------------------------------------------------
+// 设置与凭证（M0，保持不变）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
+    Ok(Settings::load(&state.settings_path))
+}
+
+#[tauri::command]
+pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+    settings
+        .save(&state.settings_path)
+        .map_err(|error| format!("保存配置失败：{error}"))
+}
+
+#[tauri::command]
+pub fn save_api_key(provider: String, key: String) -> Result<(), String> {
+    secret::save(&provider, &key).map_err(|error| format!("写入 Windows 凭据失败：{error}"))
+}
+
+#[tauri::command]
+pub fn has_api_key(provider: String) -> Result<bool, String> {
+    Ok(secret::has(&provider))
+}
+
+#[tauri::command]
+pub async fn test_llm(
+    state: State<'_, AppState>,
+    prompt: String,
+    settings: Option<Settings>,
+) -> Result<llm::ChatResponse, String> {
+    // 设置页未保存时可以用当前表单直接测试；不传则沿用已保存配置。
+    let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
+    let provider = settings.provider.as_str().to_string();
+    let key = secret::get(&provider).map_err(|error| format!("读取 API Key 失败：{error}"))?;
+    let system = settings.system_prompt();
+    llm::complete(
+        &settings,
+        &key,
+        llm::ChatRequest {
+            system,
+            user: prompt,
+            ..llm::ChatRequest::default()
+        },
+    )
+    .await
+    .map_err(|error| format!("模型连接失败：{error}"))
+}
+
+// ---------------------------------------------------------------------------
+// 会话
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn start_session(app: AppHandle) -> Result<i64, String> {
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || session::start_session(&task_app))
+        .await
+        .map_err(|error| format!("启动会话任务失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn stop_session(app: AppHandle) -> Result<(), String> {
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || session::stop_session(&task_app))
+        .await
+        .map_err(|error| format!("结束会话任务失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
+    if session::is_running(&app) {
+        stop_session(app).await?;
+        Ok(false)
+    } else {
+        start_session(app).await?;
+        Ok(true)
+    }
+}
+
+fn format_time(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// 会话列表：拍平成前端 `SessionSummary` 的形状。
+#[tauri::command]
+pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+    let store = lock(&state.store);
+    let summaries = store
+        .list_sessions(200)
+        .map_err(|error| format!("读取会话列表失败：{error}"))?;
+    Ok(summaries
+        .into_iter()
+        .map(|summary| {
+            json!({
+                "id": summary.session.id.to_string(),
+                "startedAt": format_time(summary.session.started_at),
+                "endedAt": summary.session.ended_at.map(format_time),
+                "model": summary.session.model_id,
+                "provider": summary.session.provider_id,
+                "note": summary.session.note.unwrap_or_default(),
+                "segmentCount": summary.segment_count,
+                "answerCount": summary.answer_count,
+            })
+        })
+        .collect())
+}
+
+/// 会话详情：通道名映射为前端约定的 `me` / `interviewer`。
+#[tauri::command]
+pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    let session_id = parse_id(&id)?;
+    let store = lock(&state.store);
+    let detail = store
+        .session_detail(session_id)
+        .map_err(|error| format!("读取会话详情失败：{error}"))?;
+    let segments: Vec<Value> = detail
+        .segments
+        .into_iter()
+        .map(|segment| {
+            json!({
+                "id": segment.id.to_string(),
+                "channel": if segment.channel == hint_store::CHANNEL_MIC { "me" } else { "interviewer" },
+                "text": segment.text,
+                "isEcho": segment.is_echo,
+                "startMs": segment.start_ms,
+                "endMs": segment.end_ms,
+            })
+        })
+        .collect();
+    let answers: Vec<Value> = detail
+        .answers
+        .into_iter()
+        .map(|answer| {
+            json!({
+                "id": answer.id.to_string(),
+                "text": answer.text,
+                "model": answer.model_id,
+                "ttftMs": answer.ttft_ms,
+                "totalMs": answer.total_ms,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "id": session_id.to_string(),
+        "startedAt": format_time(detail.session.started_at),
+        "endedAt": detail.session.ended_at.map(format_time),
+        "model": detail.session.model_id,
+        "segments": segments,
+        "answers": answers,
+    }))
+}
+
+#[tauri::command]
+pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let session_id = parse_id(&id)?;
+    let store = lock(&state.store);
+    store
+        .export_markdown(session_id)
+        .map_err(|error| format!("导出失败：{error}"))
+}
+
+#[tauri::command]
+pub fn delete_all_sessions(state: State<'_, AppState>) -> Result<usize, String> {
+    if lock(&state.session).is_some() {
+        return Err("会话进行中，结束后再清空会话记录。".to_string());
+    }
+    let store = lock(&state.store);
+    store
+        .delete_all_sessions()
+        .map_err(|error| format!("清空会话记录失败：{error}"))
+}
+
+#[tauri::command]
+pub fn delete_session(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    let session_id = parse_id(&id)?;
+    if lock(&state.session).is_some() {
+        return Err("会话进行中，结束后再删除记录。".to_string());
+    }
+    let store = lock(&state.store);
+    store
+        .delete_session(session_id)
+        .map_err(|error| format!("删除会话失败：{error}"))
+}
+
+fn parse_id(raw: &str) -> Result<i64, String> {
+    raw.trim()
+        .parse::<i64>()
+        .map_err(|_| format!("无效的会话编号：{raw}"))
+}
+
+// ---------------------------------------------------------------------------
+// 浮层
+// ---------------------------------------------------------------------------
+
+fn overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window("overlay")
+        .ok_or_else(|| "浮层窗口不存在。".to_string())
+}
+
+fn show_overlay_window(window: &WebviewWindow) -> Result<(), String> {
+    window
+        .show()
+        .map_err(|error| format!("显示浮层失败：{error}"))?;
+    // 浮层平时不可聚焦；显示后再打开，Esc / 方向键才收得到。
+    let _ = window.set_focusable(true);
+    let _ = window.set_focus();
+    Ok(())
+}
+
+fn hide_overlay_window(window: &WebviewWindow) -> Result<(), String> {
+    let _ = window.set_focusable(false);
+    window
+        .hide()
+        .map_err(|error| format!("隐藏浮层失败：{error}"))
+}
+
+#[tauri::command]
+pub fn hide_overlay(app: AppHandle) -> Result<(), String> {
+    let window = overlay_window(&app)?;
+    hide_overlay_window(&window)
+}
+
+#[tauri::command]
+pub fn show_overlay(app: AppHandle) -> Result<(), String> {
+    let window = overlay_window(&app)?;
+    show_overlay_window(&window)
+}
+
+#[tauri::command]
+pub fn toggle_overlay(app: AppHandle) -> Result<bool, String> {
+    let window = overlay_window(&app)?;
+    if window.is_visible().unwrap_or(false) {
+        hide_overlay_window(&window)?;
+        Ok(false)
+    } else {
+        show_overlay_window(&window)?;
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+pub async fn regenerate_answer(app: AppHandle) -> Result<(), String> {
+    session::regenerate(&app)
+}
+
+// ---------------------------------------------------------------------------
+// 设备
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn list_audio_devices() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let inputs = hint_audio::list_input_devices()
+            .map_err(|error| format!("枚举输入设备失败：{error}"))?;
+        let outputs = hint_audio::list_output_devices()
+            .map_err(|error| format!("枚举输出设备失败：{error}"))?;
+        Ok(json!({
+            "inputs": inputs
+                .into_iter()
+                .map(|device| json!({ "id": device.id, "name": device.name, "isDefault": device.is_default }))
+                .collect::<Vec<_>>(),
+            "outputs": outputs
+                .into_iter()
+                .map(|device| json!({ "id": device.id, "name": device.name, "isDefault": device.is_default }))
+                .collect::<Vec<_>>(),
+        }))
+    })
+    .await
+    .map_err(|error| format!("枚举设备任务失败：{error}"))?
+}
+
+// ---------------------------------------------------------------------------
+// 语音模型下载
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn model_status(state: State<'_, AppState>) -> Result<Value, String> {
+    let status = state.model.status();
+    serde_json::to_value(status).map_err(|error| format!("序列化模型状态失败：{error}"))
+}
+
+/// 下载期间在 `AppState::prepare_cancel` 里占位；Drop 时无条件清空，
+/// 保证成功、失败、取消、spawn_blocking JoinError 四条路径都不泄漏标志。
+struct PrepareGuard {
+    app: AppHandle,
+}
+
+impl Drop for PrepareGuard {
+    fn drop(&mut self) {
+        let state = self.app.state::<AppState>();
+        *lock(&state.prepare_cancel) = None;
+    }
+}
+
+#[tauri::command]
+pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let cancel = {
+        let mut slot = lock(&state.prepare_cancel);
+        if let Some(previous) = slot.as_ref() {
+            if !previous.load(Ordering::Acquire) {
+                return Err("模型下载已在进行中。".to_string());
+            }
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        *slot = Some(Arc::clone(&flag));
+        flag
+    };
+    let _guard = PrepareGuard { app: app.clone() };
+
+    let manager = state.model.clone();
+    let task_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.prepare(
+            move |progress| {
+                session::emit(
+                    &task_app,
+                    EVT_MODEL_PROGRESS,
+                    json!({
+                        "step": progress.step.label(),
+                        "resource": progress.resource,
+                        "completedBytes": progress.completed_bytes,
+                        "totalBytes": progress.total_bytes,
+                        "source": progress.source,
+                    }),
+                );
+            },
+            &cancel,
+        )
+    })
+    .await
+    .map_err(|error| format!("模型下载任务失败：{error}"))?;
+
+    match result {
+        Ok(()) => {
+            session::emit_notice(&app, "info", "语音模型已就绪");
+            Ok(())
+        }
+        Err(error) => {
+            let message = user_message_for(&error);
+            session::emit_notice(&app, "error", format!("模型下载失败：{message}"));
+            Err(format!("模型下载失败：{message}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cancel_prepare(state: State<'_, AppState>) -> Result<bool, String> {
+    let mut slot = lock(&state.prepare_cancel);
+    match slot.take() {
+        Some(flag) => {
+            flag.store(true, Ordering::SeqCst);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub async fn remove_model(app: AppHandle) -> Result<(), String> {
+    if session::is_running(&app) {
+        return Err("会话进行中，结束后再删除模型。".to_string());
+    }
+    let (manager, done) = {
+        let state = app.state::<AppState>();
+        if lock(&state.prepare_cancel).is_some() {
+            return Err("模型正在下载，请先取消下载再删除。".to_string());
+        }
+        (state.model.clone(), lock(&state.dispatch_done).clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        // 刚结束的会话可能还有 STT worker 进程在退出，等分发线程发出完成信号。
+        if let Some(done) = done {
+            let (done_lock, done_cv) = &*done;
+            let mut finished = lock(done_lock);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !*finished {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    return Err("语音引擎仍在收尾，请稍后重试。".to_string());
+                }
+                let (next, _) = done_cv
+                    .wait_timeout(finished, deadline - now)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                finished = next;
+            }
+        }
+        manager
+            .remove()
+            .map_err(|error| format!("删除模型失败：{}", user_message_for(&error)))
+    })
+    .await
+    .map_err(|error| format!("删除模型任务失败：{error}"))?
+}
+
+// ---------------------------------------------------------------------------
+// 截图选区（M5 预留）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn start_capture(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(CAPTURE_WINDOW)
+        .ok_or_else(|| "截图窗口未创建，请检查 tauri.conf.json。".to_string())?;
+    let _ = window.set_fullscreen(true);
+    window
+        .show()
+        .map_err(|error| format!("显示截图窗口失败：{error}"))?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_capture(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW) {
+        let _ = window.set_fullscreen(false);
+        let _ = window.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn finish_capture(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(CAPTURE_WINDOW) {
+        let _ = window.set_fullscreen(false);
+        let _ = window.hide();
+    }
+    // M5：这里接截屏 + 多模态问答。先把选区回报给前端，便于调试定位。
+    session::emit(
+        &app,
+        "hint://capture-region",
+        json!({ "x": x, "y": y, "width": width, "height": height }),
+    );
+    Err("截图问答尚未启用（M5 预留）。".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// 内部工具（供托盘 / 热键）
+// ---------------------------------------------------------------------------
+
+pub(crate) fn emit_capture_placeholder(app: &AppHandle) {
+    session::emit(app, "hint://capture-request", json!({}));
+    session::emit_notice(app, "info", "截图问答将在 M5 启用（Ctrl+Shift+S）");
+}
+
+pub(crate) fn emit_hotkey_failure(app: &AppHandle, error: &str) {
+    session::emit_notice(app, "error", format!("全局热键注册失败：{error}"));
+}
