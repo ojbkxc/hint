@@ -17,6 +17,7 @@ use hint_core::llm::{self, ChatRequest, Turn, TurnRole};
 use hint_core::pipeline;
 use hint_core::secret;
 use hint_core::settings::{Settings, TriggerMode};
+use hint_core::session::{LifecycleAction, LifecycleDir};
 use hint_store::{AnswerMetrics, CHANNEL_MIC, CHANNEL_SYSTEM};
 use hint_stt::WorkerClient;
 use hint_stt::download::user_message_for;
@@ -490,6 +491,61 @@ pub(crate) fn is_running(app: &AppHandle) -> bool {
     lock(&state.session).is_some()
 }
 
+/// 会话生命周期请求的唯一入口：锁内决策，锁外执行。
+///
+/// 所有 start/stop/toggle（命令、托盘、热键）都经此串行化，从结构上消除
+/// check-exec 竞态。返回 `(决策结果, 本次执行结果)`；未执行（合并/排队/
+/// 已达成）时结果为 `Ok(0)`，由调用方按语义处理。
+pub(crate) fn submit_lifecycle(
+    app: &AppHandle,
+    dir: LifecycleDir,
+) -> (LifecycleAction, Result<i64, String>) {
+    let action = {
+        let state = app.state::<AppState>();
+        lock(&state.lifecycle).request(dir)
+    };
+    let result = match action {
+        LifecycleAction::Run(d) => run_lifecycle(app, d),
+        _ => Ok(0),
+    };
+    (action, result)
+}
+
+/// 执行一个生命周期动作：begin → 执行 → finish → drain 排队请求。
+fn run_lifecycle(app: &AppHandle, dir: LifecycleDir) -> Result<i64, String> {
+    {
+        let state = app.state::<AppState>();
+        lock(&state.lifecycle).begin(dir);
+    }
+    let result = match dir {
+        LifecycleDir::Start => start_session(app),
+        LifecycleDir::Stop => stop_session(app).map(|_| 0),
+    };
+    {
+        let state = app.state::<AppState>();
+        lock(&state.lifecycle).finish(dir, result.is_ok());
+    }
+    drain_lifecycle(app);
+    result
+}
+
+/// 处理排队中的异向请求（在途请求已结束，队列里有未达成的项）。
+fn drain_lifecycle(app: &AppHandle) {
+    loop {
+        let next = {
+            let state = app.state::<AppState>();
+            let mut queue = lock(&state.lifecycle);
+            if queue.in_flight() {
+                return;
+            }
+            queue.next_pending()
+        };
+        let Some(dir) = next else { return };
+        // 排队请求的执行结果无需返回给调用方，只需完成。
+        let _ = run_lifecycle(app, dir);
+    }
+}
+
 fn current_shared(app: &AppHandle) -> Option<Arc<SessionShared>> {
     let state = app.state::<AppState>();
     lock(&state.session)
@@ -932,22 +988,31 @@ fn start_answer_worker(app: &AppHandle, shared: &Arc<SessionShared>) {
 }
 
 // 托盘 / 热键用的异步入口：内部全是阻塞操作，必须离开事件循环线程。
+// 经生命周期队列串行化，避免与命令层并发时出现 check-exec 竞态。
 pub(crate) fn spawn_start(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let task_app = app.clone();
-        if let Err(error) = tauri::async_runtime::spawn_blocking(move || start_session(&task_app))
-            .await
-            .map_err(|error| format!("启动任务失败：{error}"))
-            .and_then(|result| result)
+        match tauri::async_runtime::spawn_blocking(move || {
+            submit_lifecycle(&task_app, LifecycleDir::Start)
+        })
+        .await
         {
-            tracing::warn!(%error, "托盘/热键启动会话失败");
-            // 会话已经在跑时（重复按热键）不能发 status=error：那会把前端
-            // 的「结束面试」按钮禁掉。只有确实没有会话时才走状态错误。
-            if is_running(&app) {
-                emit_notice(&app, "error", error);
-            } else {
-                emit_status(&app, "error", error);
+            Ok((_, result)) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "托盘/热键启动会话失败");
+                    // 会话已经在跑时（重复按热键）不能发 status=error：那会把前端
+                    // 的「结束面试」按钮禁掉。只有确实没有会话时才走状态错误。
+                    if is_running(&app) {
+                        emit_notice(&app, "error", error);
+                    } else {
+                        emit_status(&app, "error", error);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "托盘/热键启动会话任务失败");
+                emit_status(&app, "error", format!("启动任务失败：{error}"));
             }
         }
     });
@@ -957,14 +1022,22 @@ pub(crate) fn spawn_stop(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let task_app = app.clone();
-        if let Err(error) = tauri::async_runtime::spawn_blocking(move || stop_session(&task_app))
-            .await
-            .map_err(|error| format!("停止任务失败：{error}"))
-            .and_then(|result| result)
+        match tauri::async_runtime::spawn_blocking(move || {
+            submit_lifecycle(&task_app, LifecycleDir::Stop)
+        })
+        .await
         {
-            tracing::warn!(%error, "托盘/热键结束会话失败");
-            // 结束失败通常意味着会话其实还在跑，不能把状态改成 error。
-            emit_notice(&app, "error", error);
+            Ok((_, result)) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "托盘/热键结束会话失败");
+                    // 结束失败通常意味着会话其实还在跑，不能把状态改成 error。
+                    emit_notice(&app, "error", error);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "托盘/热键结束会话任务失败");
+                emit_notice(&app, "error", format!("停止任务失败：{error}"));
+            }
         }
     });
 }

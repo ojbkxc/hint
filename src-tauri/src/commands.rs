@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hint_core::{llm, secret, settings::Settings};
+use hint_core::{llm, secret, settings::Settings, session::LifecycleDir};
 use hint_stt::download::user_message_for;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
@@ -133,28 +133,44 @@ pub async fn import_document_text(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn start_session(app: AppHandle) -> Result<i64, String> {
     let task_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || session::start_session(&task_app))
-        .await
-        .map_err(|error| format!("启动会话任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, result) = session::submit_lifecycle(&task_app, LifecycleDir::Start);
+        result
+    })
+    .await
+    .map_err(|error| format!("启动会话任务失败：{error}"))?
 }
 
 #[tauri::command]
 pub async fn stop_session(app: AppHandle) -> Result<(), String> {
     let task_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || session::stop_session(&task_app))
-        .await
-        .map_err(|error| format!("结束会话任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, result) = session::submit_lifecycle(&task_app, LifecycleDir::Stop);
+        result.map(|_| ())
+    })
+    .await
+    .map_err(|error| format!("结束会话任务失败：{error}"))?
 }
 
 #[tauri::command]
 pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
-    if session::is_running(&app) {
-        stop_session(app).await?;
-        Ok(false)
-    } else {
-        start_session(app).await?;
-        Ok(true)
-    }
+    // 决策在锁内完成，再经生命周期队列串行执行，消除 check-exec 竞态。
+    let dir = {
+        let state = app.state::<AppState>();
+        let queue = lock(&state.lifecycle);
+        if queue.is_active() {
+            LifecycleDir::Stop
+        } else {
+            LifecycleDir::Start
+        }
+    };
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = session::submit_lifecycle(&task_app, dir);
+    })
+    .await
+    .map_err(|error| format!("切换会话任务失败：{error}"))?;
+    Ok(dir == LifecycleDir::Start)
 }
 
 fn format_time(ms: i64) -> String {

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
+use hint_core::session::LifecycleQueue;
 use hint_store::Store;
 use hint_stt::ModelManager;
 use tauri::{
@@ -52,6 +53,8 @@ pub(crate) struct AppState {
     pub(crate) prepare_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// 最近一次会话的分发线程完成信号；会话结束后仍保留，供 `remove_model` 等待。
     pub(crate) dispatch_done: Mutex<Option<Arc<(Mutex<bool>, Condvar)>>>,
+    /// 会话生命周期队列：串行化 start/stop，消除 check-exec 竞态。
+    pub(crate) lifecycle: Mutex<LifecycleQueue>,
 }
 
 /// 托盘里的「开始/结束面试」菜单项，随会话状态启用/禁用。
@@ -111,6 +114,7 @@ impl AppState {
             session: Mutex::new(None),
             prepare_cancel: Mutex::new(None),
             dispatch_done: Mutex::new(None),
+            lifecycle: Mutex::new(LifecycleQueue::default()),
         })
     }
 }
