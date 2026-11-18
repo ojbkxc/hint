@@ -7,6 +7,10 @@
 use crate::level::LevelsBus;
 use crate::lock;
 use crate::{AudioChunk, AudioConfig, Channel, Levels};
+use hint_core::audio::{
+    apply_noise_gate, JointChannel, JointSpeechTracker, JointSpeechTransition, SpeechEdgeDetector,
+    SPEECH_RMS,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{JoinHandle, ThreadId};
@@ -23,14 +27,28 @@ pub(crate) struct Runtime {
     on_chunk: Box<dyn Fn(AudioChunk) + Send + Sync>,
     on_levels: Box<dyn Fn(Levels) + Send + Sync>,
     on_error: Box<dyn Fn(String) + Send + Sync>,
+    on_speech_edge: Box<dyn Fn(JointSpeechTransition) + Send + Sync>,
+    /// 每通道一个迟滞边检测器（索引 0=Interviewer，1=Me）。
+    detectors: Mutex<[SpeechEdgeDetector; 2]>,
+    /// 双通道联合语音状态机。
+    joint: Mutex<JointSpeechTracker>,
+    /// 引擎时间轴起点，用于计算 speech-edge 的 `at_ms`。
+    epoch: Instant,
 }
 
 impl Runtime {
-    pub(crate) fn new<C, L, E>(config: AudioConfig, on_chunk: C, on_levels: L, on_error: E) -> Self
+    pub(crate) fn new<C, L, E, S>(
+        config: AudioConfig,
+        on_chunk: C,
+        on_levels: L,
+        on_error: E,
+        on_speech_edge: S,
+    ) -> Self
     where
         C: Fn(AudioChunk) + Send + Sync + 'static,
         L: Fn(Levels) + Send + Sync + 'static,
         E: Fn(String) + Send + Sync + 'static,
+        S: Fn(JointSpeechTransition) + Send + Sync + 'static,
     {
         Self {
             config,
@@ -40,6 +58,13 @@ impl Runtime {
             on_chunk: Box::new(on_chunk),
             on_levels: Box::new(on_levels),
             on_error: Box::new(on_error),
+            on_speech_edge: Box::new(on_speech_edge),
+            detectors: Mutex::new([
+                SpeechEdgeDetector::new(SPEECH_RMS),
+                SpeechEdgeDetector::new(SPEECH_RMS),
+            ]),
+            joint: Mutex::new(JointSpeechTracker::new()),
+            epoch: Instant::now(),
         }
     }
 
@@ -64,18 +89,55 @@ impl Runtime {
         self.stop.store(true, Ordering::SeqCst);
     }
 
-    /// 发布一个定长音频块：先更新电平（按 30 fps 节流），再触发 `on_chunk`。
-    pub(crate) fn publish_chunk(&self, chunk: AudioChunk) {
+    /// 发布一个定长音频块：噪声门 → RMS → 迟滞边 + 联合状态机 → 电平 → `on_chunk`。
+    pub(crate) fn publish_chunk(&self, mut chunk: AudioChunk) {
+        // 噪声门（若启用）：压低底噪，减少联合状态误判与 STT 噪声段。
+        if let Some(threshold) = self.config.noise_gate_threshold {
+            chunk.samples = apply_noise_gate(&chunk.samples, threshold);
+        }
         let rms = crate::level::rms(&chunk.samples);
+        // 迟滞边 + 联合状态机：只在真实状态迁移时回调 on_speech_edge。
+        let now_ms = self.epoch.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let edge = {
+            let mut detectors = lock(&self.detectors);
+            let detector = match chunk.channel {
+                Channel::Interviewer => &mut detectors[0],
+                Channel::Me => &mut detectors[1],
+            };
+            detector.on_rms(rms)
+        };
+        let transition = edge.and_then(|speaking| {
+            let mut joint = lock(&self.joint);
+            joint.on_edge(joint_channel(chunk.channel), speaking, now_ms)
+        });
+        if let Some(transition) = transition {
+            (self.on_speech_edge)(transition);
+        }
         self.levels
             .update(chunk.channel, rms, self.on_levels.as_ref());
         (self.on_chunk)(chunk);
     }
 
-    /// 通道退出时把该通道电平清零并强制回调一次。
+    /// 通道退出时把该通道电平清零、重置其迟滞检测器，并让联合状态机标记静默。
     pub(crate) fn finish_channel(&self, channel: Channel) {
         self.levels
             .update_force(channel, 0.0, self.on_levels.as_ref());
+        let now_ms = self.epoch.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        {
+            let mut detectors = lock(&self.detectors);
+            let detector = match channel {
+                Channel::Interviewer => &mut detectors[0],
+                Channel::Me => &mut detectors[1],
+            };
+            detector.reset();
+        }
+        let transition = {
+            let mut joint = lock(&self.joint);
+            joint.reset_channel(joint_channel(channel), now_ms)
+        };
+        if let Some(transition) = transition {
+            (self.on_speech_edge)(transition);
+        }
     }
 
     /// 可被停止请求打断的退避等待。
@@ -90,6 +152,14 @@ impl Runtime {
             }
             std::thread::sleep((deadline - now).min(Duration::from_millis(50)));
         }
+    }
+}
+
+/// hint-audio 的 `Channel` → 联合状态机的 `JointChannel`。
+fn joint_channel(channel: Channel) -> JointChannel {
+    match channel {
+        Channel::Interviewer => JointChannel::Interviewer,
+        Channel::Me => JointChannel::Me,
     }
 }
 
@@ -166,6 +236,7 @@ mod tests {
             |_chunk| {},
             |_levels| {},
             |_message| {},
+            |_transition| {},
         ));
         let handle = AudioHandle::new(runtime, Vec::new());
         assert!(handle.is_running());

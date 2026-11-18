@@ -12,7 +12,11 @@ use std::sync::mpsc::{Receiver, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hint_audio::{AudioChunk, AudioConfig, AudioEngine, Channel, Levels};
+use hint_audio::{
+    AudioChunk, AudioConfig, AudioEngine, Channel, JointChannel, JointSpeechState,
+    JointSpeechTransition, Levels,
+};
+use hint_core::audio::SPEECH_RMS;
 use hint_core::llm::{self, ChatRequest, Turn, TurnRole};
 use hint_core::pipeline;
 use hint_core::secret;
@@ -39,10 +43,12 @@ pub(crate) const EVT_QUEUE: &str = "hint://queue";
 /// 浮层不透明度变化（设置页保存后实时生效）。
 pub(crate) const EVT_OVERLAY_OPACITY: &str = "hint://overlay-opacity";
 pub(crate) const EVT_MODEL_PROGRESS: &str = "hint://model-progress";
+/// 双通道联合语音状态迁移（谁开始/停止说话）。
+pub(crate) const EVT_SPEECH_EDGE: &str = "hint://speech-edge";
 
 const TARGET_RATE: u32 = 16_000;
-/// 判定「有语音」的 RMS 阈值。
-const SPEECH_RMS: f32 = 0.012;
+/// 噪声门阈值（软膝门，仅压低底噪；可在 AudioConfig 里关闭做 A/B）。
+const NOISE_GATE_THRESHOLD: f32 = 0.003;
 /// 静音挂起时长，决定断句。
 const SILENCE_HANGOVER_MS: u64 = 650;
 /// 有效语音最短时长；更短的判为噪声丢弃。
@@ -593,6 +599,7 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
     let config = AudioConfig {
         mic_device: Some(settings.mic_device.clone()).filter(|value| !value.is_empty()),
         output_device: Some(settings.output_device.clone()).filter(|value| !value.is_empty()),
+        noise_gate_threshold: Some(NOISE_GATE_THRESHOLD),
         ..AudioConfig::default()
     };
 
@@ -713,7 +720,29 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
         }
     };
 
-    let handle = match AudioEngine::start(config, on_chunk, on_levels, on_error) {
+    let on_speech_edge = {
+        let app = app.clone();
+        let shared = Arc::clone(&shared);
+        move |transition: JointSpeechTransition| {
+            if shared.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            emit(
+                &app,
+                EVT_SPEECH_EDGE,
+                json!({
+                    "channel": channel_key(transition.channel),
+                    "speaking": transition.speaking,
+                    "joint": joint_key(transition.joint),
+                    "atMs": transition.at_ms,
+                    "msSinceOtherEdge": (transition.ms_since_other_edge != u64::MAX)
+                        .then_some(transition.ms_since_other_edge),
+                }),
+            );
+        }
+    };
+
+    let handle = match AudioEngine::start(config, on_chunk, on_levels, on_error, on_speech_edge) {
         Ok(handle) => handle,
         Err(error) => {
             cleanup_failed_start(app, session_id);
@@ -803,6 +832,24 @@ fn clamp01(value: f32) -> f32 {
         value.clamp(0.0, 1.0)
     } else {
         0.0
+    }
+}
+
+/// 联合状态机的通道名（与前端约定的小写）。
+fn channel_key(channel: JointChannel) -> &'static str {
+    match channel {
+        JointChannel::Interviewer => "interviewer",
+        JointChannel::Me => "me",
+    }
+}
+
+/// 联合状态名（与前端约定的小写）。
+fn joint_key(joint: JointSpeechState) -> &'static str {
+    match joint {
+        JointSpeechState::Neither => "neither",
+        JointSpeechState::InterviewerSpeaking => "interviewer",
+        JointSpeechState::MeSpeaking => "me",
+        JointSpeechState::Both => "both",
     }
 }
 

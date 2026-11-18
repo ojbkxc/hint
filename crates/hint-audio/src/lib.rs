@@ -38,6 +38,7 @@ mod system;
 
 pub use devices::{list_input_devices, list_output_devices};
 pub use error::{AudioError, Result};
+pub use hint_core::audio::{JointChannel, JointSpeechState, JointSpeechTransition};
 pub use runtime::AudioHandle;
 
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,7 @@ pub struct DeviceInfo {
 }
 
 /// 采集配置。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
     /// 麦克风设备 ID；`None` 或空字符串表示默认输入设备。
@@ -88,6 +89,8 @@ pub struct AudioConfig {
     pub target_sample_rate: u32,
     /// 每块样本数，默认 512（16 kHz 下约 32 ms）。
     pub chunk_samples: usize,
+    /// 噪声门阈值；`None` 关闭（默认），`Some(0.0..=1.0)` 启用软膝门。
+    pub noise_gate_threshold: Option<f32>,
 }
 
 impl Default for AudioConfig {
@@ -97,6 +100,7 @@ impl Default for AudioConfig {
             output_device: None,
             target_sample_rate: 16_000,
             chunk_samples: 512,
+            noise_gate_threshold: None,
         }
     }
 }
@@ -114,6 +118,13 @@ impl AudioConfig {
                 "chunk_samples={} 超出 1..=65536",
                 self.chunk_samples
             )));
+        }
+        if let Some(threshold) = self.noise_gate_threshold {
+            if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+                return Err(AudioError::InvalidConfig(format!(
+                    "noise_gate_threshold={threshold} 超出 0.0..=1.0"
+                )));
+            }
         }
         Ok(())
     }
@@ -146,9 +157,10 @@ impl AudioEngine {
     /// 启动双通道采集。
     ///
     /// * `config`：设备与输出格式配置；
-    /// * `on_chunk`：定长音频块回调（来自两个采集线程）；
+    /// * `on_chunk`：定长音频块回调（来自两个采集线程，噪声门后的样本）；
     /// * `on_levels`：双通道电平回调（约 30 fps）；
-    /// * `on_error`：运行时错误 / 警告回调（字符串为中文提示）。
+    /// * `on_error`：运行时错误 / 警告回调（字符串为中文提示）；
+    /// * `on_speech_edge`：双通道联合语音状态迁移回调（谁开始/停止说话）。
     ///
     /// 返回的 [`AudioHandle`] 存活期间引擎持续工作；调用 `stop()` 或
     /// `Drop` 后停止。若两个通道都无法初始化，返回错误。
@@ -157,12 +169,13 @@ impl AudioEngine {
         on_chunk: impl Fn(AudioChunk) + Send + Sync + 'static,
         on_levels: impl Fn(Levels) + Send + Sync + 'static,
         on_error: impl Fn(String) + Send + Sync + 'static,
+        on_speech_edge: impl Fn(JointSpeechTransition) + Send + Sync + 'static,
     ) -> Result<AudioHandle> {
         config.validate()?;
 
         #[cfg(not(windows))]
         {
-            let _ = (config, on_chunk, on_levels, on_error);
+            let _ = (config, on_chunk, on_levels, on_error, on_speech_edge);
             return Err(AudioError::Unsupported(
                 "系统声 loopback 仅支持 Windows；其他平台暂不可用".to_string(),
             ));
@@ -170,7 +183,7 @@ impl AudioEngine {
 
         #[cfg(windows)]
         {
-            engine::start(config, on_chunk, on_levels, on_error)
+            engine::start(config, on_chunk, on_levels, on_error, on_speech_edge)
         }
     }
 }
@@ -218,11 +231,11 @@ mod tests {
             target_sample_rate: 0,
             ..AudioConfig::default()
         };
-        assert!(AudioEngine::start(config, |_| {}, |_| {}, |_| {}).is_err());
+        assert!(AudioEngine::start(config, |_| {}, |_| {}, |_| {}, |_| {}).is_err());
         let config = AudioConfig {
             chunk_samples: 0,
             ..AudioConfig::default()
         };
-        assert!(AudioEngine::start(config, |_| {}, |_| {}, |_| {}).is_err());
+        assert!(AudioEngine::start(config, |_| {}, |_| {}, |_| {}, |_| {}).is_err());
     }
 }

@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 cpal = "0.18"
+hint-core = { path = "../hint-core" }
 rubato = "5"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

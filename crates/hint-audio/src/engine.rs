@@ -10,7 +10,7 @@
 
 use crate::error::{AudioError, Result};
 use crate::runtime::{AudioHandle, Runtime, Worker};
-use crate::{AudioChunk, AudioConfig, Levels, mic, system};
+use crate::{AudioChunk, AudioConfig, JointSpeechTransition, Levels, mic, system};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, mpsc};
@@ -27,8 +27,15 @@ pub(crate) fn start(
     on_chunk: impl Fn(AudioChunk) + Send + Sync + 'static,
     on_levels: impl Fn(Levels) + Send + Sync + 'static,
     on_error: impl Fn(String) + Send + Sync + 'static,
+    on_speech_edge: impl Fn(JointSpeechTransition) + Send + Sync + 'static,
 ) -> Result<AudioHandle> {
-    let runtime = Arc::new(Runtime::new(config, on_chunk, on_levels, on_error));
+    let runtime = Arc::new(Runtime::new(
+        config,
+        on_chunk,
+        on_levels,
+        on_error,
+        on_speech_edge,
+    ));
 
     let (mic_init_tx, mic_init_rx) = mpsc::channel::<InitResult>();
     let (sys_init_tx, sys_init_rx) = mpsc::channel::<InitResult>();
