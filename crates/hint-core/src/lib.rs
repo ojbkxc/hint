@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod secret;
 pub mod settings;
 pub mod session;
+pub mod stt;
 
 pub use error::{CoreError, Result};
 pub use llm::{ChatRequest, ChatResponse};
