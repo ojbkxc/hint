@@ -1,0 +1,97 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag（例如 v1.0.1）；手动补发时填写"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建并发布 Windows 安装包
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: 安装 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust 稳定工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 配置 MSVC 环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: 缓存 Rust 编译产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建 Tauri 应用与 NSIS 安装包
+        run: npm run tauri build
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: hint ${{ github.event.inputs.tag || github.ref_name }}
+          body: |
+            hint 面试实时提词器（Windows 10/11 x64）
+
+            ## 功能概述
+
+            - 双通道本地语音识别：麦克风（我）+ 系统声（面试官），区分两路说话人并过滤扬声器回声。
+            - 三种大模型协议流式作答：OpenAI 兼容（DeepSeek / OpenAI / 通义 / 智谱 / Ollama 等）、Anthropic Messages、Gemini。
+            - 连续多问队列：新问题自动排队逐个回答，浮层显示当前问题与排队数量；答案区为连续时间线，可回看更早的问答。
+            - 会话保存与复盘：转录和问答落本地 SQLite，结束后可在「会话复盘」导出 Markdown。
+            - 所有资料、会话与音频处理都在本机完成，API Key 存入 Windows 凭据管理器。
+
+            ## 安装方式
+
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.1_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、保存 API Key，并点「测试连接」确认可用。
+            3. 热键：`Ctrl+Shift+Space` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
+
+            ## 首次使用需下载模型
+
+            语音模型不在安装包内，首次使用前需在设置页「语音模型」卡片下载约 241 MB（241,357,257 字节）的本地识别模型，支持断点续传与 sha256 校验。下载完成后才能开始面试。
+
+            ## 系统要求
+
+            - Windows 10 / Windows 11，x64。
+            - 需要可用的麦克风与系统播放设备；建议佩戴耳机，避免回声影响识别。
+            - 首次编译/运行依赖系统 WebView2（Windows 10 较新版本与 Windows 11 通常已内置）。
+
+            ## 已知限制
+
+            - 截图问答尚未启用（M5 预留）。
+            - 未启用 CSP。
+            - 无自动更新，需要手动下载新版本覆盖安装。
+            - 仅支持 Windows。
+            - 待答问题队列最多 5 个；简历与项目资料各 6000 字上限。
+            - 个人知识库尚未支持，当前仅注入简历与项目资料。
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            target/release/hint.exe
+            target/release/bundle/nsis/*.exe

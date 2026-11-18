@@ -13,6 +13,21 @@ export type AnswerState = {
   done: boolean;
   model: string;
   ttftMs: number | null;
+  /** 这一轮答案对应的面试官问题；空字符串表示未知。 */
+  question: string;
+  /** 后端队列里还有多少个问题等待回答。 */
+  pending: number;
+  /** 后端回答失败时的中文错误；空字符串表示无错误。 */
+  error: string;
+  /** 是否可以点「重试」恢复（false 时通常是配置问题）。 */
+  retryable: boolean;
+};
+
+/** 本场已归档的问答，用于浮层历史回看。 */
+export type AnswerHistoryEntry = {
+  question: string;
+  text: string;
+  model: string;
 };
 
 export type LevelsState = {
@@ -22,6 +37,12 @@ export type LevelsState = {
 
 export type StatusState = {
   state: string;
+  message: string;
+};
+
+/** hint://notice 的提示；level 为 info 或 error。 */
+export type NoticeState = {
+  level: string;
   message: string;
 };
 
@@ -45,4 +66,8 @@ export const HINT_EVENTS = {
   status: "hint://status",
   /** 与面试会话无关的提示（模型下载、热键注册、截图预留），不覆盖会话状态。 */
   notice: "hint://notice",
+  /** 排队问题数量的实时变化（入队/出队/清空）。 */
+  queue: "hint://queue",
+  /** 浮层背景不透明度变化，payload { opacity: number }。 */
+  overlayOpacity: "hint://overlay-opacity",
 } as const;

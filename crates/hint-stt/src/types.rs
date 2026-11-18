@@ -176,17 +176,22 @@ impl WorkerConfig {
                 message: format!("max_audio_bytes out of range: {}", self.max_audio_bytes),
             });
         }
-        if !(1.0..=600.0).contains(&self.max_audio_seconds) {
+        // 注意：NaN 与任何数比较都是 false，若只写区间判断，NaN 会漏网并
+        // 经 `vad_buffer_seconds()` 传入原生 VAD 缓冲区长度，故显式排除非有限值。
+        if !self.max_audio_seconds.is_finite() || !(1.0..=600.0).contains(&self.max_audio_seconds) {
             return Err(SttError::Config {
                 message: format!("max_audio_seconds out of range: {}", self.max_audio_seconds),
             });
         }
-        if !(0.0..=1.0).contains(&self.vad_threshold) {
+        if !self.vad_threshold.is_finite() || !(0.0..=1.0).contains(&self.vad_threshold) {
             return Err(SttError::Config {
                 message: format!("vad_threshold out of range: {}", self.vad_threshold),
             });
         }
-        if self.min_silence_seconds <= 0.0 || self.min_silence_seconds > 10.0 {
+        if !self.min_silence_seconds.is_finite()
+            || self.min_silence_seconds <= 0.0
+            || self.min_silence_seconds > 10.0
+        {
             return Err(SttError::Config {
                 message: format!(
                     "min_silence_seconds out of range: {}",
@@ -194,7 +199,10 @@ impl WorkerConfig {
                 ),
             });
         }
-        if self.min_speech_seconds < 0.0 || self.min_speech_seconds > 10.0 {
+        if !self.min_speech_seconds.is_finite()
+            || self.min_speech_seconds < 0.0
+            || self.min_speech_seconds > 10.0
+        {
             return Err(SttError::Config {
                 message: format!(
                     "min_speech_seconds out of range: {}",
@@ -202,7 +210,10 @@ impl WorkerConfig {
                 ),
             });
         }
-        if self.max_speech_seconds <= 0.0 || self.max_speech_seconds > 600.0 {
+        if !self.max_speech_seconds.is_finite()
+            || self.max_speech_seconds <= 0.0
+            || self.max_speech_seconds > 600.0
+        {
             return Err(SttError::Config {
                 message: format!(
                     "max_speech_seconds out of range: {}",
@@ -220,6 +231,10 @@ impl WorkerConfig {
 }
 
 /// 校验语言提示是否在支持列表内。
+///
+/// 语言值会被拼进 `post_wav` 的 HTTP 请求行（`POST /transcribe?language=…`），
+/// 因此必须严格白名单：任何 `\r`/`\n`（CRLF 注入）、空格或非预期字符都会
+/// 被拒绝，绝不允许落到请求行里。
 pub fn validate_language(language: &str) -> Result<()> {
     if WORKER_LANGUAGES.contains(&language) {
         Ok(())
@@ -274,6 +289,49 @@ mod tests {
         }
         assert!(validate_language("fr").is_err());
         assert!(validate_language("").is_err());
+    }
+
+    #[test]
+    fn worker_config_env_overrides_are_clamped_by_validate() {
+        // 这些字段随 JSON 契约进入 worker；非法值不能让 worker 申请超大缓冲。
+        let mut config = WorkerConfig::default();
+        config.model_path = PathBuf::from("m");
+        config.tokens_path = PathBuf::from("t");
+        config.vad_path = PathBuf::from("v");
+        config.max_speech_seconds = 100_000.0;
+        assert!(config.validate().is_err());
+        config.max_speech_seconds = 30.0;
+        config.min_silence_seconds = f32::NAN;
+        assert!(config.validate().is_err(), "NaN must be rejected");
+        config.min_silence_seconds = 0.5;
+        config.vad_threshold = f32::INFINITY;
+        assert!(config.validate().is_err(), "infinite threshold rejected");
+        config.vad_threshold = 0.5;
+        config.threads = 17;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn language_whitelist_rejects_request_line_injection() {
+        // 绝不允许 CRLF 或任何空白进入 HTTP 请求行。
+        for malicious in [
+            "auto\r\nX-Injected: 1",
+            "zh\r\n\r\nGET /x",
+            "zh en",
+            "auto\n",
+            "zh\t",
+            "auto%0d%0aX",
+            "ZH",
+            "",
+        ] {
+            assert!(
+                validate_language(malicious).is_err(),
+                "malicious language must be rejected: {malicious:?}"
+            );
+        }
+        for allowed in WORKER_LANGUAGES {
+            assert!(validate_language(allowed).is_ok());
+        }
     }
 
     #[test]

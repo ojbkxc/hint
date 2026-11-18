@@ -353,7 +353,14 @@ impl Store {
     }
 
     /// 删除开始时间早于 `days` 天前的会话，返回删除条数。
+    ///
+    /// `days == 0` 表示「不清理」（返回 0）：否则截止时间就是当前时刻，
+    /// 刚创建、甚至同一毫秒内的会话都可能被误删。
+    /// 删除会话时依赖外键级联清掉其段落与答案。
     pub fn cleanup_older_than_days(&self, days: u32) -> Result<usize> {
+        if days == 0 {
+            return Ok(0);
+        }
         let cutoff = now_ms() - i64::from(days) * 24 * 60 * 60 * 1_000;
         Ok(self.conn.execute(
             "DELETE FROM sessions WHERE started_at < ?1",
@@ -556,19 +563,22 @@ impl Store {
         }
 
         out.push_str("## 转录与问答\n\n");
+        // 同一提问可能有多次「重新生成」产生的多条答案，必须全部导出；
+        // 按答案 id（生成顺序）分组，直接遍历一次，避免 O(n²) 的 find。
+        let mut answers_by_segment: std::collections::HashMap<i64, Vec<&Answer>> =
+            std::collections::HashMap::new();
         let mut orphan_answers: Vec<&Answer> = Vec::new();
-        let linked: Vec<Option<&Answer>> = detail
-            .segments
-            .iter()
-            .map(|segment| {
-                detail
-                    .answers
-                    .iter()
-                    .find(|answer| answer.question_segment_id == Some(segment.id))
-            })
-            .collect();
+        for answer in &detail.answers {
+            match answer.question_segment_id {
+                Some(segment_id) => answers_by_segment
+                    .entry(segment_id)
+                    .or_default()
+                    .push(answer),
+                None => orphan_answers.push(answer),
+            }
+        }
 
-        for (segment, answer) in detail.segments.iter().zip(&linked) {
+        for segment in &detail.segments {
             let time = format_clock(session.started_at + segment.start_ms);
             out.push_str(&format!(
                 "**{}**（{}）：{}\n",
@@ -581,20 +591,24 @@ impl Store {
             }
             out.push('\n');
 
-            if let Some(answer) = answer {
-                render_answer(&mut out, answer);
+            if let Some(answers) = answers_by_segment.get(&segment.id) {
+                for answer in answers {
+                    render_answer(&mut out, answer);
+                }
             }
         }
 
-        for answer in &detail.answers {
-            let linked_already = detail
+        // 关联到「不属于本会话的段落」的答案也应出现在导出里，而不是凭空消失。
+        for (segment_id, answers) in &answers_by_segment {
+            if !detail
                 .segments
                 .iter()
-                .any(|segment| answer.question_segment_id == Some(segment.id));
-            if !linked_already {
-                orphan_answers.push(answer);
+                .any(|segment| segment.id == *segment_id)
+            {
+                orphan_answers.extend(answers.iter().copied());
             }
         }
+        orphan_answers.sort_by_key(|answer| answer.id);
         if !orphan_answers.is_empty() {
             out.push_str("## 其他回答\n\n");
             for answer in orphan_answers {
@@ -897,6 +911,148 @@ mod tests {
         let session = store.create_session("p", "m", None).expect("会话");
         assert_eq!(store.cleanup_older_than_days(0).expect("清理"), 0);
         assert!(store.get_session(session).is_ok());
+    }
+
+    #[test]
+    fn cleanup_cascades_segments_and_answers() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let old = store.create_session("p", "m", None).expect("旧会话");
+        let q = store
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧问题", false)
+            .expect("旧段落");
+        store
+            .add_answer(old, Some(q), "旧答案", "m", AnswerMetrics::default())
+            .expect("旧答案");
+        let long_ago = now_ms() - 40 * 24 * 60 * 60 * 1_000;
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET started_at = ?1 WHERE id = ?2",
+                params![long_ago, old],
+            )
+            .expect("改时间");
+
+        assert_eq!(store.cleanup_older_than_days(30).expect("清理"), 1);
+        // 外键级联：不留下孤儿段落与答案。
+        let segments: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))
+            .expect("统计段落");
+        let answers: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM answers", [], |row| row.get(0))
+            .expect("统计答案");
+        assert_eq!(segments, 0);
+        assert_eq!(answers, 0);
+    }
+
+    #[test]
+    fn delete_all_sessions_cascades_children() {
+        let store = Store::open_in_memory().expect("打开内存库");
+        let session = store.create_session("p", "m", None).expect("会话");
+        let q = store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false)
+            .expect("段落");
+        store
+            .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
+            .expect("答案");
+
+        assert_eq!(store.delete_all_sessions().expect("全部删除"), 1);
+        let segments: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))
+            .expect("统计段落");
+        let answers: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM answers", [], |row| row.get(0))
+            .expect("统计答案");
+        assert_eq!(segments, 0);
+        assert_eq!(answers, 0);
+    }
+
+    #[test]
+    fn file_database_uses_wal_journal() {
+        let path = std::env::temp_dir().join(format!(
+            "hint-store-wal-test-{}-{}.db",
+            std::process::id(),
+            now_ms()
+        ));
+        {
+            let store = Store::open(&path).expect("打开文件库");
+            let mode: String = store
+                .conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .expect("读取 journal_mode");
+            assert_eq!(mode.to_lowercase(), "wal");
+            let foreign_keys: i64 = store
+                .conn
+                .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+                .expect("读取 foreign_keys");
+            assert_eq!(foreign_keys, 1);
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn markdown_export_keeps_every_regenerated_answer() {
+        let (store, session) = store_with_session();
+        let q = store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "介绍一下自己", false)
+            .expect("提问");
+        // 同一提问被「重新生成」两次，三条答案都应导出。
+        store
+            .add_answer(
+                session,
+                Some(q),
+                "第一版回答",
+                "m",
+                AnswerMetrics::default(),
+            )
+            .expect("答案一");
+        store
+            .add_answer(
+                session,
+                Some(q),
+                "第二版回答",
+                "m",
+                AnswerMetrics::default(),
+            )
+            .expect("答案二");
+
+        let markdown = store.export_markdown(session).expect("导出");
+        assert!(markdown.contains("第一版回答"));
+        assert!(markdown.contains("第二版回答"));
+        assert_eq!(markdown.matches("**回答**").count(), 2);
+    }
+
+    #[test]
+    fn markdown_export_timeline_uses_session_start_offset() {
+        let (store, session) = store_with_session();
+        // 把开始时间固定到一个整点，避免依赖真实时钟。
+        let started_at = 1_700_000_000_000i64; // 2023-11-14 22:13:20 UTC
+        store
+            .conn
+            .execute(
+                "UPDATE sessions SET started_at = ?1 WHERE id = ?2",
+                params![started_at, session],
+            )
+            .expect("改时间");
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "零秒", false)
+            .expect("段落零");
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 65_000, 66_000, "一分零五秒", false)
+            .expect("段落一");
+
+        let markdown = store.export_markdown(session).expect("导出");
+        let expected0 = format_clock(started_at);
+        let expected1 = format_clock(started_at + 65_000);
+        assert!(markdown.contains(&format!("**面试官**（{expected0}）：零秒")));
+        assert!(markdown.contains(&format!("**面试官**（{expected1}）：一分零五秒")));
+        // 时间轴必须递增，不能出现错位。
+        assert!(markdown.find("零秒").unwrap() < markdown.find("一分零五秒").unwrap());
     }
 
     #[test]

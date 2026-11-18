@@ -33,6 +33,10 @@ pub(crate) const EVT_LEVELS: &str = "hint://levels";
 pub(crate) const EVT_STATUS: &str = "hint://status";
 /// 与面试会话无关的提示（模型下载、热键注册、截图预留），不覆盖会话状态。
 pub(crate) const EVT_NOTICE: &str = "hint://notice";
+/// 排队问题的实时数量（入队/出队/清空时发），供浮层刷新「排队 N」。
+pub(crate) const EVT_QUEUE: &str = "hint://queue";
+/// 浮层不透明度变化（设置页保存后实时生效）。
+pub(crate) const EVT_OVERLAY_OPACITY: &str = "hint://overlay-opacity";
 pub(crate) const EVT_MODEL_PROGRESS: &str = "hint://model-progress";
 
 const TARGET_RATE: u32 = 16_000;
@@ -230,6 +234,157 @@ struct RecentLine {
     text: String,
 }
 
+/// 答案队列上限：连续多问时最多排 5 个，超出丢弃新问题并提示。
+const ANSWER_QUEUE_LIMIT: usize = 5;
+
+/// 归一化文本用于去重：只保留字母/数字（含中文），转小写。
+///
+/// STT 对同一句话可能给出「你、好。」「你好」两种形态，标点与空白不应该
+/// 让重复问题绕过去重。
+fn normalize_for_dedup(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// 判断两次识别是否同一句。
+///
+/// 只承认「归一化后完全相同」或「去掉礼貌/语气前后缀后相同」。
+/// 不能用「短句被长句包含且长度接近」——那会把真实追问
+/// （「介绍一下你的项目」→「介绍一下你的项目难点」）当成重复静默吞掉。
+fn similar_text(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if a == b {
+        return true;
+    }
+    trim_politeness(a) == trim_politeness(b)
+}
+
+/// 去掉常见的礼貌前缀与语气尾缀，仅用于判重。
+///
+/// 列表刻意保持很短：多剥一个字就可能把不同问题合并。
+fn trim_politeness(text: &str) -> &str {
+    const LEADING: [&str; 9] = [
+        "那么",
+        "那",
+        "然后",
+        "麻烦你",
+        "麻烦",
+        "请你",
+        "请",
+        "想问一下",
+        "我想问一下",
+    ];
+    const TRAILING: [&str; 8] = ["呢", "吗", "呀", "啊", "吧", "哈", "好不好", "可以吗"];
+
+    let mut rest = text;
+    // 前缀只剥一次（「那请你…」这种多层组合极少，多剥反而危险）。
+    if let Some(prefix) = LEADING
+        .iter()
+        .filter(|prefix| rest.starts_with(*prefix))
+        .max_by_key(|prefix| prefix.chars().count())
+    {
+        rest = &rest[prefix.len()..];
+    }
+    for suffix in TRAILING {
+        if let Some(stripped) = rest.strip_suffix(suffix) {
+            rest = stripped;
+            break;
+        }
+    }
+    rest
+}
+
+/// 排队中的一个问题。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QueuedQuestion {
+    text: String,
+    segment_id: Option<i64>,
+    is_regenerate: bool,
+}
+
+/// 入队结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnqueueOutcome {
+    Queued,
+    Duplicate,
+    Full,
+}
+
+/// 问题队列 + worker 状态，同一把锁保护以避免丢唤醒。
+///
+/// 纯结构、不依赖 Tauri，便于单测。
+#[derive(Default)]
+struct QuestionQueue {
+    items: VecDeque<QueuedQuestion>,
+    /// 是否已有 worker 在消费；用于保证同一时刻只有一个流式请求。
+    worker_running: bool,
+    /// 正在作答的问题（归一化后），用于与「队尾」一起去重。
+    current: Option<String>,
+}
+
+impl QuestionQueue {
+    fn enqueue(&mut self, question: QueuedQuestion) -> EnqueueOutcome {
+        let normalized = normalize_for_dedup(&question.text);
+        if normalized.is_empty() {
+            return EnqueueOutcome::Duplicate;
+        }
+        if let Some(current) = self.current.as_deref()
+            && similar_text(&normalized, current)
+        {
+            return EnqueueOutcome::Duplicate;
+        }
+        if let Some(tail) = self.items.back()
+            && similar_text(&normalized, &normalize_for_dedup(&tail.text))
+        {
+            return EnqueueOutcome::Duplicate;
+        }
+        if self.items.len() >= ANSWER_QUEUE_LIMIT {
+            return EnqueueOutcome::Full;
+        }
+        self.items.push_back(question);
+        EnqueueOutcome::Queued
+    }
+
+    /// 队列非空且当前没有 worker 时才返回 true，并置位「worker 在跑」。
+    fn begin_worker(&mut self) -> bool {
+        if self.worker_running || self.items.is_empty() {
+            return false;
+        }
+        self.worker_running = true;
+        true
+    }
+
+    fn take_next(&mut self) -> Option<QueuedQuestion> {
+        let question = self.items.pop_front()?;
+        self.current = Some(normalize_for_dedup(&question.text));
+        Some(question)
+    }
+
+    fn finish_current(&mut self) {
+        self.current = None;
+    }
+
+    /// worker 退出时调用；返回 true 表示退出瞬间又有新问题入队，需要重启。
+    fn end_worker(&mut self) -> bool {
+        self.worker_running = false;
+        !self.items.is_empty()
+    }
+
+    fn pending(&self) -> usize {
+        self.items.len()
+    }
+
+    /// 停止会话 / 重新生成时清空排队与当前问题（不动 worker 标志）。
+    fn clear(&mut self) {
+        self.items.clear();
+        self.current = None;
+    }
+}
+
 /// 提示词上下文：历史轮次 + 最近面试官文本 + 最近一个问题。
 struct AnswerCtx {
     history: Vec<Turn>,
@@ -244,12 +399,28 @@ pub(crate) struct SessionShared {
     trigger: TriggerMode,
     cancelled: AtomicBool,
     answer_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// 连续多问的答案队列；worker 串行消费，不再取消上一题。
+    answers: Mutex<QuestionQueue>,
     ctx: Mutex<AnswerCtx>,
 }
 
 impl SessionShared {
     fn push_turn(&self, role: TurnRole, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
         let mut ctx = lock(&self.ctx);
+        // 连续两个「我」轮如果内容近似（生成答案被用户念出来、STT 重复），
+        // 用新文本替换旧轮，避免历史里堆重复答案；不影响面试官轮次。
+        if role == TurnRole::Me
+            && let Some(last) = ctx.history.last_mut()
+            && last.role == TurnRole::Me
+            && similar_text(&normalize_for_dedup(&last.text), &normalize_for_dedup(text))
+        {
+            last.text = text.to_string();
+            return;
+        }
         ctx.history.push(Turn {
             role,
             text: text.to_string(),
@@ -258,6 +429,11 @@ impl SessionShared {
         if overflow > 0 {
             ctx.history.drain(..overflow);
         }
+    }
+
+    /// 把模型生成的答案写入历史，供下一题组装提示词时使用。
+    fn push_generated_answer(&self, text: &str) {
+        self.push_turn(TurnRole::Me, text);
     }
 
     fn record_interviewer(&self, text: &str, is_question: bool) {
@@ -368,6 +544,13 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
         cleanup_failed_start(app, session_id);
         format!("无法定位程序路径，语音 worker 无法启动：{error}")
     })?;
+    // worker 冷启要加载约 240MB 模型（最长 60 秒），期间必须给出阶段提示，
+    // 否则 UI 会一直停在「正在创建会话…」。
+    emit_status(
+        app,
+        "connecting",
+        "正在加载本地语音模型，首次启动约需 10–30 秒…",
+    );
     let worker_config = state.model.worker_config();
     let client = match WorkerClient::spawn(&exe, worker_config) {
         Ok(client) => client,
@@ -385,6 +568,7 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
         settings,
         cancelled: AtomicBool::new(false),
         answer_cancel: Mutex::new(None),
+        answers: Mutex::new(QuestionQueue::default()),
         ctx: Mutex::new(AnswerCtx {
             history: Vec::new(),
             recent_interviewer: VecDeque::new(),
@@ -587,6 +771,9 @@ pub(crate) fn stop_session(app: &AppHandle) -> Result<(), String> {
     if let Some(flag) = lock(&shared.answer_cancel).take() {
         flag.store(true, Ordering::SeqCst);
     }
+    // 清空排队的问题；worker 看到 cancelled 后会自行退出。
+    lock(&shared.answers).clear();
+    emit_queue_len(app, &shared);
     // 先停采集（join 两个采集线程），再释放句柄让回调闭包连同 Sender 一起
     // 析构；分发线程随即看到 channel 断开并退出，不必阻塞等待推理。
     handle.stop();
@@ -629,22 +816,119 @@ pub(crate) fn shutdown(app: &AppHandle) {
     }
 }
 
-/// 重新生成最近一个问题的回答。
-pub(crate) fn regenerate(app: &AppHandle) -> Result<(), String> {
-    let shared = current_shared(app).ok_or_else(|| "请先开始面试会话。".to_string())?;
-    let question = shared
-        .last_question()
-        .ok_or_else(|| "暂无可回答的问题，请等待面试官提问。".to_string())?;
-    let mut history = shared.history_snapshot();
-    // 去掉与本次问题重复的尾轮，避免提示词里出现两遍。
-    if let Some(last) = history.last()
-        && last.role == TurnRole::Interviewer
-        && last.text == question
-    {
-        history.pop();
+/// 解析「要回答的问题」。
+///
+/// 优先用启发式判定出的 `last_question`；manual 模式下启发式可能一直不更新，
+/// 此时回退到最近一条面试官文本（先看 8 秒窗口，再看完整历史），
+/// 让用户手动按 Ctrl+Shift+A 时不依赖自动判定。
+fn resolve_question(shared: &SessionShared) -> Option<String> {
+    if let Some(question) = shared.last_question() {
+        let trimmed = question.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
     }
-    spawn_answer(app.clone(), shared, question, history, None, false);
+    let from_recent = shared
+        .recent_interviewer_texts()
+        .into_iter()
+        .rev()
+        .find(|text| !text.trim().is_empty());
+    if let Some(text) = from_recent {
+        return Some(text.trim().to_string());
+    }
+    shared
+        .history_snapshot()
+        .into_iter()
+        .rev()
+        .find(|turn| turn.role == TurnRole::Interviewer && !turn.text.trim().is_empty())
+        .map(|turn| turn.text.trim().to_string())
+}
+
+/// 重新生成最近一个问题的回答：取消正在生成的流、清空排队，把最新问题
+/// 以 `is_regenerate` 重新放到队首（等价于「现在就要最新问题的答案」）。
+pub(crate) fn regenerate(app: &AppHandle) -> Result<(), String> {
+    let shared = current_shared(app)
+        .ok_or_else(|| "还没有开始面试会话，请先点「开始面试」或按 Ctrl+Shift+R。".to_string())?;
+    let question = resolve_question(&shared).ok_or_else(|| {
+        "还没有识别到面试官的问题，等面试官提问后再按 Ctrl+Shift+A（或点浮层「重新生成」）。"
+            .to_string()
+    })?;
+    // 取消当前流（失败/取消不会发错误提示），并丢掉积压的问题。
+    if let Some(flag) = lock(&shared.answer_cancel).as_ref() {
+        flag.store(true, Ordering::SeqCst);
+    }
+    lock(&shared.answers).clear();
+    enqueue_question(app, &shared, question, None, true);
     Ok(())
+}
+
+/// 入队一个问题；worker 没在跑时拉起 worker。
+fn enqueue_question(
+    app: &AppHandle,
+    shared: &Arc<SessionShared>,
+    text: String,
+    segment_id: Option<i64>,
+    is_regenerate: bool,
+) {
+    let outcome = lock(&shared.answers).enqueue(QueuedQuestion {
+        text,
+        segment_id,
+        is_regenerate,
+    });
+    match outcome {
+        EnqueueOutcome::Queued => {}
+        EnqueueOutcome::Duplicate => {
+            tracing::debug!("重复问题，跳过入队");
+            return;
+        }
+        EnqueueOutcome::Full => {
+            // 队列满时丢弃新问题：面试里最新问题通常更重要，但连续丢会伤体验，
+            // 这里明确提示用户可手动作答。
+            emit_notice(
+                app,
+                "info",
+                "问题积压较多，已忽略最新一条；可按 Ctrl+Shift+A 优先作答当前问题",
+            );
+            return;
+        }
+    }
+    emit_queue_len(app, shared);
+    start_answer_worker(app, shared);
+}
+
+/// 把当前排队数发给前端；流式过程中新增问题时浮层也能立刻看到「排队 N」。
+fn emit_queue_len(app: &AppHandle, shared: &Arc<SessionShared>) {
+    let pending = lock(&shared.answers).pending();
+    emit(app, EVT_QUEUE, json!({ "pending": pending }));
+}
+
+/// 拉起唯一的答案 worker。已有 worker 时直接返回，由它消费新入队的问题。
+fn start_answer_worker(app: &AppHandle, shared: &Arc<SessionShared>) {
+    if !lock(&shared.answers).begin_worker() {
+        return;
+    }
+    let app = app.clone();
+    let shared = Arc::clone(shared);
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if shared.cancelled.load(Ordering::Acquire) {
+                lock(&shared.answers).clear();
+                break;
+            }
+            let Some(job) = lock(&shared.answers).take_next() else {
+                break;
+            };
+            emit_queue_len(&app, &shared);
+            answer_one(&app, &shared, job).await;
+            lock(&shared.answers).finish_current();
+        }
+        // 退出瞬间可能刚好有新问题入队（end_worker 与入队同一把锁），
+        // 返回 true 时重新拉起，避免丢唤醒。
+        let restart = lock(&shared.answers).end_worker();
+        if restart && !shared.cancelled.load(Ordering::Acquire) {
+            start_answer_worker(&app, &shared);
+        }
+    });
 }
 
 // 托盘 / 热键用的异步入口：内部全是阻塞操作，必须离开事件循环线程。
@@ -658,7 +942,13 @@ pub(crate) fn spawn_start(app: &AppHandle) {
             .and_then(|result| result)
         {
             tracing::warn!(%error, "托盘/热键启动会话失败");
-            emit_status(&app, "error", error);
+            // 会话已经在跑时（重复按热键）不能发 status=error：那会把前端
+            // 的「结束面试」按钮禁掉。只有确实没有会话时才走状态错误。
+            if is_running(&app) {
+                emit_notice(&app, "error", error);
+            } else {
+                emit_status(&app, "error", error);
+            }
         }
     });
 }
@@ -673,7 +963,8 @@ pub(crate) fn spawn_stop(app: &AppHandle) {
             .and_then(|result| result)
         {
             tracing::warn!(%error, "托盘/热键结束会话失败");
-            emit_status(&app, "error", error);
+            // 结束失败通常意味着会话其实还在跑，不能把状态改成 error。
+            emit_notice(&app, "error", error);
         }
     });
 }
@@ -682,7 +973,9 @@ pub(crate) fn spawn_regenerate(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(error) = regenerate(&app) {
-            emit_status(&app, "error", error);
+            // 这里绝不能发 status=error：会话还在正常跑，前端会把「结束面试」
+            // 按钮禁用、显示「启动失败」。用 notice 单独提示。
+            emit_notice(&app, "error", error);
         }
     });
 }
@@ -783,19 +1076,11 @@ fn handle_transcript(
             );
 
             let is_question = pipeline::looks_like_question(text);
-            let history = shared.history_snapshot();
             shared.push_turn(TurnRole::Interviewer, text);
             shared.record_interviewer(text, is_question);
 
             if is_question && pipeline::should_generate(shared.trigger, true) {
-                spawn_answer(
-                    app.clone(),
-                    Arc::clone(shared),
-                    text.to_string(),
-                    history,
-                    segment_id,
-                    false,
-                );
+                enqueue_question(app, shared, text.to_string(), segment_id, false);
             }
         }
         Channel::Me => {
@@ -833,23 +1118,30 @@ fn handle_transcript(
 // LLM 流式生成
 // ---------------------------------------------------------------------------
 
-fn spawn_answer(
-    app: AppHandle,
-    shared: Arc<SessionShared>,
-    question: String,
-    history: Vec<Turn>,
-    question_segment_id: Option<i64>,
-    is_regenerate: bool,
-) {
+/// 作答一个问题（由 worker 串行调用）。
+///
+/// 上下文在**此刻**才快照：这样能包含前面已经完成并写入历史的答案。
+async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQuestion) {
     if shared.cancelled.load(Ordering::Acquire) {
         return;
     }
+    let question = job.text;
+    let mut history = shared.history_snapshot();
+    // 当前问题在检测时已被 push_turn 写入；排队期间后续问题也会写进历史。
+    // 作答时要把「当前问题及其之后」的面试官轮全部截掉，否则 Q1 的 prompt
+    // 里会提前出现 Q2，模型可能一次回答两问或答错题。
+    if let Some(position) = history
+        .iter()
+        .rposition(|turn| turn.role == TurnRole::Interviewer && turn.text.trim() == question.trim())
+    {
+        // 丢掉当前问题以及排队期间已写入的后续面试官发言。
+        history.truncate(position);
+    }
+    let pending = lock(&shared.answers).pending();
     let settings = shared.settings.clone();
-    let system = pipeline::build_system_prompt(&settings);
-    let user = pipeline::build_user_prompt(&question, &history);
     let request = ChatRequest {
-        system,
-        user,
+        system: pipeline::build_system_prompt(&settings),
+        user: pipeline::build_user_prompt(&question, &history),
         ..ChatRequest::default()
     };
 
@@ -861,64 +1153,113 @@ fn spawn_answer(
         }
     }
 
-    // 新的一轮开始：通知前端清空上一轮答案。
+    // 新的一轮开始：通知前端清空上一轮答案，并带上本轮问题与排队数。
     emit(
-        &app,
+        app,
         EVT_ANSWER_DELTA,
-        json!({ "text": "", "reset": true, "regenerate": is_regenerate }),
+        json!({
+            "text": "",
+            "reset": true,
+            "regenerate": job.is_regenerate,
+            "question": question,
+            "pending": pending,
+        }),
     );
 
-    let delta_app = app.clone();
-    let done_app = app.clone();
-    let shared_for_task = Arc::clone(&shared);
-    let cancel_for_task = Arc::clone(&cancel);
-    let model_id = settings.model.clone();
+    let provider = settings.provider.as_str().to_string();
+    let key = match secret::get(&provider) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(%error, "读取 API Key 失败");
+            finish_answer(
+                app,
+                shared,
+                &cancel,
+                AnswerOutcome::Failed {
+                    message: format!(
+                        "读取 API Key 失败：{error}。请到设置页重新保存 Key 后点「重新生成」。"
+                    ),
+                    partial: String::new(),
+                    ttft_ms: None,
+                    retryable: false,
+                },
+                job.segment_id,
+                // 带模型名，避免被前端当成「空 text + 空 model = 清空答案」。
+                Some(settings.model.clone()),
+            );
+            return;
+        }
+    };
 
-    tauri::async_runtime::spawn(async move {
-        let provider = settings.provider.as_str().to_string();
-        let key = match secret::get(&provider) {
-            Ok(key) => key,
-            Err(error) => {
-                tracing::warn!(%error, "读取 API Key 失败");
-                finish_answer(
-                    &done_app,
-                    &shared_for_task,
-                    &cancel_for_task,
-                    Err(format!("读取 API Key 失败：{error}")),
-                    None,
-                    None,
-                );
-                return;
+    // 旧流被重新生成 / 会话停止取代后，stream 内部要到下一个 delta 才会
+    // 观察到取消；这里在 emit 前先看自己的取消标志，避免旧 delta 污染新答案。
+    let cancel_for_delta = Arc::clone(&cancel);
+    let partial = Arc::new(Mutex::new(PartialAnswer::default()));
+    let partial_for_delta = Arc::clone(&partial);
+    let started = Instant::now();
+    let result = llm::stream(&settings, &key, request, &cancel, |delta| {
+        if cancel_for_delta.load(Ordering::Acquire) {
+            return;
+        }
+        {
+            let mut state = lock(&partial_for_delta);
+            if state.ttft_ms.is_none() && !delta.trim().is_empty() {
+                state.ttft_ms = Some(started.elapsed().as_millis() as u64);
             }
-        };
+            state.text.push_str(delta);
+        }
+        emit(app, EVT_ANSWER_DELTA, json!({ "text": delta }));
+    })
+    .await;
 
-        // 旧流被新问题取代（或会话停止）后，stream 内部要到下一个 delta 才会
-        // 观察到取消；这里在 emit 前先看自己的取消标志，避免旧 delta 污染新答案。
-        let cancel_for_delta = Arc::clone(&cancel_for_task);
-        let result = llm::stream(&settings, &key, request, &cancel_for_task, |delta| {
-            if cancel_for_delta.load(Ordering::Acquire) {
-                return;
+    let outcome = match result {
+        Ok(stats) => AnswerOutcome::Completed(stats),
+        Err(error) => {
+            // 可重试性必须取类型化判定的结果，不能靠字符串里的状态码猜；
+            // 例如「响应中没有可用文本」不含状态码，但并不可重试。
+            let retryable = error.is_retryable();
+            let state = lock(&partial);
+            AnswerOutcome::Failed {
+                message: error.to_string(),
+                partial: state.text.clone(),
+                ttft_ms: state.ttft_ms,
+                retryable,
             }
-            emit(&delta_app, EVT_ANSWER_DELTA, json!({ "text": delta }));
-        })
-        .await;
+        }
+    };
+    finish_answer(
+        app,
+        shared,
+        &cancel,
+        outcome,
+        job.segment_id,
+        Some(settings.model.clone()),
+    );
+}
 
-        finish_answer(
-            &done_app,
-            &shared_for_task,
-            &cancel_for_task,
-            result.map_err(|error| error.to_string()),
-            question_segment_id,
-            Some(model_id),
-        );
-    });
+/// 流式过程中的部分结果：失败时用来回填 answer-done，避免用户看到空白。
+#[derive(Default)]
+struct PartialAnswer {
+    text: String,
+    ttft_ms: Option<u64>,
+}
+
+/// 一轮回答的最终结果。
+enum AnswerOutcome {
+    Completed(llm::ChatStats),
+    Failed {
+        message: String,
+        partial: String,
+        ttft_ms: Option<u64>,
+        retryable: bool,
+    },
 }
 
 fn finish_answer(
     app: &AppHandle,
     shared: &Arc<SessionShared>,
     cancel: &Arc<AtomicBool>,
-    result: Result<llm::ChatStats, String>,
+    outcome: AnswerOutcome,
     question_segment_id: Option<i64>,
     model_hint: Option<String>,
 ) {
@@ -928,14 +1269,18 @@ fn finish_answer(
         slot.as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, cancel))
     };
-    if !still_current || shared.cancelled.load(Ordering::Acquire) {
+    // 取消不是错误：用户主动停止 / 重新生成，不能弹任何失败提示。
+    if !still_current || shared.cancelled.load(Ordering::Acquire) || cancel.load(Ordering::Acquire)
+    {
         return;
     }
 
-    match result {
-        Ok(stats) => {
+    match outcome {
+        AnswerOutcome::Completed(stats) => {
             let text = stats.text.trim().to_string();
             if !text.is_empty() {
+                // 先写入上下文历史：下一题组装提示词时才能看到本题答案。
+                shared.push_generated_answer(&text);
                 let state = app.state::<AppState>();
                 let store = lock(&state.store);
                 if let Err(error) = store.add_answer(
@@ -960,18 +1305,184 @@ fn finish_answer(
             emit(
                 app,
                 EVT_ANSWER_DONE,
-                json!({ "text": text, "model": stats.model, "ttftMs": stats.ttft_ms }),
+                json!({
+                    "text": text,
+                    "model": stats.model,
+                    "ttftMs": stats.ttft_ms,
+                }),
             );
             emit_status(app, "listening", "面试进行中");
         }
-        Err(message) => {
+        AnswerOutcome::Failed {
+            message,
+            partial,
+            ttft_ms,
+            retryable,
+        } => {
+            // 会话状态保持 listening：音频正常时一次 LLM 失败不等于面试结束。
             tracing::warn!(%message, "生成回答失败");
-            emit_status(app, "error", format!("生成回答失败：{message}"));
+            let partial = partial.trim().to_string();
+            let action = if retryable {
+                "点浮层「重新生成」或按 Ctrl+Shift+A 重试"
+            } else {
+                "请到设置页检查 API Key、模型名与接口地址后再试"
+            };
+            let detail = if partial.is_empty() {
+                format!("网络或接口异常，还没有生成任何内容（{message}）；{action}。")
+            } else {
+                format!("生成中断（已保留已生成内容，{message}）；{action}。")
+            };
+
+            // 用 notice 而不是 status：不能覆盖会话的 listening 状态。
+            emit_notice(app, "error", format!("生成回答失败：{detail}"));
             emit(
                 app,
                 EVT_ANSWER_DONE,
-                json!({ "text": "", "model": "", "ttftMs": null }),
+                json!({
+                    "text": partial,
+                    "model": model_hint.unwrap_or_default(),
+                    "ttftMs": ttft_ms,
+                    "error": detail,
+                    "retryable": retryable,
+                }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn question(text: &str) -> QueuedQuestion {
+        QueuedQuestion {
+            text: text.to_string(),
+            segment_id: None,
+            is_regenerate: false,
+        }
+    }
+
+    #[test]
+    fn queue_preserves_fifo_order() {
+        let mut queue = QuestionQueue::default();
+        assert_eq!(queue.enqueue(question("第一问")), EnqueueOutcome::Queued);
+        assert_eq!(queue.enqueue(question("第二问")), EnqueueOutcome::Queued);
+        assert!(queue.begin_worker());
+        assert_eq!(queue.take_next().unwrap().text, "第一问");
+        assert_eq!(queue.pending(), 1);
+        assert_eq!(queue.take_next().unwrap().text, "第二问");
+        assert!(queue.take_next().is_none());
+    }
+
+    #[test]
+    fn dedupes_only_punctuation_and_politeness_variants() {
+        let mut queue = QuestionQueue::default();
+        assert_eq!(
+            queue.enqueue(question("请介绍一下你自己？")),
+            EnqueueOutcome::Queued
+        );
+        // 仅标点/空白不同，归一化后相同。
+        assert_eq!(
+            queue.enqueue(question("请 介绍 一下你自己")),
+            EnqueueOutcome::Duplicate
+        );
+        // 去掉礼貌前缀后相同。
+        assert_eq!(
+            queue.enqueue(question("介绍一下你自己")),
+            EnqueueOutcome::Duplicate
+        );
+        assert!(queue.begin_worker());
+        let current = queue.take_next().unwrap();
+        assert_eq!(current.text, "请介绍一下你自己？");
+        // 与「当前正在作答」重复。
+        assert_eq!(
+            queue.enqueue(question("请介绍一下你自己")),
+            EnqueueOutcome::Duplicate
+        );
+        queue.finish_current();
+        // 「是什么」与「是什么呀」仅语气尾缀不同。
+        assert_eq!(
+            queue.enqueue(question("你最大的优点是什么")),
+            EnqueueOutcome::Queued
+        );
+        assert_eq!(
+            queue.enqueue(question("你最大的优点是什么呀")),
+            EnqueueOutcome::Duplicate
+        );
+    }
+
+    /// 真实追问不能被当成重复吞掉——这是连续多问场景的头号要求。
+    #[test]
+    fn genuine_follow_up_question_is_not_deduped() {
+        let mut queue = QuestionQueue::default();
+        assert_eq!(
+            queue.enqueue(question("介绍一下你的项目")),
+            EnqueueOutcome::Queued
+        );
+        assert_eq!(
+            queue.enqueue(question("介绍一下你的项目难点")),
+            EnqueueOutcome::Queued
+        );
+        assert_eq!(
+            queue.enqueue(question("你最大的优点是什么")),
+            EnqueueOutcome::Queued
+        );
+        assert_eq!(
+            queue.enqueue(question("你最大的缺点是什么")),
+            EnqueueOutcome::Queued
+        );
+        assert_eq!(queue.pending(), 4);
+    }
+
+    #[test]
+    fn queue_limit_drops_new_question() {
+        let mut queue = QuestionQueue::default();
+        for index in 0..ANSWER_QUEUE_LIMIT {
+            assert_eq!(
+                queue.enqueue(question(&format!("问题{index}"))),
+                EnqueueOutcome::Queued
+            );
+        }
+        assert_eq!(queue.pending(), ANSWER_QUEUE_LIMIT);
+        assert_eq!(queue.enqueue(question("第六个问题")), EnqueueOutcome::Full);
+        assert_eq!(queue.pending(), ANSWER_QUEUE_LIMIT);
+    }
+
+    #[test]
+    fn clear_removes_items_but_not_worker_flag() {
+        let mut queue = QuestionQueue::default();
+        assert_eq!(queue.enqueue(question("问题")), EnqueueOutcome::Queued);
+        assert!(queue.begin_worker());
+        queue.clear();
+        assert_eq!(queue.pending(), 0);
+        assert!(queue.take_next().is_none());
+        // clear 不应把 worker 标志置回 false，否则会并发拉起第二个 worker。
+        assert!(!queue.begin_worker());
+        assert!(!queue.end_worker());
+    }
+
+    #[test]
+    fn worker_flag_prevents_duplicate_workers() {
+        let mut queue = QuestionQueue::default();
+        assert!(!queue.begin_worker());
+        assert_eq!(queue.enqueue(question("问题")), EnqueueOutcome::Queued);
+        assert!(queue.begin_worker());
+        assert_eq!(
+            queue.enqueue(question("第二个问题")),
+            EnqueueOutcome::Queued
+        );
+        assert!(!queue.begin_worker());
+    }
+
+    #[test]
+    fn normalization_and_similarity_handle_chinese_punctuation() {
+        assert_eq!(normalize_for_dedup("你好，世界。 Hello!"), "你好世界hello");
+        assert!(similar_text(
+            &normalize_for_dedup("你好，世界。"),
+            &normalize_for_dedup("你好世界")
+        ));
+        assert!(!similar_text("我的项目经验", "我的项目经验很"));
+        assert!(!similar_text("我的项目", "完全不同的问题"));
+        assert!(!similar_text("", "空"));
     }
 }

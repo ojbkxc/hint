@@ -39,22 +39,22 @@ jobs:
         run: npm run build
 
       - name: 核心库检查
-        run: cargo check -p hint-core -p hint-store -p hint-audio
+        run: cargo check --locked -p hint-core -p hint-store -p hint-audio
 
       - name: 核心库测试
-        run: cargo test -p hint-core -p hint-store -p hint-audio
+        run: cargo test --locked -p hint-core -p hint-store -p hint-audio
 
       - name: 语音平台无关部分检查
-        run: cargo check -p hint-stt --no-default-features
+        run: cargo check --locked -p hint-stt --no-default-features
 
       - name: 语音平台无关部分测试
-        run: cargo test -p hint-stt --no-default-features
+        run: cargo test --locked -p hint-stt --no-default-features
 
       - name: 语音推理引擎编译（sherpa-onnx 预编译库，需联网）
-        run: cargo check -p hint-stt
+        run: cargo check --locked -p hint-stt
 
       - name: Tauri 集成编译检查
-        run: cargo check -p hint --bins
+        run: cargo check --locked -p hint --bins
 
   build:
     name: 构建 Windows 安装包

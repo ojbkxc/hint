@@ -81,6 +81,42 @@ textarea {
   align-items: start;
 }
 
+.dashboard-banner {
+  display: block;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.6;
+  border-radius: 9px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.dashboard-banner.banner-info {
+  color: #cfe0ff;
+  background: rgba(63, 109, 255, 0.14);
+  border-color: rgba(120, 160, 255, 0.4);
+}
+
+.dashboard-banner.banner-error {
+  color: #ffcfcf;
+  background: rgba(160, 40, 40, 0.16);
+  border-color: rgba(255, 120, 120, 0.45);
+}
+
+.dashboard-banner:hover:not(:disabled) {
+  background: rgba(63, 109, 255, 0.2);
+}
+
+.dashboard-banner.banner-error:hover:not(:disabled) {
+  background: rgba(190, 50, 50, 0.22);
+}
+
+/* 窄窗口兜底：单列卡片，避免设置项被挤成一列字宽。
+   必须放在文件末尾（见下方响应式覆盖段），否则会被后置基础规则覆盖。 */
+
 .card {
   background: rgba(23, 28, 36, 0.86);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -140,6 +176,28 @@ textarea {
 
 .inline-row input {
   flex: 1;
+}
+
+.slider-row {
+  align-items: center;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  padding: 0;
+  accent-color: #3f6dff;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.slider-value {
+  flex: 0 0 auto;
+  min-width: 38px;
+  text-align: right;
+  font-size: 12px;
+  color: #c3cfdf;
+  font-variant-numeric: tabular-nums;
 }
 
 .action-row {
@@ -515,15 +573,28 @@ button.m5 {
 
 /* ---------- 浮层 ---------- */
 
+/*
+ * 背景透明度可配置（参照 pluely / natively 的做法）。
+ *
+ * 分层：
+ * - 窗口底色直接用滑块值当 alpha：调到 20% 时只剩两成底色，
+ *   能清楚看到下方的视频画面；
+ * - 文字所在区块（转录 / 答案 / 头尾栏）单独铺一层暗色衬底且带下限，
+ *   因此无论滑块拉多低，答案都保持可照念的对比度；
+ * - 从不使用整窗 `opacity`，文字本身永远不透明。
+ *
+ * 滑块值语义：1 = 最不透明，0.2 = 最透。
+ */
 .overlay-root {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: rgba(13, 16, 22, 0.88);
+  background: rgba(13, 16, 22, var(--overlay-alpha, 0.88));
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 16px;
   overflow: hidden;
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(10px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .overlay-header {
@@ -531,7 +602,7 @@ button.m5 {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(10, 13, 18, max(0.88, 0.45 + 0.5 * var(--overlay-alpha, 1)));
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   cursor: move;
   user-select: none;
@@ -601,6 +672,8 @@ button.m5 {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  /* 文字区单独铺暗色衬底，并设下限：滑块拉到最透时也不会看不清。 */
+  background: rgba(10, 13, 18, max(0.86, 0.4 + 0.5 * var(--overlay-alpha, 1)));
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -659,6 +732,8 @@ button.m5 {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 与转录区一致：答案区自带暗色衬底，保证照念可读。 */
+  background: rgba(10, 13, 18, max(0.86, 0.4 + 0.5 * var(--overlay-alpha, 1)));
 }
 
 .overlay-answer-toolbar {
@@ -668,6 +743,84 @@ button.m5 {
   padding: 8px 14px 0;
 }
 
+.overlay-question-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 6px;
+  min-width: 0;
+}
+
+.answer-current {
+  padding-bottom: 4px;
+}
+
+/* 历史时间线：当前答案在上，更早的问答依次向下。 */
+.answer-history-timeline {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-caption {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #5f6a7b;
+}
+
+.answer-block.past {
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  padding-left: 9px;
+}
+
+.block-question {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7f8ba0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.block-answer {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #a9b6c8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.overlay-question {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a94a6;
+}
+
+.pending-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(240, 179, 80, 0.4);
+  background: rgba(160, 120, 40, 0.14);
+  color: #f0c98a;
+  white-space: nowrap;
+}
+
+/* 折叠式历史面板已改为答案区下方的时间线，相关规则移除。 */
+
 .answer-title {
   display: inline-flex;
   align-items: center;
@@ -676,6 +829,13 @@ button.m5 {
   letter-spacing: 1px;
   color: #7d8798;
   text-transform: uppercase;
+}
+
+.answer-count {
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #6d7788;
 }
 
 .streaming-dot {
@@ -719,9 +879,19 @@ button.mini.ghost {
   min-height: 0;
   padding: 10px 14px 14px;
   overflow-y: auto;
+  overflow-x: hidden;
   font-size: 15px;
   line-height: 1.75;
-  color: #e8eef7;
+  /* 浮层可能半透明压在亮画面上：正文用近白 + 深色描边阴影维持对比度。 */
+  color: #f4f8fd;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* 当前答案块至少保留 3–4 行可见，历史在下方滚动查看。 */
+.answer-current {
+  min-height: 4.2em;
 }
 
 .overlay-answer-body p {
@@ -767,7 +937,7 @@ button.mini.ghost {
   font-size: 10px;
   color: #78839a;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(10, 13, 18, max(0.88, 0.45 + 0.5 * var(--overlay-alpha, 1)));
 }
 
 .footer-group {
@@ -826,10 +996,67 @@ button.mini.ghost {
   padding: 7px 11px;
   font-size: 11px;
   line-height: 1.5;
+  text-align: left;
   color: #ffcfcf;
   background: rgba(90, 24, 24, 0.92);
   border: 1px solid rgba(255, 120, 120, 0.35);
   border-radius: 8px;
+  cursor: pointer;
+  max-height: 62px;
+  overflow: hidden;
+}
+
+.overlay-toast.toast-info {
+  color: #cfe0ff;
+  background: rgba(30, 42, 70, 0.94);
+  border-color: rgba(120, 160, 255, 0.4);
+}
+
+.overlay-toast.toast-error {
+  color: #ffcfcf;
+  background: rgba(90, 24, 24, 0.94);
+  border-color: rgba(255, 120, 120, 0.45);
+}
+
+.overlay-toast.toast-info:hover {
+  background: rgba(38, 53, 88, 0.96);
+}
+
+.overlay-toast.toast-error:hover {
+  background: rgba(110, 32, 32, 0.96);
+}
+
+/* 答案区错误条：最多两行，超出省略；点击不遮挡 toast。 */
+.answer-error-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px 8px;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 120, 120, 0.4);
+  background: rgba(90, 24, 24, 0.55);
+  border-radius: 8px;
+}
+
+.answer-error-text {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffbdbd;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.answer-error-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .overlay-root {
@@ -913,4 +1140,116 @@ button.mini.ghost {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* --------------------------------------------------------------------------
+ * 响应式覆盖必须放在文件末尾：媒体查询本身不提升优先级，
+ * 写在基础规则之前会被后面的 `.overlay-transcript { max-height: 42% }`
+ * 之类的基础声明覆盖。
+ * ------------------------------------------------------------------------ */
+
+/* 浮层最小 320×180：压缩非内容区，保证答案区仍有可用高度。 */
+@media (max-height: 240px) {
+  .overlay-header {
+    padding: 5px 10px;
+  }
+
+  .overlay-transcript {
+    max-height: 34px;
+    padding: 5px 10px;
+    gap: 3px;
+  }
+
+  .overlay-answer-toolbar {
+    padding: 3px 10px 0;
+  }
+
+  .overlay-question-row {
+    padding: 0 0 3px;
+  }
+
+  .overlay-question {
+    font-size: 10px;
+  }
+
+  .overlay-answer-body {
+    padding: 4px 10px 6px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .answer-current {
+    min-height: 2.6em;
+  }
+
+  .block-answer {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .answer-history-timeline {
+    margin-top: 5px;
+    padding-top: 5px;
+    gap: 5px;
+  }
+
+  .overlay-footer {
+    padding: 3px 8px;
+  }
+
+  .overlay-toast {
+    bottom: 26px;
+    max-height: 40px;
+    padding: 4px 8px;
+  }
+}
+
+/* 极矮窗口（如 320×180）：转录与问题标签让位给答案。 */
+@media (max-height: 200px) {
+  .overlay-header {
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+
+  .overlay-transcript {
+    display: none;
+  }
+
+  .overlay-answer-toolbar {
+    padding: 2px 9px 0;
+    font-size: 11px;
+  }
+
+  .overlay-answer-body {
+    padding: 3px 9px 5px;
+  }
+
+  .answer-current {
+    min-height: 0;
+  }
+
+  .overlay-footer {
+    padding: 2px 8px;
+    font-size: 9px;
+  }
+}
+/* 主窗口窄宽（<860px）：设置页单列、复盘页单列。
+   与上面的浮层媒体查询同理，必须放在基础规则之后。 */
+@media (max-width: 860px) {
+  .dashboard-root {
+    padding: 18px 16px 40px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-grid > .card:first-child,
+  .save-card {
+    grid-column: auto;
+  }
+
+  .review-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

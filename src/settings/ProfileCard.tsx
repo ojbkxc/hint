@@ -15,7 +15,7 @@ export default function ProfileCard({ form, patch }: Props) {
           rows={9}
           value={form.resume}
           onChange={(event) => patch({ resume: event.target.value })}
-          placeholder="粘贴简历文本。v1 阶段直接全文注入，超出 token 预算时会按「简历 → 项目 → 其他」优先级截断。"
+          placeholder="粘贴简历文本。简历与项目资料各最多 6000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
         />
       </label>
       <label>
@@ -24,7 +24,7 @@ export default function ProfileCard({ form, patch }: Props) {
           rows={7}
           value={form.projects}
           onChange={(event) => patch({ projects: event.target.value })}
-          placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。"
+          placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。最多 6000 字，超出会截断并标注。"
         />
       </label>
       <p className="muted small">

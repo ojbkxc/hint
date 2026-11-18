@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Provider, Settings } from "./types";
+import type { FormAction, Provider, Settings } from "./types";
 import { PRESETS } from "./types";
 
 type Props = {
@@ -7,6 +7,7 @@ type Props = {
   apiKey: string;
   keySaved: boolean;
   busy: boolean;
+  action: FormAction;
   answer: string;
   status: string;
   onApiKey: (value: string) => void;
@@ -17,7 +18,7 @@ type Props = {
 };
 
 export default function ModelCard(props: Props) {
-  const { form, apiKey, keySaved, busy, answer, status } = props;
+  const { form, apiKey, keySaved, busy, action, answer, status } = props;
   const [visionHint, setVisionHint] = useState(false);
 
   return (
@@ -43,6 +44,10 @@ export default function ModelCard(props: Props) {
       </div>
       <p className="muted small">
         预设模型名会随厂商更新，可在下方直接修改。
+      </p>
+      <p className="muted small">
+        Base URL：Anthropic 填 https://api.anthropic.com（带 /v1 也可），Gemini 填
+        https://generativelanguage.googleapis.com（带 /v1beta 也可），重复的版本段会被自动去重。
       </p>
 
       <label>
@@ -90,17 +95,17 @@ export default function ModelCard(props: Props) {
             spellCheck={false}
           />
           <button type="button" onClick={props.onSaveKey} disabled={busy}>
-            保存
+            {action === "key" ? "保存中…" : "保存"}
           </button>
         </div>
       </label>
 
       <div className="action-row">
         <button type="button" onClick={() => void props.onTest()} disabled={busy}>
-          {busy ? "请求中…" : "测试连接"}
+          {action === "test" ? "测试中…" : "测试连接"}
         </button>
         <button type="button" className="primary" onClick={props.onSave} disabled={busy}>
-          保存配置
+          {action === "save" ? "保存中…" : "保存配置"}
         </button>
       </div>
 

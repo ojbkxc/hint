@@ -56,8 +56,13 @@ export default function ModelDownloadCard({
             className="primary"
             onClick={onDownload}
             disabled={busy || view.phase === "loading"}
+            title={
+              view.phase === "ready"
+                ? "只核对文件是否存在且大小一致，不会重新下载或覆盖"
+                : undefined
+            }
           >
-            {view.phase === "ready" ? "重新下载模型" : "下载模型"}
+            {view.phase === "ready" ? "检查模型文件" : "下载模型"}
           </button>
         )}
         {view.phase === "ready" && (
@@ -81,6 +86,7 @@ function ReadyBody({ view }: { view: ModelView }) {
       </p>
       <p className="muted small">
         删除前请先结束正在进行的面试；删除后需要重新下载约 241MB 才能恢复语音识别。
+        「检查模型文件」只核对文件是否存在、大小是否一致，不会重新下载。
       </p>
     </div>
   );
@@ -135,7 +141,7 @@ function ProgressBody({ view }: { view: ModelView }) {
         </div>
       </div>
       <p className="muted small">
-        下载期间请保持网络连接。中断后可重新点击「下载模型」，会从断点续传。
+        下载期间请保持网络连接。中断后重新点击按钮即可从断点续传。
       </p>
     </>
   );

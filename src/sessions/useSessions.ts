@@ -70,7 +70,11 @@ export function useSessions(enabled: boolean) {
 
   const remove = useCallback(async () => {
     if (!selectedId) return;
-    const confirmed = window.confirm("确定删除这条会话吗？删除后不可恢复。");
+    const current = sessions.find((item) => item.id === selectedId);
+    const label = current?.startedAt ? `「${current.startedAt}」` : "这条会话";
+    const confirmed = window.confirm(
+      `确定删除${label}吗？\n它的转录与问答会被永久删除，无法恢复。`,
+    );
     if (!confirmed) return;
     setNotice("");
     const result = await safeInvoke<unknown>("delete_session", { id: selectedId });
@@ -82,14 +86,18 @@ export function useSessions(enabled: boolean) {
     setDetail(null);
     setSelectedId("");
     await refresh();
-  }, [selectedId, refresh]);
+  }, [selectedId, sessions, refresh]);
 
   const removeAll = useCallback(async () => {
+    const count = sessions.length;
+    if (count === 0) return;
     const first = window.confirm(
-      "确定清空全部会话记录吗？所有转录与问答都会被永久删除，无法恢复。",
+      `确定清空全部 ${count} 条会话记录吗？\n所有转录与问答都会被永久删除，无法恢复。`,
     );
     if (!first) return;
-    const second = window.confirm("再次确认：清空全部会话记录？此操作不可撤销。");
+    const second = window.confirm(
+      `再次确认：将永久删除 ${count} 条会话记录，删除后无法撤销。`,
+    );
     if (!second) return;
     setNotice("");
     const result = await safeInvoke<unknown>("delete_all_sessions");
@@ -97,11 +105,11 @@ export function useSessions(enabled: boolean) {
       setNotice(`清空失败：${result.error}（若后端尚未提供该命令，请单条删除）`);
       return;
     }
-    setNotice("全部会话记录已清空");
+    setNotice(`全部 ${count} 条会话记录已清空`);
     setDetail(null);
     setSelectedId("");
     await refresh();
-  }, [refresh]);
+  }, [sessions, refresh]);
 
   return {
     sessions,

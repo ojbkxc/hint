@@ -41,6 +41,18 @@ impl MonoResampler {
         if input_rate == 0 || target_rate == 0 {
             return Err(AudioError::InvalidConfig("采样率不能为 0".to_string()));
         }
+        // 设备原生采样率也要在合理区间内：超出范围（如某些虚拟声卡上报 384000）
+        // 会让内部分块缓冲异常膨胀甚至除零，提前给出中文错误而不是等到运行期 panic。
+        if !(8_000..=192_000).contains(&input_rate) {
+            return Err(AudioError::InvalidConfig(format!(
+                "设备输入采样率 {input_rate} 超出 8000..=192000"
+            )));
+        }
+        if !(8_000..=192_000).contains(&target_rate) {
+            return Err(AudioError::InvalidConfig(format!(
+                "目标采样率 {target_rate} 超出 8000..=192000"
+            )));
+        }
         if input_rate == target_rate {
             return Ok(Self {
                 resampler: None,
@@ -184,6 +196,24 @@ mod tests {
         let input = [0.1f32, -0.2, 0.3];
         let mono = downmix_interleaved(&input, 1);
         assert_eq!(mono, input);
+    }
+
+    #[test]
+    fn out_of_range_rates_are_rejected_with_invalid_config() {
+        // 0 与超出 8k..192k 的采样率都必须得到 InvalidConfig，而不是 panic。
+        assert!(matches!(
+            MonoResampler::new(0, 16_000),
+            Err(AudioError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            MonoResampler::new(16_000, 384_000),
+            Err(AudioError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            MonoResampler::new(7_999, 16_000),
+            Err(AudioError::InvalidConfig(_))
+        ));
+        assert!(MonoResampler::new(192_000, 16_000).is_ok());
     }
 
     #[test]

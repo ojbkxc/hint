@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import BehaviorCard from "./settings/BehaviorCard";
 import DevicesCard from "./settings/DevicesCard";
 import ModelCard from "./settings/ModelCard";
@@ -10,6 +10,8 @@ import { useSessionControl } from "./settings/useSessionControl";
 import { useSettingsForm } from "./settings/useSettingsForm";
 import SessionReview from "./sessions/SessionReview";
 import { useSessions } from "./sessions/useSessions";
+import { isRecord, pickText } from "./lib/data";
+import { safeInvoke, safeListen } from "./lib/tauri";
 
 type Tab = "settings" | "review";
 
@@ -18,13 +20,50 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "review", label: "会话复盘" },
 ];
 
+type Banner = { level: "info" | "error"; message: string };
+
 export default function Dashboard() {
   const [tab, setTab] = useState<Tab>("settings");
   const [testAnswer, setTestAnswer] = useState("");
+  const [banner, setBanner] = useState<Banner | null>(null);
   const form = useSettingsForm();
   const sessions = useSessions(tab === "review");
   const model = useModelManager();
   const session = useSessionControl();
+
+  // 主窗口同样订阅后端提示：关闭窗口收进托盘等提示在浮层隐藏时只能在这里看到。
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void safeListen<unknown>("hint://notice", (payload) => {
+      if (!active || !isRecord(payload)) return;
+      const message = pickText(payload, ["message"]);
+      if (!message) return;
+      setBanner({
+        level: pickText(payload, ["level"]) === "error" ? "error" : "info",
+        message,
+      });
+    }).then((fn) => {
+      if (!active) {
+        fn?.();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!banner) return;
+    const timer = window.setTimeout(
+      () => setBanner(null),
+      banner.level === "error" ? 10000 : 6000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [banner]);
 
   async function handleTest() {
     setTestAnswer("");
@@ -32,6 +71,11 @@ export default function Dashboard() {
     if (response) setTestAnswer(response.text);
     return response;
   }
+
+  const openLogDir = useCallback(async () => {
+    const result = await safeInvoke("open_log_dir");
+    if (!result.ok) setBanner({ level: "error", message: `打开日志目录失败：${result.error}` });
+  }, []);
 
   return (
     <div className="dashboard-root">
@@ -42,6 +86,17 @@ export default function Dashboard() {
         </div>
         <div className="hint-badge">Ctrl+Shift+Space 显示浮层</div>
       </header>
+
+      {banner && (
+        <button
+          type="button"
+          className={`dashboard-banner banner-${banner.level}`}
+          onClick={() => setBanner(null)}
+          title="点击关闭"
+        >
+          {banner.message}
+        </button>
+      )}
 
       <nav className="tab-bar" role="tablist" aria-label="主功能">
         {TABS.map((item) => (
@@ -68,6 +123,7 @@ export default function Dashboard() {
               apiKey={form.apiKey}
               keySaved={form.keySaved}
               busy={form.busy}
+              action={form.action}
               answer={testAnswer}
               status={form.status}
               onApiKey={form.setApiKey}
@@ -97,6 +153,7 @@ export default function Dashboard() {
               <h2>保存</h2>
               <p className="muted small">
                 模型、资料、回答行为与设备选择都保存在同一份配置里，修改后请点下方按钮。
+                遇到问题时可在日志目录的 <code>logs\hint.log</code> 里查看原因并反馈给开发者。
               </p>
               <div className="action-row">
                 <button
@@ -105,7 +162,10 @@ export default function Dashboard() {
                   onClick={() => void form.save()}
                   disabled={form.busy}
                 >
-                  {form.busy ? "保存中…" : "保存全部配置"}
+                  {form.action === "save" ? "保存中…" : "保存全部配置"}
+                </button>
+                <button type="button" className="ghost" onClick={() => void openLogDir()}>
+                  打开日志目录
                 </button>
               </div>
               {form.status && <p className="status">{form.status}</p>}

@@ -47,9 +47,13 @@ export default function SessionReview(props: Props) {
               className="danger small-danger"
               onClick={onDeleteAll}
               disabled={loading || sessions.length === 0}
-              title="永久删除本机全部会话记录"
+              title={
+                sessions.length > 0
+                  ? `永久删除本机全部 ${sessions.length} 条会话记录`
+                  : "永久删除本机全部会话记录"
+              }
             >
-              清空全部
+              {sessions.length > 0 ? `清空全部（${sessions.length}）` : "清空全部"}
             </button>
           </div>
         </div>
@@ -62,23 +66,25 @@ export default function SessionReview(props: Props) {
           <p className="muted small">正在读取会话列表…</p>
         ) : (
           <ul className="session-items">
-            {sessions.map((session) => (
-              <li key={session.id}>
-                <button
-                  type="button"
-                  className={`session-item${session.id === selectedId ? " active" : ""}`}
-                  onClick={() => onOpen(session.id)}
-                >
-                  <span className="session-title">
-                    {session.note || `会话 ${session.id}`}
-                  </span>
-                  <span className="session-meta">
-                    {session.startedAt || "时间未知"}
-                    {session.model ? ` · ${session.model}` : ""}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {sessions.map((session) => {
+              const title = session.note || session.startedAt || `会话 ${session.id}`;
+              const meta = [session.model || "模型未知", durationText(session)]
+                .filter((part) => part !== "")
+                .join(" · ");
+              return (
+                <li key={session.id}>
+                  <button
+                    type="button"
+                    className={`session-item${session.id === selectedId ? " active" : ""}`}
+                    onClick={() => onOpen(session.id)}
+                    title={`${title}${meta ? `（${meta}）` : ""}`}
+                  >
+                    <span className="session-title">{title}</span>
+                    <span className="session-meta">{meta || "时间未知"}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -129,6 +135,7 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
         {detail.summary.startedAt || "开始时间未知"}
         {detail.summary.endedAt ? ` → ${detail.summary.endedAt}` : ""}
         {detail.summary.model ? ` · ${detail.summary.model}` : ""}
+        {durationText(detail.summary) ? ` · 时长 ${durationText(detail.summary)}` : ""}
       </p>
 
       <h3 className="review-subtitle">转录</h3>
@@ -175,4 +182,24 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
       )}
     </div>
   );
+}
+
+/** 由 startedAt / endedAt 文本推算时长；后端格式为「YYYY-MM-DD HH:MM:SS」。 */
+function durationText(summary: { startedAt: string; endedAt: string }): string {
+  const start = parseTime(summary.startedAt);
+  const end = parseTime(summary.endedAt);
+  if (start === null || end === null || end < start) return "";
+  const totalSeconds = Math.round((end - start) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  if (minutes > 0) return `${minutes} 分 ${seconds} 秒`;
+  return `${seconds} 秒`;
+}
+
+function parseTime(text: string): number | null {
+  if (!text) return null;
+  const parsed = Date.parse(text.replace(" ", "T"));
+  return Number.isFinite(parsed) ? parsed : null;
 }

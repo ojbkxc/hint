@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AnswerPanel from "./overlay/AnswerPanel";
 import StatusBar from "./overlay/StatusBar";
 import TranscriptPanel from "./overlay/TranscriptPanel";
@@ -6,16 +6,76 @@ import { useOverlayEvents } from "./lib/useOverlayEvents";
 
 const ACTIVE_STATES = new Set(["connected", "listening", "ready"]);
 
+type Toast = { level: "info" | "error"; message: string; key: number };
+
+const INFO_MS = 6000;
+const ERROR_MS = 10000;
+
 export default function Overlay() {
-  const { transcript, answer, levels, status, notice, hideOverlay, regenerate, clearAnswer } =
-    useOverlayEvents();
-  const [localNotice, setLocalNotice] = useState("");
-  const [answerError, setAnswerError] = useState("");
-  const toast = localNotice || notice || answerError;
+  const {
+    transcript,
+    answer,
+    answerHistory,
+    levels,
+    status,
+    notice,
+    hideOverlay,
+    regenerate,
+    clearAnswer,
+    dismissAnswerError,
+  } = useOverlayEvents();
+  const [localError, setLocalError] = useState("");
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastKey = useRef(0);
+  const dismissTimer = useRef<number | null>(null);
+
+  const showToast = useCallback((level: "info" | "error", message: string) => {
+    toastKey.current += 1;
+    setToast({ level, message, key: toastKey.current });
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (dismissTimer.current !== null) {
+      window.clearTimeout(dismissTimer.current);
+      dismissTimer.current = null;
+    }
+    setToast(null);
+  }, []);
+
+  // 后端提示（模型下载、热键注册等）按 level 决定样式与停留时间。
+  useEffect(() => {
+    if (notice.message) {
+      showToast(notice.level === "error" ? "error" : "info", notice.message);
+    }
+  }, [notice, showToast]);
+
+  useEffect(() => {
+    if (!localError) return;
+    showToast("error", localError);
+    setLocalError("");
+  }, [localError, showToast]);
+
+  useEffect(() => {
+    if (!toast) return;
+    if (dismissTimer.current !== null) window.clearTimeout(dismissTimer.current);
+    dismissTimer.current = window.setTimeout(
+      () => {
+        dismissTimer.current = null;
+        setToast(null);
+      },
+      toast.level === "error" ? ERROR_MS : INFO_MS,
+    );
+    return () => {
+      if (dismissTimer.current !== null) {
+        window.clearTimeout(dismissTimer.current);
+        dismissTimer.current = null;
+      }
+    };
+  }, [toast]);
 
   const handleHide = useCallback(async () => {
     const error = await hideOverlay();
-    if (error) setLocalNotice(`隐藏浮层失败：${error}`);
+    if (error) setLocalError(`隐藏浮层失败：${error}`);
   }, [hideOverlay]);
 
   useEffect(() => {
@@ -29,9 +89,9 @@ export default function Overlay() {
   }, [handleHide]);
 
   async function handleRegenerate() {
-    setAnswerError("");
+    setLocalError("");
     const error = await regenerate();
-    if (error) setAnswerError(`重新生成失败：${error}`);
+    if (error) setLocalError(`重新生成失败：${error}`);
   }
 
   return (
@@ -57,11 +117,13 @@ export default function Overlay() {
 
       <AnswerPanel
         answer={answer}
+        history={answerHistory}
         onRegenerate={handleRegenerate}
         onClear={() => {
-          setAnswerError("");
+          setLocalError("");
           clearAnswer();
         }}
+        onDismissError={dismissAnswerError}
       />
 
       <StatusBar
@@ -71,7 +133,17 @@ export default function Overlay() {
         streaming={answer.streaming}
       />
 
-      {toast && <div className="overlay-toast">{toast}</div>}
+      {toast && (
+        <button
+          key={toast.key}
+          type="button"
+          className={`overlay-toast toast-${toast.level}`}
+          onClick={dismissToast}
+          title={`${toast.message}（点击关闭）`}
+        >
+          {toast.message}
+        </button>
+      )}
     </div>
   );
 }

@@ -68,6 +68,7 @@ export function useModelManager() {
   }, []);
 
   const download = useCallback(async () => {
+    // 前端在 ready 态复用同一个按钮做「校验」；校验只读，不需要二次确认。
     setNotice("");
     setBusy(true);
     // 先切到下载中，避免 spawn_blocking 期间按钮仍可点。
@@ -75,7 +76,7 @@ export function useModelManager() {
       ...current,
       phase: "downloading",
       error: "",
-      step: "model",
+      step: current.phase === "ready" ? "verifying" : "model",
       resource: "",
       source: "",
       completedBytes: current.completedBytes,
@@ -99,7 +100,7 @@ export function useModelManager() {
       return;
     }
 
-    setNotice("语音模型已就绪，可以开始面试。");
+    setNotice("模型文件检查完成，可以开始面试。");
     await refresh();
   }, [refresh]);
 

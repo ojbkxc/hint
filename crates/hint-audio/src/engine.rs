@@ -107,6 +107,21 @@ pub(crate) fn start(
         });
     }
 
+    // 单通道降级：引擎继续运行，但用户必须明确知道哪个通道没起来，
+    // 否则「系统声没起来、听不到面试官」时会以为功能坏了。
+    // 以「警告：」前缀发出，避免被上层当作致命错误处理。
+    if mic_ok && !sys_ok {
+        runtime.warning(
+            "仅麦克风可用：系统声通道未能启动，将听不到面试官的声音。\
+             请检查系统输出设备后在设置页重新选择并重启会话",
+        );
+    } else if sys_ok && !mic_ok {
+        runtime.warning(
+            "仅系统声可用：麦克风通道未能启动，你的回答不会被识别。\
+             请检查麦克风设备与隐私权限后在设置页重新选择并重启会话",
+        );
+    }
+
     if !mic_ok && !sys_ok {
         let handle = AudioHandle::new(runtime, workers);
         handle.stop();

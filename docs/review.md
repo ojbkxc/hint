@@ -1,10 +1,11 @@
 # hint 独立审查报告
 
-- 审查日期：2026-11-17
+- 审查日期：2026-11-17（首发前复验与版本更新：2026-11-18）
 - 审查范围：`crates/**`、`src-tauri/**`、`src/**`、CI、README
 - 审查方式：静态阅读 + 本机真实编译/测试（清理 workspace crate 后串行执行）+ CI workflow 推演
 - 最终结论：**PASS WITH ISSUES**（阻断问题 0 个）
 - 说明：本轮所有中/高危问题已由 integrator / ui-dev / audio-dev / team-lead 修复并复验；仅剩低风险项与团队确认的「已知取舍」。
+- 版本：首个正式发布版为 **1.0.1**（tag `v1.0.1`）；下文 2026-11-17 的记录中出现的 `v0.1.0` 仅为当时版本号，现版本号与所有清单均已同步为 1.0.1。
 
 ---
 
@@ -16,9 +17,9 @@
 | # | 命令 | 结果 |
 |---|---|---|
 | 1a | `npx tsc --noEmit` | 通过，exit 0 |
-| 1b | `npm run build` | 通过，46 modules，`dist/assets/index-*.js` 273.74 kB（gzip 84.40 kB） |
-| 2 | `cargo test -p hint-core -p hint-store -p hint-audio` | core 31 + store 19 + audio 24 通过，audio 1 ignored（真实设备冒烟），doctest 1 通过 |
-| 3 | `cargo test -p hint-stt --no-default-features` | 34 通过 |
+| 1b | `npm run build` | 通过，`dist/assets/index-*.js` 281.68 kB（gzip 86.82 kB），CSS 14.39 kB |
+| 2 | `cargo test -p hint-core -p hint-store -p hint-audio` | core 61 + store 24 + audio 25 通过，audio 1 ignored（真实设备冒烟），doctest 1 通过 |
+| 3 | `cargo test -p hint-stt --no-default-features` | 38 通过 |
 | 4 | `cargo check -p hint-stt`（默认 engine） | 通过（`Checking hint-stt`，3.50s） |
 | 5 | `cargo check -p hint --bins` | **本机失败**，见下文；属环境限制，非代码缺陷 |
 | 6 | `cargo fmt --all -- --check` | 通过，exit 0 |
@@ -30,6 +31,8 @@ error: failed to run custom build command for `hint v0.1.0 (E:\github\hint\src-t
 thread 'main' panicked at tauri-winres-0.3.7/src/lib.rs:543:14:
 called `Result::unwrap()` on an `Err` value: NotAttempted("windres")
 ```
+
+（以上为 2026-11-17 原始输出；当时版本号为 0.1.0，现为 1.0.1，报错内容与本条结论无关。）
 
 原因：本机只有 `x86_64-pc-windows-gnu` 工具链，PATH 中的 `mingw64/bin` 没有
 `gcc.exe` / `windres.exe`（全盘浅层搜索也未找到），`tauri-build` 嵌入 Windows 资源
@@ -56,10 +59,11 @@ called `Result::unwrap()` on an `Err` value: NotAttempted("windres")
   `sherpa-onnx-v2.0.1-win-x64-static-MT-Release-lib.tar.bz2` 预编译包，再由 MSVC 链接。
   前提是**联网**。
 
-建议（未改）：
+建议（未改 / 后续处理）：
 
 1. 为 sherpa 预编译库增加显式缓存/重试，避免 GitHub Release 偶发超时导致 CI 失败。
-2. cargo 命令建议统一加 `--locked`，避免 CI 静默更新已提交的 `Cargo.lock`。
+2. cargo 命令建议统一加 `--locked`，避免 CI 静默更新已提交的 `Cargo.lock`。—— **2026-11-18 已处理**：`build.yml` 的全部 `cargo check` / `cargo test` 已加 `--locked`。
+3. **2026-11-18 新增**：`.github/workflows/release.yml`，推送 `v*` 标签或手动 `workflow_dispatch` 时构建并上传 `hint.exe` 与 NSIS 安装包到 GitHub Release（glob 匹配 `target/release/bundle/nsis/*.exe`，不硬编码文件名）。
 
 ---
 
@@ -67,13 +71,13 @@ called `Result::unwrap()` on an `Err` value: NotAttempted("windres")
 
 ### 3.1 命令
 
-Rust 现注册 **25** 个 `#[tauri::command]`。前端调用覆盖情况：
+Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 
 - 已使用：`get_settings`、`save_settings`、`save_api_key`、`has_api_key`、`test_llm`、
   `start_session`、`stop_session`、`model_status`、`prepare_model`、`cancel_prepare`、
   `remove_model`、`list_sessions`、`session_detail`、`export_session_markdown`、
   `delete_session`、`delete_all_sessions`、`hide_overlay`、`regenerate_answer`、
-  `list_audio_devices`、`cancel_capture`、`finish_capture`。
+  `list_audio_devices`、`cancel_capture`、`finish_capture`、`open_log_dir`（设置页「打开日志目录」）。
 - 未前端调用：`toggle_session`（托盘/热键覆盖）、`show_overlay` / `toggle_overlay`
   （托盘/热键内部实现）、`start_capture`（M5 预留，当前仅 emit `hint://capture-request`）。
 
@@ -95,16 +99,23 @@ Rust 现注册 **25** 个 `#[tauri::command]`。前端调用覆盖情况：
 | `hint://levels` | `session.rs` | `overlay/types.ts` |
 | `hint://status` | `session.rs` | `overlay/types.ts` + `useSessionControl.ts` |
 | `hint://model-progress` | `session.rs` + `commands.rs` | `useModelManager.ts:11` |
+| `hint://queue` | `session.rs`（入队 / 出队 / 清空时实时推送 `{pending}`） | `useOverlayEvents.ts` |
+| `hint://overlay-opacity` | `commands.rs`（`save_settings` 后推送 `{opacity}`，已 clamp 0.2–1.0） | `useOverlayEvents.ts`（写 CSS 变量 `--overlay-alpha`） |
+| `hint://notice` | `session.rs`（模型下载、热键、截图、关闭窗口、LLM 失败） | `useOverlayEvents.ts` + `Dashboard.tsx` |
 | `hint://capture-request` | `commands.rs` | 无（M5，已知取舍） |
 | `hint://capture-region` | `commands.rs` | 无（M5，已知取舍） |
 
-`transcript.channel` 的 `"interviewer" | "me"`、`answer-delta.reset`、
-`answer-done.ttftMs`、`levels.mic/system` 均前后端一致；`hint://answer-done`
-的空文本语义已在前端处理为「清空答案」（L1 修复）。
+`transcript.channel` 的 `"interviewer" | "me"`、`answer-delta.reset`（1.0.1 起追加
+`question` / `pending`）、`answer-done.ttftMs`（1.0.1 起失败时追加 `error` / `retryable`，
+`text` 保留已生成内容）、`levels.mic/system`、`queue.pending` 均前后端一致；`hint://answer-done`
+的空文本语义已在前端处理为「清空答案」（L1 修复）。LLM 生成失败与重新生成失败统一走
+`hint://notice`（`level=error`），不再发 `status=error`，会话保持 `listening`。
+`hint://queue` 在入队 / 出队 / 清空时实时推送，浮层「排队 N」在流式中也会立即更新；
+托盘 tooltip 随会话状态切换（空闲 / 面试进行中），是主窗口关闭后确认会话是否在跑的主要手段。
 
 ### 3.3 设置与数据形状
 
-- Rust `Settings` 为 camelCase，与前端字段完全对应；provider / answerStyle / triggerMode 枚举一致。
+- Rust `Settings` 为 camelCase，与前端字段完全对应；provider / answerStyle / triggerMode 枚举一致；`overlayOpacity`（f64，默认 0.88）前后端同名。
 - `test_llm(prompt, settings: Option<Settings>)`：前端已传当前表单（`useSettingsForm.ts:89-92`），
   未保存的修改也能测试。
 - `list_audio_devices` 返回 `{inputs,outputs}`，元素含 `id/name/isDefault`，前端解析正确。
@@ -180,7 +191,7 @@ Rust 现注册 **25** 个 `#[tauri::command]`。前端调用覆盖情况：
 - `sherpa-onnx` 只出现在 `crates/hint-stt/Cargo.toml`。
 - `[profile.release]`（LTO、strip、codegen-units=1、panic=abort）位于 workspace 根。
 - 存在两份 `sha2`（0.10.9 / 0.11.1），属不同依赖链，影响有限（低）。
-- `@tauri-apps/plugin-opener` 在 `package.json:16` 声明但未使用、也未注册 Rust 插件（低，见 L7）。
+- `@tauri-apps/plugin-opener` 已从 `package.json` 移除（L7）。
 
 ---
 
@@ -247,3 +258,26 @@ Rust 现注册 **25** 个 `#[tauri::command]`。前端调用覆盖情况：
 - 所有中危项与低危 L1–L4、L7、L9–L11 均已修复并复核（`cargo check -p hint --bins` 通过、`tsc` 与 `npm run build` 通过）。
 - 剩余仅团队确认的已知取舍：L5（M5 截图后置）、L6（`csp: null`）、L8（`panic = "abort"`）。
 - **最终结论：PASS WITH ISSUES。**
+
+---
+
+## 九、1.0.1 首发前增量（2026-11-18）
+
+本轮在 2026-11-17 报告之后又完成了一批使用者视角修复与两项产品行为调整，均已在真实代码中复核：
+
+- **LLM 失败语义**：`CoreError` 新增 `is_retryable()` 与 `HttpStatus{status,advice,body}`、`Stream(String)` 变体；首字前可重试错误（网络、超时、429、5xx）自动重试一次（约 1.5 秒），已输出后断流报「生成中断」且不重试；401/403/404 不重试。错误文案全部中文化并附原始响应片段。
+- **会话状态不受生成失败影响**：LLM 生成失败、重新生成失败、托盘 stop 失败统一改发 `hint://notice`（`level=error`），不再发 `status=error`，会话保持 `listening`。
+- **答案队列（连续多问）**：`session.rs` `QuestionQueue` 为 FIFO，上限 5（另有 1 个在答）；去重只认「归一化后完全相同」或「去掉礼貌前缀/语气尾缀后相同」（与当前题、队尾比较），真实追问不会被吞；每轮作答时快照历史（包含上一轮答案）；新增 `hint://queue` 事件在入队/出队/清空时实时推送 `{pending}`；`Ctrl+Shift+A` 取消当前并清空排队、优先回答最新问题；停止会话清空队列。
+- **托盘状态可见**：`TrayItems` 持有托盘图标，会话开始/结束时切换 tooltip（空闲「hint · 空闲（右键可退出；Ctrl+Shift+Space 显示浮层）」/ 面试中「hint · 面试进行中（右键可结束或退出）」），解决关闭主窗口后无法确认会话是否在跑的问题。
+- **浮层小窗口适配**：`src/App.css` 的两组 `@media (max-height: 240px)` / `@media (max-height: 200px)` 原先写在基础规则之前，被文件后面同优先级的 `.overlay-transcript { max-height: 42% }`、`.overlay-answer-body { padding: … }`、`.answer-current { min-height: 4.2em }` 覆盖，小窗口适配此前从未生效（320×180 实测答案区仅 38px，内容需 87px 被裁切）。已把媒体查询移到文件末尾，并新增 200px 断点隐藏转录区、去掉答案最小高度；改后实测 320×180 答案区 108px、无横向滚动，460×340 不受影响。验收清单 6.8 覆盖此场景。
+- **主窗口窄宽适配**：同一根因，`@media (max-width: 860px)` 也原先位于基础规则之前，其中 `.review-layout`、`.dashboard-grid > .card:first-child`、`.save-card` 三条覆盖被后置同特异性规则失效（复盘页固定 300px/430px 双列、卡片跨列）。已把该媒体查询移到文件末尾；实测 780px 设置页与复盘页均为单列。验收清单 6.9 覆盖此场景。
+- **问题去重收紧**：原「短句被长句包含且长度 ≥80%」的近似判定会把真实追问（「介绍一下你的项目」→「介绍一下你的项目难点」）当重复静默丢弃。现只认「归一化后完全相同」或「去掉礼貌前缀/语气尾缀后相同」，内容不同的追问一律排队回答。验收清单 6.5 / 6.5.1 覆盖此场景。
+- **浮层不透明度可配置（底板直映射 + 文字区独立衬底）**：`Settings` 新增 `overlayOpacity`（camelCase，默认 0.88，旧配置缺字段时取默认值）；`save_settings` 保存后经 `hint://overlay-opacity` 推送已 clamp 到 0.2–1.0 的值，前端写入 CSS 变量 `--overlay-alpha`（缺变量时回退 0.88），保存即生效、无需重启；启动时读取已保存值并同样 clamp。`src/App.css`：`.overlay-root` 背景 `rgba(13,16,22, var(--overlay-alpha, 0.88))`——滑块值直接等于底板背景 alpha（20% 即 0.2，100% 即完全不透明），附 `backdrop-filter: blur(10px)`；转录区与答案区 `rgba(10,13,18, max(0.86, 0.4 + 0.5 × var))`（不低于 0.86）；头/底栏 `max(0.88, 0.45 + 0.5 × var)`；全窗 `text-shadow`，答案正文近白 `#f4f8fd` + 双层阴影。从不使用整窗 `opacity`，文字本身永远不透明。实测 460×340、纯白 + 亮黄 45° 条纹背景：滑块 20% 底板 `rgba(13,16,22,0.2)`、文字区 0.86；50% 底板 `rgba(13,16,22,0.5)`、文字区 0.86；100% 底板 `rgb(13,16,22)` 完全不透明、文字区 0.87；变量缺失回退 `rgba(13,16,22,0.88)`。该设置只改外观，不改变窗口可见性。验收清单 7.3 覆盖此场景。**设计说明**：头部与底栏的衬底（下限 0.88）刻意比正文区（0.86）更实，用于保证状态文字在任意画面上可读，非缺陷。
+- **答案时间线**：浮层答案区最新一轮在最上方，更早问答按时间倒序排在下方（最多 10 轮），`answer-delta` 的 reset 帧新增 `question` / `pending`。
+- **日志落盘**：新增 `src-tauri/src/logging.rs`，stderr + `%APPDATA%\com.ojbkxc.hint\logs\hint.log` 双写，>5MB 轮转为 `hint.1.log`；新增命令 `open_log_dir`（已在 `invoke_handler` 注册，设置页已接线）。
+- **音频健壮性**：单通道降级明确提示「仅麦克风可用 / 仅系统声可用」；切换默认输出设备有提示；短暂切设备/蓝牙重连有 15 秒宽限；模型损坏提示「删除后重新下载」；磁盘不足中文提示。
+- **提示词重写**：防穿帮、多问题按序回答、150/250 字自适应、防注入、语言跟随、追问不重复。
+- **配置/资料边界**：简历与项目资料各 6000 字上限，超出截断并标注。
+- **版本与发布**：版本号统一为 1.0.1；新增 `release.yml`（tag `v*` 触发）。
+
+本轮复核命令：`npx tsc --noEmit`（通过）、`npm run build`（通过）、`cargo test -p hint-core -p hint-store -p hint-audio`（61 + 24 + 25，audio 1 ignored，doctest 1 通过）、`cargo test -p hint-stt --no-default-features`（38 通过）、`cargo fmt --all -- --check`（通过）。`cargo check -p hint --bins` 仍受本机缺 `windres` 限制，以 CI 为准。

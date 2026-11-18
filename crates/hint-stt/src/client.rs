@@ -150,6 +150,17 @@ impl WorkerClient {
                 message: format!("audio exceeds {} bytes", self.config.max_audio_bytes),
             });
         }
+        // 与 worker 侧一致：超过 max_audio_seconds 直接拒绝，省掉一次必然失败的往返。
+        let max_bytes_for_seconds =
+            44.0 + f64::from(self.config.max_audio_seconds.max(0.0)) * 16_000.0 * 2.0;
+        if wav.len() as f64 > max_bytes_for_seconds {
+            return Err(SttError::InvalidInput {
+                message: format!(
+                    "audio is longer than the {:.0} second limit",
+                    self.config.max_audio_seconds
+                ),
+            });
+        }
         // 串行化：同一时刻只允许一个请求。
         let mut guard = self.lock();
         if guard.is_none() {
@@ -159,7 +170,18 @@ impl WorkerClient {
             message: "worker is not running".into(),
         })?;
 
-        match post_wav(running, wav, language) {
+        // 网络请求最长 120s；失败时必须在**释放锁之后**再回收进程，
+        // 否则 `stop_process` 的等待会一直占着锁，`stop()` 只能干等到请求
+        // 结束，拖慢「结束面试」。这里先拿结果、尽快释放锁，再停止进程。
+        let outcome = post_wav(running, wav, language);
+        let dead = outcome.is_err().then(|| guard.take()).flatten();
+        drop(guard);
+        if let Some(mut dead) = dead {
+            // 任何失败都丢弃 worker：状态未知，下次冷启。
+            stop_process(&mut dead);
+        }
+
+        match outcome {
             Ok(transcript) => {
                 *self
                     .last_used
@@ -167,13 +189,7 @@ impl WorkerClient {
                     .unwrap_or_else(|poison| poison.into_inner()) = Some(Instant::now());
                 Ok(transcript)
             }
-            Err(error) => {
-                // 任何失败都丢弃 worker：状态未知，下次冷启。
-                if let Some(mut dead) = guard.take() {
-                    stop_process(&mut dead);
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -241,7 +257,10 @@ impl WorkerClient {
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(attach_stderr(error, stderr_tail.as_ref()));
+                return Err(diagnose_startup_failure(attach_stderr(
+                    error,
+                    stderr_tail.as_ref(),
+                )));
             }
         };
         tracing::info!(port, "voice worker ready");
@@ -326,6 +345,27 @@ fn attach_stderr(error: SttError, tail: Option<&StderrTail>) -> SttError {
     SttError::Worker {
         message: format!("{error} (stderr: {detail})"),
     }
+}
+
+/// 启动阶段的错误如果来自模型加载（worker 的 `engine error` / 文件缺失 /
+/// recognizer 创建失败），说明磁盘上的模型虽然大小正确但内容可能已损坏——
+/// 就绪判断只比大小、不重算哈希（团队确认的设计）。把它翻译成用户能照做的
+/// 中文提示，而不是留下一句「worker exited during startup」。
+fn diagnose_startup_failure(error: SttError) -> SttError {
+    let text = error.to_string().to_ascii_lowercase();
+    let looks_like_model_load = text.contains("engine error")
+        || text.contains("file is missing")
+        || text.contains("cannot create the sensevoice recognizer")
+        || text.contains("cannot create the silero vad")
+        || text.contains("cannot load");
+    if looks_like_model_load {
+        return SttError::Engine {
+            message: format!(
+                "本地语音模型加载失败，模型文件可能已损坏，请在设置页删除模型后重新下载（{error}）"
+            ),
+        };
+    }
+    error
 }
 
 /// 读 stdout 首行 `{"port":N}`。

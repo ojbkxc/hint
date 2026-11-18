@@ -466,13 +466,19 @@ where
                             return Ok(());
                         }
                         Ok(false) => {
-                            // 全新下载仍然校验失败：按清单 §5，integrity 是终态。
-                            return Err(SttError::Integrity {
-                                message: format!(
-                                    "sha256 mismatch for {} after a fresh download",
-                                    file.name
-                                ),
-                            });
+                            // 连续两次都要求「丢弃 .part 从零重来」：这是服务端
+                            // 协议异常或源侧问题，按可重试失败处理（计入重试并
+                            // 最终换源），而不是当作终态 integrity 直接失败。
+                            tracing::warn!(resource = file.name, source = %source, "download keeps restarting from zero");
+                            last_error = Some(SttError::network(
+                                FailureReason::Network,
+                                format!("download of {} kept restarting from zero", file.name),
+                                None,
+                            ));
+                            if retry == DEFAULT_MAX_RETRIES {
+                                break; // 换下一个源
+                            }
+                            sleep_backoff(retry, cancel)?;
                         }
                         Err(retry_error) => {
                             let reason = retry_error.reason();
@@ -631,7 +637,16 @@ where
 
     let mut hasher = if resumed {
         // 续传：从 .part 已有字节重建哈希状态，而不是只算新下载的部分。
-        hash_state_from_prefix(part, offset)?
+        // 读不到前缀（磁盘错误 / 文件被占用）时必须丢弃 .part 从零重来：
+        // 若从零状态继续累加新字节，哈希与真实内容不符，会把文件写坏。
+        match hash_state_from_prefix(part, offset) {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(%error, "cannot rebuild hash state, discarding .part");
+                remove_quietly(part);
+                return Ok(false);
+            }
+        }
     } else {
         Sha256::new()
     };
@@ -836,6 +851,43 @@ pub fn user_message_for(error: &SttError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_part_with_bad_hash_is_discarded_without_network() {
+        // `.part` 大小已等于清单字节数、但内容不对：transfer 应重算哈希、
+        // 发现不符后删除 `.part` 并返回 Ok(false)，不发起任何网络请求。
+        let root = std::env::temp_dir().join(format!("hint-stt-badpart-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let layout = manifest::Layout::new(&root);
+        layout.ensure_dirs().unwrap();
+        let payload = b"this is not the real model";
+        let file = RemoteFile {
+            name: "fake.onnx",
+            target: "models/fake.onnx",
+            bytes: payload.len() as u64,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            repo: "r",
+            revision: "v",
+        };
+        let part = layout.part_path(&file);
+        fs::write(&part, payload).unwrap();
+        let destination = layout.file_path(file.target);
+        let cancel = AtomicBool::new(false);
+        let result = transfer(
+            &part,
+            &destination,
+            &file,
+            "https://example.invalid/x",
+            "test",
+            &|_, _, _| {},
+            &cancel,
+        )
+        .unwrap();
+        assert!(!result, "bad complete part must request a restart");
+        assert!(!part.exists(), ".part with bad hash must be removed");
+        assert!(!destination.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn content_range_parsing() {

@@ -85,6 +85,9 @@ export function useSessionControl(): SessionControl {
     setBusy(true);
     setError("");
     setNotice("");
+    // 命令要冷启语音引擎（约 10–30 秒），先切到 connecting，
+    // 让界面立刻显示真实阶段，而不是一个没有反馈的「开始面试」。
+    setStatus({ state: "connecting", message: "正在启动语音引擎（首次加载较慢，请稍候）…" });
     let result: InvokeResult<unknown>;
     try {
       result = await safeInvoke<unknown>("start_session");
@@ -106,7 +109,11 @@ export function useSessionControl(): SessionControl {
         : Number(result.data);
     if (Number.isFinite(id) && id > 0) setSessionId(id);
     setNotice("会话已启动");
-    setStatus((current) => (current.state === "listening" ? current : { state: "connecting", message: "正在创建会话…" }));
+    setStatus((current) =>
+      current.state === "listening"
+        ? current
+        : { state: "connecting", message: "正在启动语音引擎（首次加载较慢，请稍候）…" },
+    );
   }, []);
 
   const stop = useCallback(async () => {

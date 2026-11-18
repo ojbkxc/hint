@@ -26,10 +26,23 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<(), String> {
     settings
         .save(&state.settings_path)
-        .map_err(|error| format!("保存配置失败：{error}"))
+        .map_err(|error| format!("保存配置失败：{error}"))?;
+    // clamp 只用于事件值：手改配置文件写入越界值时，浮层也不会变成完全不可见。
+    // 不回写配置文件，避免静默修改用户数据。
+    let opacity = settings.overlay_opacity.clamp(0.2, 1.0);
+    session::emit(
+        &app,
+        session::EVT_OVERLAY_OPACITY,
+        json!({ "opacity": opacity }),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -267,6 +280,20 @@ pub fn toggle_overlay(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 pub async fn regenerate_answer(app: AppHandle) -> Result<(), String> {
     session::regenerate(&app)
+}
+
+/// 打开日志目录，便于用户把 `hint.log` 发给支持。
+#[tauri::command]
+pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
+    let dir = &state.log_dir;
+    if !dir.is_dir() {
+        return Err(format!("日志目录尚未创建：{}", dir.display()));
+    }
+    std::process::Command::new("explorer")
+        .arg(dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("无法打开日志目录（{}）：{error}", dir.display()))
 }
 
 // ---------------------------------------------------------------------------

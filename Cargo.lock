@@ -1814,7 +1814,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hint"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "hint-audio",
@@ -1833,7 +1833,7 @@ dependencies = [
 
 [[package]]
 name = "hint-audio"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "cpal",
  "rubato",
@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "hint-core"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "futures-util",
  "keyring",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "hint-store"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "hint-stt"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "getrandom 0.3.4",
  "libc",

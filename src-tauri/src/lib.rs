@@ -4,10 +4,11 @@
 //! [`commands`]（前端 invoke 入口）里。
 
 mod commands;
+mod logging;
 mod session;
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use hint_store::Store;
@@ -36,6 +37,10 @@ pub(crate) struct RunningSession {
 
 pub(crate) struct AppState {
     pub(crate) settings_path: PathBuf,
+    /// 日志目录，`open_log_dir` 命令用。
+    pub(crate) log_dir: PathBuf,
+    /// 首次关闭主窗口的托盘提示只发一次。
+    pub(crate) close_tip_shown: AtomicBool,
     /// 会话数据库；`hint_store::Store` 不是 `Sync`，统一用 `Mutex` 保护。
     pub(crate) store: Mutex<Store>,
     /// 语音模型管理器（内部状态全 `Arc` 共享，可克隆）。
@@ -52,6 +57,8 @@ pub(crate) struct AppState {
 pub(crate) struct TrayItems {
     pub(crate) session_start: MenuItem<tauri::Wry>,
     pub(crate) session_stop: MenuItem<tauri::Wry>,
+    /// 托盘图标本身：会话状态变化时更新 tooltip，用户悬停即可知道是否在面试。
+    pub(crate) tray: tauri::tray::TrayIcon<tauri::Wry>,
 }
 
 /// 全局热键的 4 组组合（与前端约定一致）。
@@ -61,6 +68,10 @@ const SHORTCUTS: [(&str, Code); 4] = [
     ("ctrl+shift+r", Code::KeyR),
     ("ctrl+shift+s", Code::KeyS),
 ];
+
+/// 托盘 tooltip：主窗口关掉后，这是用户唯一能确认「程序在干什么」的地方。
+const TRAY_TOOLTIP_IDLE: &str = "hint · 空闲（右键可退出；Ctrl+Shift+Space 显示浮层）";
+const TRAY_TOOLTIP_LIVE: &str = "hint · 面试进行中（右键可结束或退出）";
 
 fn combo(code: Code) -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), code)
@@ -92,6 +103,8 @@ impl AppState {
         }
         Ok(Self {
             settings_path: data_dir.join("settings.json"),
+            log_dir: data_dir.join("logs"),
+            close_tip_shown: AtomicBool::new(false),
             store: Mutex::new(store),
             model: ModelManager::new(data_dir.join("voice")),
             session: Mutex::new(None),
@@ -129,20 +142,18 @@ pub(crate) fn set_session_running(app: &tauri::AppHandle, running: bool) {
     if let Some(items) = app.try_state::<TrayItems>() {
         let _ = items.session_start.set_enabled(!running);
         let _ = items.session_stop.set_enabled(running);
+        // 用户关掉主窗口后只剩托盘可见，tooltip 必须能反映会话是否在跑。
+        let _ = items.tray.set_tooltip(Some(if running {
+            TRAY_TOOLTIP_LIVE
+        } else {
+            TRAY_TOOLTIP_IDLE
+        }));
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("hint=info")),
-        )
-        .with_target(false)
-        .init();
-
-    // 热键在 RunEvent::Ready（主线程）逐个注册；失败的组合只记日志。
+    // 日志初始化推迟到 setup：那时才拿到 app_data_dir，才能落盘。
     tauri::Builder::default()
         // 单实例保护必须是第一个 plugin：第二个实例把参数交给首实例后直接退出。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -151,6 +162,8 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
+            let log_dir = data_dir.join("logs");
+            logging::init(&log_dir);
             match AppState::new(&data_dir) {
                 Ok(state) => {
                     app.manage(state);
@@ -165,9 +178,21 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // 关闭主窗口 = 收进托盘，不退出应用。
+                // 关闭窗口 = 收进托盘，不退出应用；所有窗口都拦，避免浮层 /
+                // 截图窗口被销毁后 `get_webview_window` 再也拿不到。
                 api.prevent_close();
                 let _ = window.hide();
+                // 用户很容易以为点了 × 就是退出，第一次关闭主窗口时明确告知。
+                if window.label() == "main"
+                    && let Some(state) = window.try_state::<AppState>()
+                    && !state.close_tip_shown.swap(true, Ordering::AcqRel)
+                {
+                    session::emit_notice(
+                        window.app_handle(),
+                        "info",
+                        "窗口已隐藏到系统托盘；右键托盘图标可退出，按 Ctrl+Shift+Space 显示浮层（左键托盘图标可恢复主窗口）。",
+                    );
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -196,6 +221,7 @@ pub fn run() {
             commands::start_capture,
             commands::cancel_capture,
             commands::finish_capture,
+            commands::open_log_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -207,6 +233,9 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => session::shutdown(app),
+            // 托盘「退出」走 `app.exit(0)`，不保证经过 ExitRequested；
+            // 这里再兜一次（stop_session 幂等，没有会话时直接返回 Err 被忽略）。
+            RunEvent::Exit => session::shutdown(app),
             _ => {}
         });
 }
@@ -245,18 +274,13 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    app.manage(TrayItems {
-        session_start: session_start.clone(),
-        session_stop: session_stop.clone(),
-    });
-
-    TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .icon(
             app.default_window_icon()
                 .cloned()
                 .unwrap_or_else(|| tauri::image::Image::new_owned(vec![0u8; 4], 1, 1)),
         )
-        .tooltip("hint · 面试提词器")
+        .tooltip(TRAY_TOOLTIP_IDLE)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -278,6 +302,12 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+
+    app.manage(TrayItems {
+        session_start: session_start.clone(),
+        session_stop: session_stop.clone(),
+        tray,
+    });
     Ok(())
 }
 

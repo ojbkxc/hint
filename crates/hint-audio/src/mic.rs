@@ -21,6 +21,9 @@ use std::time::{Duration, Instant};
 
 /// 连续失败多少次后判定通道死亡。
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// 失败至少要持续这么久才判致命：用户在系统设置里切设备（蓝牙耳机、USB 麦）
+/// 常出现数秒的短暂失败，不应因此终止整场面试。真正拔掉的设备仍会在宽限后停止。
+const FATAL_GRACE: Duration = Duration::from_secs(15);
 /// 流稳定运行多久后清零失败计数。
 const HEALTHY_AFTER: Duration = Duration::from_secs(3);
 /// 队列容量（样本数）：约 10 秒 @48 kHz 单声道；溢出丢弃最旧数据。
@@ -32,6 +35,8 @@ const QUEUE_WAIT: Duration = Duration::from_millis(50);
 pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>>) {
     let mut init = Some(init);
     let mut failures: u32 = 0;
+    // 本轮连续失败的起始时刻；成功稳定运行或判致命后清空。
+    let mut first_failure_at: Option<Instant> = None;
 
     loop {
         if rt.should_stop() {
@@ -51,16 +56,30 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
                 ) {
                     Ok(pipeline) => pipeline,
                     Err(error) => {
-                        // 设备重建后采样率可能变化，重采样器可能建不起来。这是致命错误，
-                        // 文案必须带「采集引擎停止」，上层据此结束会话（L11）。
-                        let message = format!("麦克风重采样初始化失败，采集引擎停止：{error}");
+                        // 连续失败已超过宽限期仍建不起来（例如设备在重建后反复报出
+                        // 非法采样率），才判致命；否则仅上报并继续退避重试。
+                        if failure_grace_exceeded(first_failure_at) {
+                            let message = format!("麦克风重采样初始化失败，采集引擎停止：{error}");
+                            if let Some(tx) = init.take() {
+                                let _ = tx.send(Err(message));
+                            } else {
+                                rt.error(&message);
+                            }
+                            rt.fatal();
+                            break;
+                        }
+                        let message = format!("麦克风重采样初始化失败：{error}");
                         if let Some(tx) = init.take() {
                             let _ = tx.send(Err(message));
-                        } else {
-                            rt.error(&message);
+                            break;
                         }
-                        rt.fatal();
-                        break;
+                        rt.error(format!("麦克风重采样初始化失败：{error}，将重试"));
+                        failures = failures.saturating_add(1);
+                        first_failure_at.get_or_insert_with(Instant::now);
+                        queue.close();
+                        drop(stream);
+                        rt.sleep_backoff(failures);
+                        continue;
                     }
                 };
 
@@ -85,6 +104,7 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
                     }
                     if !healthy && started.elapsed() >= HEALTHY_AFTER {
                         failures = 0;
+                        first_failure_at = None;
                         healthy = true;
                     }
 
@@ -123,6 +143,7 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
                     Some(reason) => {
                         rt.error(format!("麦克风采集中断：{reason}"));
                         failures = failures.saturating_add(1);
+                        first_failure_at.get_or_insert_with(Instant::now);
                     }
                     None => break, // 正常停止
                 }
@@ -135,13 +156,14 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
                 }
                 rt.error(format!("麦克风设备重新打开失败：{message}"));
                 failures = failures.saturating_add(1);
+                first_failure_at.get_or_insert_with(Instant::now);
             }
         }
 
         if rt.should_stop() {
             break;
         }
-        if failures >= MAX_CONSECUTIVE_FAILURES {
+        if failures >= MAX_CONSECUTIVE_FAILURES && failure_grace_exceeded(first_failure_at) {
             rt.error(format!(
                 "麦克风通道连续 {MAX_CONSECUTIVE_FAILURES} 次失败，采集引擎停止"
             ));
@@ -152,6 +174,11 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
     }
 
     rt.finish_channel(Channel::Me);
+}
+
+/// 连续失败是否已持续超过 `FATAL_GRACE`。
+fn failure_grace_exceeded(first_failure_at: Option<Instant>) -> bool {
+    first_failure_at.is_some_and(|at| at.elapsed() >= FATAL_GRACE)
 }
 
 /// 打开输入流；返回流对象、设备原生采样率与声道数。
@@ -214,8 +241,12 @@ fn resolve_device(
     rt: &Runtime,
 ) -> std::result::Result<cpal::Device, String> {
     if let Some(wanted) = wanted.filter(|value| !value.is_empty()) {
+        // `device_by_id` 的默认实现遍历全部端点（含 render），若用户保存的 ID
+        // 恰好指向输出设备，随后 `default_input_config()` 会以晦涩错误失败。
+        // 这里先校验方向，方向不符就当作「未找到」回退默认输入设备。
         if let Ok(parsed) = wanted.parse::<cpal::DeviceId>()
             && let Some(device) = host.device_by_id(&parsed)
+            && is_input_device(&device)
         {
             return Ok(device);
         }
@@ -240,6 +271,14 @@ fn resolve_device(
     }
     host.default_input_device()
         .ok_or_else(|| "未找到可用的默认麦克风，请检查系统隐私设置中的麦克风权限".to_string())
+}
+
+/// 设备是否支持音频输入（方向为 Input/Duplex，或描述不可用时按允许处理）。
+fn is_input_device(device: &cpal::Device) -> bool {
+    match device.description() {
+        Ok(description) => description.supports_input(),
+        Err(_) => true,
+    }
 }
 
 /// cpal 动态采样格式 → 单声道 f32。

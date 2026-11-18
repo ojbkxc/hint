@@ -145,6 +145,10 @@ impl SttError {
             SttError::Network { message, .. } => {
                 format!("{} {}", self.reason().user_message(), message)
             }
+            // 磁盘不足最常见的来源是写入时 OS 报错，底层英文不易读，统一补一句中文指引。
+            SttError::Storage { message } => {
+                format!("{}（{message}）", FailureReason::Storage.user_message())
+            }
             other => other.to_string(),
         }
     }
@@ -450,6 +454,14 @@ mod tests {
             classify_io_error(&std::io::Error::from(std::io::ErrorKind::StorageFull)),
             FailureReason::Storage
         );
+    }
+
+    #[test]
+    fn storage_message_is_prefixed_with_chinese_guidance() {
+        let error = SttError::storage("cannot write x.part: 磁盘空间不足");
+        let message = error.user_message();
+        assert!(message.contains("磁盘空间不足或无法写入"), "{message}");
+        assert!(message.contains("300MB"), "{message}");
     }
 
     #[test]

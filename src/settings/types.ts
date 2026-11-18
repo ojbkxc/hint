@@ -2,6 +2,9 @@ export type Provider = "openai" | "anthropic" | "gemini";
 export type AnswerStyle = "concise" | "outline";
 export type TriggerMode = "auto" | "manual";
 
+/** 设置页当前正在进行的操作，用于给对应按钮显示准确的阶段文案。 */
+export type FormAction = "" | "save" | "key" | "test";
+
 export type Settings = {
   provider: Provider;
   baseUrl: string;
@@ -13,6 +16,8 @@ export type Settings = {
   /** 后端尚未实现时保留空字符串。 */
   micDevice: string;
   outputDevice: string;
+  /** 浮层背景不透明度，0.2–1.0（默认 0.88）。文字始终不透明。 */
+  overlayOpacity: number;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -58,6 +63,22 @@ export const PRESETS: Array<{
   },
 ];
 
+export const DEFAULT_OVERLAY_OPACITY = 0.88;
+export const MIN_OVERLAY_OPACITY = 0.2;
+export const MAX_OVERLAY_OPACITY = 1;
+
+/** 不透明度统一 clamp；非数字或越界值一律回落默认值。 */
+export function normalizeOpacity(raw: unknown): number {
+  const parsed =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && raw.trim() !== ""
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) return DEFAULT_OVERLAY_OPACITY;
+  return Math.min(MAX_OVERLAY_OPACITY, Math.max(MIN_OVERLAY_OPACITY, parsed));
+}
+
 export const EMPTY_SETTINGS: Settings = {
   provider: "openai",
   baseUrl: "",
@@ -68,6 +89,7 @@ export const EMPTY_SETTINGS: Settings = {
   triggerMode: "auto",
   micDevice: "",
   outputDevice: "",
+  overlayOpacity: DEFAULT_OVERLAY_OPACITY,
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -90,6 +112,9 @@ export function normalizeSettings(raw: unknown): Settings {
     triggerMode: value.triggerMode === "manual" ? "manual" : "auto",
     micDevice: str("micDevice"),
     outputDevice: str("outputDevice"),
+    overlayOpacity: normalizeOpacity(
+      value.overlayOpacity ?? value.overlay_opacity,
+    ),
   };
 }
 

@@ -83,7 +83,17 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
       </label>
 
       {error ? (
-        <p className="error-text">{error}</p>
+        <p className="error-text">
+          {error}
+          <br />
+          请确认麦克风未被其它程序独占后点「刷新设备」。
+        </p>
+      ) : loading ? (
+        <p className="muted small">正在检测音频设备…</p>
+      ) : inputs.length === 0 && outputs.length === 0 ? (
+        <p className="muted small">
+          未检测到可用音频设备。请插入麦克风/扬声器后点「刷新设备」；也可以先用「系统默认」开始。
+        </p>
       ) : (
         <p className="muted small">
           选择后记得点「保存配置」。系统输出走 loopback 采集，面试官的声音来自这里。

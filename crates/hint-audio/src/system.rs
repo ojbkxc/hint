@@ -28,6 +28,9 @@ use wasapi::{
 const MAX_READ_ERRORS: usize = 5;
 /// 连续会话失败多少次后判定通道死亡。
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+/// 失败至少要持续这么久才判致命：切换默认设备/蓝牙断开重连的短暂失败
+/// 不应终止整场面试。真正拔掉的设备仍会在宽限后停止。
+const FATAL_GRACE: Duration = Duration::from_secs(15);
 /// 流稳定运行多久后清零失败计数。
 const HEALTHY_AFTER: Duration = Duration::from_secs(3);
 /// 事件等待超时；超时视为静音期并按流逝时间补静音帧。
@@ -56,6 +59,8 @@ pub(crate) fn run(
     };
 
     let mut failures: u32 = 0;
+    let mut first_failure_at: Option<Instant> = None;
+    let mut degraded_hinted = false;
 
     loop {
         if rt.should_stop() {
@@ -78,8 +83,10 @@ pub(crate) fn run(
                         rt.error(format!("系统声采集中断：{message}"));
                         // 运行足够久说明设备本身没问题，重新计数从 1 开始。
                         failures = if started.elapsed() >= HEALTHY_AFTER {
+                            first_failure_at = Some(Instant::now());
                             1
                         } else {
+                            first_failure_at.get_or_insert_with(Instant::now);
                             failures.saturating_add(1)
                         };
                     }
@@ -93,24 +100,40 @@ pub(crate) fn run(
                 }
                 rt.error(format!("系统声设备重新打开失败：{message}"));
                 failures = failures.saturating_add(1);
+                first_failure_at.get_or_insert_with(Instant::now);
             }
         }
 
         if rt.should_stop() {
             break;
         }
-        if failures >= MAX_CONSECUTIVE_FAILURES {
+        if failures >= MAX_CONSECUTIVE_FAILURES && failure_grace_exceeded(first_failure_at) {
             rt.error(format!(
                 "系统声通道连续 {MAX_CONSECUTIVE_FAILURES} 次失败，采集引擎停止"
             ));
             rt.fatal();
             break;
         }
+        if failures == DEGRADED_HINT_AFTER && !degraded_hinted {
+            degraded_hinted = true;
+            rt.warning(
+                "系统声通道反复失败，可能听不到面试官；请检查输出设备，\
+                 必要时结束会话后在设置页重新选择设备",
+            );
+        }
         rt.sleep_backoff(failures);
     }
 
     rt.finish_channel(Channel::Interviewer);
 }
+
+/// 连续失败是否已持续超过 `FATAL_GRACE`。
+fn failure_grace_exceeded(first_failure_at: Option<Instant>) -> bool {
+    first_failure_at.is_some_and(|at| at.elapsed() >= FATAL_GRACE)
+}
+
+/// 失败次数达到该值时先给一次「可能听不到面试官」的非致命提示。
+const DEGRADED_HINT_AFTER: u32 = 3;
 
 /// COM(MTA) 初始化守卫：只在初始化成功的线程上反初始化。
 struct ComGuard {
@@ -167,6 +190,8 @@ struct LoopbackSession {
     sample: WasapiSample,
     /// 未显式指定输出设备时，跟随系统默认设备变更。
     follow_default: bool,
+    /// 会话打开时的系统默认 render 端点 ID；用于检测「用户换了默认设备」。
+    default_at_open: Option<String>,
 }
 
 impl LoopbackSession {
@@ -206,6 +231,20 @@ impl LoopbackSession {
                 // 默认输出设备被用户切换时，主动迁移到新端点。
                 if self.follow_default && default_render_id_changed(&self.device) {
                     return Err("系统默认输出设备已变更，正在迁移采集端点".to_string());
+                }
+                // 切换默认设备后，旧 loopback 端点常常仍然「存活」但只回静音；
+                // 若显式指定了设备或回退到了通信设备（不跟随默认），这里检测到
+                // 默认端点变化却无法自动迁移，必须明确告知用户怎么恢复。
+                if !self.follow_default {
+                    if let Some(opened) = self.default_at_open.as_deref()
+                        && current_default_render_id().is_some_and(|now| now != opened)
+                    {
+                        self.default_at_open = None; // 只提醒一次
+                        rt.warning(
+                            "系统默认输出设备已变更，当前会话仍在采集旧设备，可能听不到面试官；\
+                             请结束会话，在设置中重新选择输出设备并重新开始",
+                        );
+                    }
                 }
             }
 
@@ -375,6 +414,12 @@ fn open_session(rt: &Runtime) -> std::result::Result<LoopbackSession, String> {
                 // 只有实际使用「默认输出设备」时才跟随默认设备变更；
                 // 显式指定的设备或通信设备回退不跟随。
                 session.follow_default = follow_default && label == "默认输出设备";
+                // 记录打开时的默认端点，便于在无法自动跟随的情形下提示用户。
+                session.default_at_open = if session.follow_default {
+                    None
+                } else {
+                    current_default_render_id()
+                };
                 return Ok(session);
             }
             Err(error) => {
@@ -384,6 +429,13 @@ fn open_session(rt: &Runtime) -> std::result::Result<LoopbackSession, String> {
         }
     }
     Err(format!("所有候选输出设备均初始化失败：{last_error}"))
+}
+
+/// 当前默认 render 端点的稳定 ID；拿不到时返回 `None`。
+fn current_default_render_id() -> Option<String> {
+    let enumerator = DeviceEnumerator::new().ok()?;
+    let device = enumerator.get_default_device(Direction::Render).ok()?;
+    device.get_id().ok()
 }
 
 /// 当前默认 render 端点是否已不同于本会话的设备。
@@ -414,9 +466,10 @@ fn candidate_devices(
 
     if let Some(wanted) = wanted.filter(|value| !value.is_empty()) {
         let raw = wanted.strip_prefix("wasapi:").unwrap_or(wanted);
-        let found = enumerator
-            .get_device(raw)
-            .or_else(|_| enumerator.get_device(wanted))
+        // 只在 render 集合里找：`enumerator.get_device` 也会返回输入端点，
+        // 把麦克风 ID 当输出设备会让 loopback 初始化以晦涩错误失败。
+        let found = find_render_by_id(enumerator, raw)
+            .or_else(|_| find_render_by_id(enumerator, wanted))
             .or_else(|_| find_by_name(enumerator, wanted));
         match found {
             Ok(device) => push_candidate(&mut out, &mut seen_ids, "指定设备", device),
@@ -451,6 +504,22 @@ fn push_candidate(
         seen_ids.push(id);
     }
     out.push((label.to_string(), device));
+}
+
+/// 在 render 设备集合中按端点 ID 查找（避免把输入端点误当输出）。
+fn find_render_by_id(
+    enumerator: &DeviceEnumerator,
+    id: &str,
+) -> std::result::Result<Device, WasapiError> {
+    let collection = enumerator.get_device_collection(Direction::Render)?;
+    let count = collection.get_nbr_devices()?;
+    for index in 0..count {
+        let device = collection.get_device_at_index(index)?;
+        if device.get_id().is_ok_and(|found| found == id) {
+            return Ok(device);
+        }
+    }
+    Err(WasapiError::DeviceNotFound(id.to_string()))
 }
 
 fn find_by_name(
@@ -492,6 +561,7 @@ fn init_loopback(device: Device) -> std::result::Result<LoopbackSession, String>
                     channels: parts.channels,
                     sample: parts.sample,
                     follow_default: false,
+                    default_at_open: None,
                 });
             }
             Err(error) => last_error = format!("{}：{error}", attempt.label()),
@@ -542,8 +612,9 @@ fn init_with_attempt(
     let (_default_period, min_period) = client
         .get_device_period()
         .map_err(|e| format!("获取设备周期失败：{e}"))?;
-    // 事件驱动共享模式要求 buffer 时长不小于最小周期。
-    let buffer_duration = min_period.max(10_000);
+    // 事件驱动共享模式要求 buffer 时长不小于最小周期。部分 USB/蓝牙设备
+    // 会报出异常大的周期，clamp 到 1 秒以内，避免申请超大缓冲。
+    let buffer_duration = min_period.clamp(10_000, 10_000_000);
 
     let (format, channels, sample, autoconvert) = match attempt {
         FormatAttempt::MonoFloat => (

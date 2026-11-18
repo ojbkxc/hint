@@ -4,6 +4,7 @@ import {
   EMPTY_SETTINGS,
   normalizeDevices,
   normalizeSettings,
+  type FormAction,
   type Settings,
 } from "./types";
 
@@ -18,6 +19,7 @@ export function useSettingsForm() {
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<FormAction>("");
 
   useEffect(() => {
     let disposed = false;
@@ -25,12 +27,7 @@ export function useSettingsForm() {
       const settings = await safeInvoke<unknown>("get_settings");
       if (disposed) return;
       if (settings.ok) {
-        const normalized = normalizeSettings(settings.data);
-        setForm(normalized);
-        const saved = await safeInvoke<unknown>("has_api_key", {
-          provider: normalized.provider,
-        });
-        if (!disposed && saved.ok) setKeySaved(saved.data === true);
+        setForm(normalizeSettings(settings.data));
       } else {
         setStatus(`读取配置失败：${settings.error}。已使用默认值。`);
       }
@@ -41,19 +38,52 @@ export function useSettingsForm() {
     };
   }, []);
 
+  // 每个 provider 的 Key 是独立的：切换接口后必须重新查询，不能沿用上一个的结果。
+  useEffect(() => {
+    let disposed = false;
+    setKeySaved(false);
+    void (async () => {
+      const saved = await safeInvoke<unknown>("has_api_key", {
+        provider: form.provider,
+      });
+      if (!disposed && saved.ok) setKeySaved(saved.data === true);
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [form.provider]);
+
   const patch = useCallback((next: Partial<Settings>) => {
     setForm((current) => ({ ...current, ...next }));
   }, []);
 
+  async function hasKeyFor(provider: Settings["provider"]): Promise<boolean> {
+    const saved = await safeInvoke<unknown>("has_api_key", { provider });
+    const present = saved.ok && saved.data === true;
+    setKeySaved(present);
+    return present;
+  }
+
   async function save() {
     setBusy(true);
+    setAction("save");
     setStatus("");
     try {
       const result = await safeInvoke("save_settings", { settings: form });
-      setStatus(result.ok ? "配置已保存" : `保存失败：${result.error}`);
-      return result.ok;
+      if (!result.ok) {
+        setStatus(`保存失败：${result.error}`);
+        return false;
+      }
+      const present = await hasKeyFor(form.provider);
+      setStatus(
+        present
+          ? "配置已保存"
+          : "配置已保存，但当前接口还没有保存 API Key，开始面试会失败。请在上方填入 Key 并点「保存」。",
+      );
+      return true;
     } finally {
       setBusy(false);
+      setAction("");
     }
   }
 
@@ -63,26 +93,29 @@ export function useSettingsForm() {
       return;
     }
     setBusy(true);
+    setAction("key");
     setStatus("");
     try {
       const result = await safeInvoke("save_api_key", {
         provider: form.provider,
         key: apiKey.trim(),
       });
-      if (result.ok) {
-        setKeySaved(true);
-        setApiKey("");
-        setStatus("API Key 已写入 Windows 凭据管理器");
-      } else {
+      if (!result.ok) {
         setStatus(`保存 Key 失败：${result.error}`);
+        return;
       }
+      setApiKey("");
+      await hasKeyFor(form.provider);
+      setStatus("API Key 已写入 Windows 凭据管理器");
     } finally {
       setBusy(false);
+      setAction("");
     }
   }
 
   async function testConnection(): Promise<{ text: string; model: string } | null> {
     setBusy(true);
+    setAction("test");
     setStatus("");
     try {
       // 把当前表单一起发过去：改了 baseUrl/model 不保存也能直接测。
@@ -91,7 +124,12 @@ export function useSettingsForm() {
         settings: form,
       });
       if (!result.ok) {
-        setStatus(`连接失败：${result.error}`);
+        // 后端返回的已是「模型连接失败：…」，去掉外层前缀避免重复。
+        const prefix = "模型连接失败：";
+        const detail = result.error.startsWith(prefix)
+          ? result.error.slice(prefix.length)
+          : result.error;
+        setStatus(`连接失败：${detail}`);
         return null;
       }
       const data = result.data as { text?: string; model?: string } | null;
@@ -101,6 +139,7 @@ export function useSettingsForm() {
       return { text, model };
     } finally {
       setBusy(false);
+      setAction("");
     }
   }
 
@@ -125,6 +164,7 @@ export function useSettingsForm() {
     status,
     setStatus,
     busy,
+    action,
     patch,
     save,
     saveKey,
