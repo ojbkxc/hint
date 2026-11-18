@@ -25,8 +25,11 @@ pub fn decode_text(bytes: &[u8]) -> String {
 /// 不引入完整 XML 解析器：Word 的正文文本都在 `<w:t>` 里，段落边界是
 /// `</w:p>`。按段落切分后取所有 `<w:t>` 内容并解码 XML 实体即可。
 pub fn docx_text(xml: &str) -> String {
+    // 自闭合的空段落 `<w:p/>`（Word 常用它制造空行）先展开成
+    // `<w:p></w:p>`，这样按 `</w:p>` 分割时才会保留这个空行。
+    let expanded = expand_self_closing_paragraphs(xml);
     let mut paragraphs: Vec<String> = Vec::new();
-    for chunk in xml.split("</w:p>") {
+    for chunk in expanded.split("</w:p>") {
         let mut paragraph = String::new();
         let mut rest = chunk;
         while let Some(start) = find_tag(rest, "<w:t") {
@@ -49,6 +52,30 @@ pub fn docx_text(xml: &str) -> String {
         paragraphs.push(paragraph);
     }
     clean_extracted(&paragraphs.join("\n"))
+}
+
+/// 把形如 `<w:p/>`、`<w:p w:rsidR="…"/>` 的自闭合段落展开成
+/// `<w:p></w:p>`，保证空段落不会被丢弃。
+fn expand_self_closing_paragraphs(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(start) = find_tag(rest, "<w:p") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let Some(gt) = after.find('>') else {
+            out.push_str(after);
+            return out;
+        };
+        let tag = &after[..=gt];
+        if tag.ends_with("/>") {
+            out.push_str("<w:p></w:p>");
+        } else {
+            out.push_str(tag);
+        }
+        rest = &after[gt + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 查找完整标签名：`<w:t` 后面必须紧跟 `>`、空格或 `/`，
