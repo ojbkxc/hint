@@ -6,27 +6,29 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 
 它只服务你本人：窗口可见、可随时关闭，不做屏幕共享隐身，也不做任何规避检测。
 
-当前版本：**1.0.1**（首个正式发布版，仅 Windows 10/11 x64）。
+当前版本：**1.0.2**（仅 Windows 10/11 x64）。
 
 ## 功能概览
 
 - Tauri 2 + React 19 + TypeScript，托盘、透明置顶浮层、全局热键
-- 设置页：三种 LLM 协议、简历与项目资料、回答风格、触发方式、音频设备、浮层不透明度
-- API Key 只写入 Windows 凭据管理器（`keyring`），不落配置文件
+- **浅色默认皮肤**：语义化配色变量（参照 pi-agent-desktop 的主题做法），主窗口浅灰底 + 白卡片
+- 设置页：三种 LLM 协议、简历与项目资料（支持从 TXT / MD / DOCX / PDF 导入）、回答风格、触发方式、音频设备、浮层不透明度
+- **Base URL 智能补全**：只填域名也行，自动补 `https://`、清理误贴的完整端点、按协议补版本段；粘贴 Anthropic / Gemini / 常见 OpenAI 兼容域名时自动切换协议
+- API Key 只写入 Windows 凭据管理器（`keyring`），不落配置文件；**测试连接可直接使用尚未保存的 Key，测试成功后自动保存**
 - 三协议流式 LLM（OpenAI 兼容 / Anthropic Messages / Gemini），支持取消、重新生成、失败重试
 - 双通道采集：cpal 麦克风 + WASAPI loopback，16k 单声道重采样与双路电平上报
 - 本地 STT：sherpa-onnx 2.0.1 + SenseVoice Small INT8 + Silero VAD，模型按需下载（断点续传、sha256 校验）
 - 问题判定、回声过滤、SQLite 会话留存、Markdown 导出与会话复盘页
 - 连续多问：问题进入 FIFO 队列逐个回答，浮层显示「当前问题」与「排队 N」，排队数量实时更新
-- 浮层不透明度可调（20%–100%，默认 88%）：20% 时底板只剩两成、透出下方画面，答案区与转录区的深色衬底始终保证可读
+- 浮层不透明度可调（20%–100%，默认 88%）：整个浮层（含转录区与答案区）都跟随滑块透明，20% 时能清楚看到下方视频画面，文字始终可读
 - 答案时间线：最新一轮答案在最上方，更早的问答按时间倒序排在下方，可滚动回看
 - 日志落盘，设置页提供「打开日志目录」按钮
 - M5 截图问答：选区窗口、`start_capture` / `cancel_capture` / `finish_capture` 已预留，返回「尚未启用」
 
 ## 快速开始
 
-1. **安装**：运行 `hint_1.0.1_x64-setup.exe`，按向导完成安装（当前用户安装，无需管理员权限），启动 hint。
-2. **配置模型接口**：打开主窗口的「设置」，在「模型接口」卡片选择协议（OpenAI 兼容 / Anthropic / Gemini），填写 Base URL、模型名，粘贴 API Key 后点该卡片的「保存」写入 Windows 凭据管理器，再点「测试连接」确认能收到回答。
+1. **安装**：运行 `hint_1.0.2_x64-setup.exe`，按向导完成安装（当前用户安装，无需管理员权限），启动 hint。
+2. **配置模型接口**：打开主窗口的「设置」，在「模型接口」卡片选择协议（OpenAI 兼容 / Anthropic / Gemini），填写 Base URL（只填域名也行，失焦后自动补全）与模型名，把 API Key 粘贴到 Key 输入框，直接点「测试连接」即可——测试会使用这个尚未保存的 Key，成功后自动保存到 Windows 凭据管理器。
 3. **下载语音模型**：在「语音模型」卡片点「下载模型」，等待约 241 MB（241,357,257 字节）下载并校验完成，状态变为「已就绪」。
 4. **选择音频设备**：在「设备」卡片选择麦克风与系统输出（或用「系统默认」），点「刷新设备」可重新枚举；修改设备后需要点「保存全部配置」。
 5. **戴耳机**：建议佩戴耳机。外放时面试官的声音会被麦克风再次拾取，虽然程序会做回声过滤，但回声会降低识别准确率。
@@ -57,11 +59,39 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 
 设置页「回答行为」卡片里有「浮层不透明度」滑块，范围 20%–100%，默认 88%，按 1% 步进调整。
 
-- 滑块值直接等于浮层底板的背景不透明度：调到 20% 时底板底色只剩两成，能清楚看到下方的视频画面（底板带毛玻璃模糊）；调到 100% 时底板完全不透明。
-- 不透明度只控制底板与内容区之间的透出程度；答案区与转录区始终保留深色衬底（不透明度有下限），所以调到最低也能照着念。头部与底栏的衬底刻意比正文区更实，保证状态文字始终可读。
-- 浮层不使用整窗透明，文字本身始终不透明，不会随滑块一起变淡。
+- 滑块值直接等于**整个浮层**的白色背景不透明度：调到 20% 时只剩两成底色，能清楚看到下方的视频画面；调到 100% 时完全不透明。
+- 转录区、答案区、头尾栏不再单独铺不透明衬底，滑块在整个浮层面积上都肉眼可见。
+- 浮层不使用整窗透明，文字本身始终不透明；浅色皮肤下正文是深色字 + 白色光晕阴影，压在亮或暗的视频画面上都能照着念。
 - 点「保存全部配置」后立即生效，无需重启或重新显示浮层。
 - 该设置只影响外观，**不改变窗口是否可见**，也不影响屏幕共享中的可见性。它不能用于隐藏窗口或规避对方察觉。
+
+### 资料导入（简历 / 项目资料）
+
+简历与项目资料两个输入框右上角都有「从文件导入」按钮，支持：
+
+- **TXT / MD**：自动识别 UTF-8（含 BOM）与 GBK 编码；
+- **DOCX**：本地解析 `word/document.xml`，保留段落结构；
+- **PDF**：本地提取文本层；扫描版 PDF 没有文本层，会提示改用 DOCX 或 TXT（OCR 不在本版范围）。
+
+导入在本机离线完成，文件不会上传；单文件上限 20 MB，导入后按 6000 字截断并提示（与提示词注入上限一致；超出 20 万字符的文本会在命令层先行截断）。旧版 `.doc` 不支持，请在 Word 里另存为 `.docx` 或 `.txt`。
+
+### Base URL 智能补全
+
+### Base URL 智能补全
+
+Base URL 输入框失焦时自动规范化，常见写法都能直接工作：
+
+| 你填的 | 实际使用（OpenAI 兼容协议） |
+|---|---|
+| `api.deepseek.com` | `https://api.deepseek.com/v1/chat/completions` |
+| `https://api.deepseek.com` | `https://api.deepseek.com/v1/chat/completions` |
+| `https://api.deepseek.com/v1` | `https://api.deepseek.com/v1/chat/completions` |
+| `https://x.com/v1/chat/completions`（完整端点） | 原样使用，不会拼成 `…/chat/completions/chat/completions` |
+| `https://gateway.local/v2` | `https://gateway.local/v2/chat/completions` |
+
+- Anthropic 填 `https://api.anthropic.com`（带 `/v1` 或完整 `/v1/messages` 均可），Gemini 填 `https://generativelanguage.googleapis.com`（带 `/v1beta` 均可），版本段由后端自动去重。
+- 粘贴 `anthropic.com`、`generativelanguage.googleapis.com`、`api.openai.com`、`api.deepseek.com`、`dashscope.aliyuncs.com`、本地 `localhost` 等可识别域名时，协议会自动切换。
+- 识别不出来（例如自建网关）时保持你当前选择的协议，不做猜测。
 
 ### 连续多个问题
 
@@ -100,6 +130,10 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 **开始面试提示「未配置 OPENAI 的 API Key，请先在设置页保存后再开始会话。」**
 
 说明当前协议还没有保存 Key。到「模型接口」卡片粘贴对应协议的 Key（OpenAI / Anthropic / Gemini 的 Key 互不通用），点卡片里的「保存」，再点「测试连接」确认。
+
+**点「测试连接」提示「当前接口还没有保存 API Key」。**
+
+说明 Key 输入框是空的、凭据管理器里也没有该协议的 Key。把 Key 粘贴进输入框后**直接点「测试连接」**即可：测试会使用未保存的 Key，成功后自动写入 Windows 凭据管理器；也可以先点旁边的「保存」按钮。OpenAI / Anthropic / Gemini 的 Key 互不通用，切换协议后需要各自保存一次。
 
 **语音模型下载中断了怎么办？**
 
@@ -144,6 +178,7 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 - **问题判定是启发式**：强疑问词与句首请求动词会触发自动回答，普通陈述句不会（例如「这个方案可以落地」「我给大家介绍一下」不会触发）。可能漏判或误判；手动模式或 `Ctrl+Shift+A` 可兜底。
 - **队列与历史上限**：待答队列 5 个；浮层答案时间线保留最近 10 轮；转录面板最近 6 行。
 - **资料长度上限**：简历与项目资料各 6000 字，超出部分截断，并在提示词里标注「（内容过长已截断）」。
+- **资料导入格式**：支持 TXT / MD / DOCX / PDF 文本层；旧版 `.doc` 需另存为 `.docx` / `.txt`；扫描版 PDF 不含文本层，需要外部 OCR。
 - **单次流式超时 60 秒**：超时按「生成中断」处理，已输出内容保留。
 - **个人知识库尚未支持**：当前版本只支持「简历 + 项目资料」全文注入；下一版规划本地个人知识库（导入 `.md` / `.txt`，分块 + 关键词检索注入，不引入嵌入模型）。
 
@@ -160,7 +195,7 @@ hint 是一个 Windows 桌面小工具：它同时监听你的麦克风和系统
 | M6 | NSIS 安装包与分发 | 完成：CI 构建 + tag 触发发布（`release.yml`） |
 | 下一版 | 本地个人知识库（导入 `.md` / `.txt`，分块 + 关键词检索注入，不引入嵌入模型） | 规划 |
 
-当前版本（1.0.1）的上下文注入仅包含简历与项目资料，**不支持**个人知识库导入。
+当前版本（1.0.2）的上下文注入仅包含简历与项目资料，**不支持**个人知识库导入。
 
 ## 技术栈
 
@@ -217,21 +252,18 @@ cargo test -p hint-core -p hint-store -p hint-audio
 cargo test -p hint-stt --no-default-features
 ```
 
-2026-11-18 本机实测结果：core 61 项、store 24 项（另有 1 项 doctest）、audio 25 项（1 项真实设备冒烟测试默认忽略）、`hint-stt --no-default-features` 38 项，全部通过；`cargo fmt --all -- --check` 干净。
-
-注意：若 Rust 宿主是 `x86_64-pc-windows-gnu` 且 PATH 中没有 MinGW 的 `gcc.exe` / `windres.exe`，
-`cargo test -p hint-stt`（默认引擎）与 `cargo check -p hint` 的 Windows 资源嵌入步骤会失败；
-本机实测即由此失败。CI 使用 MSVC 工具链（含 `ilammy/msvc-dev-cmd`），不受影响。
-默认引擎的完整测试与打包请以 CI 的 MSVC 结果为准。
+Rust 侧的完整检查与测试以 GitHub Actions 的 `build.yml`（windows-latest + MSVC）为准；
+`cargo test -p hint` 在本地与 CI 都因 sherpa-onnx-sys 静态库无法链接 test harness 而不可用，
+壳层业务逻辑（问题队列、去重、文档文本抽取的可测部分）已下沉到 `hint-core` 覆盖。
 
 ## 产物
 
-GitHub Actions 构建会提供 artifact；打 `v1.0.1` 标签后，release 流水线上传到 GitHub Release：
+GitHub Actions 构建会提供 artifact；打 `v1.0.2` 标签后，release 流水线上传到 GitHub Release：
 
 | 文件 | 体积（历史实测，以实际 CI 产物为准） |
 |---|---|
 | `hint.exe` | 约 27 MB（含静态链接的 sherpa-onnx + onnxruntime） |
-| `hint_1.0.1_x64-setup.exe`（NSIS） | 约 7.8 MB |
+| `hint_1.0.2_x64-setup.exe`（NSIS） | 约 8 MB |
 
 安装包体积小于 exe 是因为 NSIS 使用 LZMA 压缩。语音模型不在包内，首次使用时按需下载约 241 MB。
 
@@ -256,3 +288,4 @@ GitHub Actions 构建会提供 artifact；打 `v1.0.1` 标签后，release 流�
 - [natively-cluely](https://github.com/natively-cluely/natively-cluely)：双通道说话人区分与回声过滤
 - [cc-haha](https://github.com/NanmiCoder/cc-haha)：sherpa-onnx 模型下载与 sidecar 设计
 - [Freely](https://github.com/KMalek101/Freely)：本地 Whisper 与 Provider 抽象
+- pi-agent-desktop：语义化 CSS 配色变量与浅色主题的皮肤做法（本地参考）

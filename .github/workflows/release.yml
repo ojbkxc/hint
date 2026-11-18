@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.1）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.2）；手动补发时填写"
         required: true
         type: string
 
@@ -68,7 +68,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.1_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.2_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、保存 API Key，并点「测试连接」确认可用。
             3. 热键：`Ctrl+Shift+Space` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 

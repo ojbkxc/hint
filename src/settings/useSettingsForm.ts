@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { safeInvoke } from "../lib/tauri";
 import {
   EMPTY_SETTINGS,
+  normalizeBaseUrl,
   normalizeDevices,
   normalizeSettings,
   type FormAction,
@@ -69,7 +70,26 @@ export function useSettingsForm() {
     setAction("save");
     setStatus("");
     try {
-      const result = await safeInvoke("save_settings", { settings: form });
+      // 表单里填了 Key 就随「保存配置」一并保存，避免填了 Key 却没点旁边
+      // 的「保存」按钮、以为配置已完整的常见困惑。
+      const pendingKey = apiKey.trim();
+      if (pendingKey) {
+        const savedKey = await safeInvoke("save_api_key", {
+          provider: form.provider,
+          key: pendingKey,
+        });
+        if (!savedKey.ok) {
+          setStatus(`保存 API Key 失败：${savedKey.error}`);
+          return false;
+        }
+        setApiKey("");
+      }
+      const settings: Settings = {
+        ...form,
+        baseUrl: normalizeBaseUrl(form.baseUrl, form.provider) || form.baseUrl,
+      };
+      if (settings.baseUrl !== form.baseUrl) patch({ baseUrl: settings.baseUrl });
+      const result = await safeInvoke("save_settings", { settings });
       if (!result.ok) {
         setStatus(`保存失败：${result.error}`);
         return false;
@@ -119,9 +139,15 @@ export function useSettingsForm() {
     setStatus("");
     try {
       // 把当前表单一起发过去：改了 baseUrl/model 不保存也能直接测。
+      // 表单里刚输入、尚未保存的 Key 也直接带上，不需要先点「保存」。
+      const pendingKey = apiKey.trim();
       const result = await safeInvoke<unknown>("test_llm", {
         prompt: "请用一句话介绍你自己，并确认你能正常工作。",
-        settings: form,
+        settings: {
+          ...form,
+          baseUrl: normalizeBaseUrl(form.baseUrl, form.provider) || form.baseUrl,
+        },
+        apiKey: pendingKey,
       });
       if (!result.ok) {
         // 后端返回的已是「模型连接失败：…」，去掉外层前缀避免重复。
@@ -135,6 +161,21 @@ export function useSettingsForm() {
       const data = result.data as { text?: string; model?: string } | null;
       const text = typeof data?.text === "string" ? data.text : "";
       const model = typeof data?.model === "string" ? data.model : form.model;
+      // 测试成功且表单里有 Key：顺手保存，减少「测通了但没存」的第二次操作。
+      if (pendingKey) {
+        const savedKey = await safeInvoke("save_api_key", {
+          provider: form.provider,
+          key: pendingKey,
+        });
+        if (savedKey.ok) {
+          setApiKey("");
+          await hasKeyFor(form.provider);
+          setStatus(`连接成功，模型：${model}；API Key 已保存`);
+          return { text, model };
+        }
+        setStatus(`连接成功，模型：${model}；但保存 API Key 失败：${savedKey.error}`);
+        return { text, model };
+      }
       setStatus(`连接成功，模型：${model}`);
       return { text, model };
     } finally {

@@ -116,6 +116,33 @@ fn protocol_label(provider: ProviderKind) -> &'static str {
     }
 }
 
+/// OpenAI 兼容的 chat completions 端点。
+///
+/// 用户填的 Base URL 形态五花八门，这里统一兜底：
+/// - `https://api.deepseek.com` → 补成 `/v1/chat/completions`；
+/// - `https://api.deepseek.com/v1` → 补成 `/v1/chat/completions`；
+/// - `https://gateway.example.com/v2` → 保留版本段，拼 `/chat/completions`；
+/// - `https://x.com/v1/chat/completions`（完整端点）→ 原样使用；
+/// - `https://x.com/chat/completions` → 原样使用。
+fn openai_chat_url(base_url: &str) -> String {
+    let root = base(base_url);
+    if root.ends_with("/chat/completions") {
+        return root.to_string();
+    }
+    if has_version_suffix(root) {
+        return format!("{root}/chat/completions");
+    }
+    format!("{root}/v1/chat/completions")
+}
+
+/// 路径最后一段是否形如 `v1` / `v2` / `v1beta` 的版本段。
+fn has_version_suffix(root: &str) -> bool {
+    let last = root.rsplit('/').next().unwrap_or("");
+    let mut chars = last.chars();
+    matches!(chars.next(), Some('v' | 'V'))
+        && chars.next().is_some_and(|c| c.is_ascii_digit())
+}
+
 /// Anthropic 的 Messages 端点。
 ///
 /// 用户把 Base URL 填成 `https://api.anthropic.com/v1`（甚至完整端点）都
@@ -258,7 +285,7 @@ async fn openai(
     api_key: &str,
     request: ChatRequest,
 ) -> Result<ChatResponse> {
-    let url = format!("{}/chat/completions", base(&settings.base_url));
+    let url = openai_chat_url(&settings.base_url);
     let body = openai_body(settings, &request, false);
     let response = client
         .post(url)
@@ -707,7 +734,7 @@ async fn openai_stream(
         return Ok((String::new(), 0));
     }
 
-    let url = format!("{}/chat/completions", base(&settings.base_url));
+    let url = openai_chat_url(&settings.base_url);
     let body = openai_body(settings, request, true);
     let response = client
         .post(url)
@@ -1098,6 +1125,45 @@ mod tests {
     fn sse_parser_recognizes_done_marker() {
         assert_eq!(parse_sse_data("data: [DONE]"), Some("[DONE]"));
         assert_eq!(parse_sse_data("data:[DONE]"), Some("[DONE]"));
+    }
+
+    #[test]
+    fn openai_url_handles_all_base_url_shapes() {
+        // 裸域名：自动补 /v1。
+        assert_eq!(
+            openai_chat_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+        // 带 /v1（有无尾斜杠）：不重复。
+        for base in [
+            "https://api.deepseek.com/v1",
+            "https://api.deepseek.com/v1/",
+        ] {
+            assert_eq!(
+                openai_chat_url(base),
+                "https://api.deepseek.com/v1/chat/completions",
+                "base={base}"
+            );
+        }
+        // 用户误填完整端点：原样使用（这正是「测试连接 404」的根因）。
+        assert_eq!(
+            openai_chat_url("https://tyapi.lxseek.com/v1/chat/completions"),
+            "https://tyapi.lxseek.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_chat_url("https://gateway.local/chat/completions"),
+            "https://gateway.local/chat/completions"
+        );
+        // 自建网关的非 /v1 版本段保持原样。
+        assert_eq!(
+            openai_chat_url("https://gateway.local/v2"),
+            "https://gateway.local/v2/chat/completions"
+        );
+        // 路径本身不是版本段时按根处理。
+        assert_eq!(
+            openai_chat_url("https://gateway.local/api"),
+            "https://gateway.local/api/v1/chat/completions"
+        );
     }
 
     #[test]

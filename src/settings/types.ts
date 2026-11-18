@@ -67,6 +67,72 @@ export const DEFAULT_OVERLAY_OPACITY = 0.88;
 export const MIN_OVERLAY_OPACITY = 0.2;
 export const MAX_OVERLAY_OPACITY = 1;
 
+/**
+ * Base URL 规范化：把用户常见的各种写法统一成后端能直接拼接的形态。
+ *
+ * - 缺协议头时补 `https://`；
+ * - 误贴完整端点（`/chat/completions`、`/messages`、`:generateContent`）时剥掉；
+ * - OpenAI 兼容协议在没有版本段时补 `/v1`；
+ * - Anthropic / Gemini 保持域名（后端会自动补 `/v1`、`/v1beta`）。
+ */
+export function normalizeBaseUrl(raw: string, provider: Provider): string {
+  let url = raw.trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  url = url.replace(/\/+$/, "");
+  url = url
+    .replace(/\/chat\/completions$/i, "")
+    .replace(/\/messages$/i, "")
+    .replace(/:(stream)?generateContent$/i, "")
+    .replace(/\/models\/[^/]*$/i, "");
+  url = url.replace(/\/+$/, "");
+  if (!url) return "";
+  if (provider === "openai" && !hasVersionSuffix(url)) {
+    return `${url}/v1`;
+  }
+  return url;
+}
+
+/** 路径最后一段是否形如 v1 / v2 / v1beta 的版本段。 */
+function hasVersionSuffix(url: string): boolean {
+  const last = url.split("/").pop() ?? "";
+  return /^v\d/i.test(last);
+}
+
+/**
+ * 根据域名自动识别协议；识别不出来时返回 null（保持用户当前选择）。
+ * 只识别特征明确的域名，避免把自建网关误判成其他协议。
+ */
+export function detectProvider(raw: string): Provider | null {
+  const url = raw.trim();
+  if (!url) return null;
+  let host = "";
+  try {
+    host = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname;
+  } catch {
+    return null;
+  }
+  const hostname = host.toLowerCase();
+  if (matchesHost(hostname, "anthropic.com")) return "anthropic";
+  if (matchesHost(hostname, "generativelanguage.googleapis.com")) return "gemini";
+  const openaiHosts = [
+    "openai.com",
+    "deepseek.com",
+    "dashscope.aliyuncs.com",
+    "bigmodel.cn",
+    "moonshot.cn",
+    "siliconflow.cn",
+    "localhost",
+    "127.0.0.1",
+  ];
+  if (openaiHosts.some((domain) => matchesHost(hostname, domain))) return "openai";
+  return null;
+}
+
+function matchesHost(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
 /** 不透明度统一 clamp；非数字或越界值一律回落默认值。 */
 export function normalizeOpacity(raw: unknown): number {
   const parsed =

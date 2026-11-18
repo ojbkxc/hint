@@ -1,6 +1,6 @@
 [package]
 name = "hint-core"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 description = "hint 的核心业务逻辑：配置、凭证、LLM 调用"
 license = "MIT"
@@ -14,3 +14,4 @@ thiserror = "2"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
+encoding_rs = "0.8"

@@ -4,6 +4,7 @@
 //! [`commands`]（前端 invoke 入口）里。
 
 mod commands;
+mod import;
 mod logging;
 mod session;
 
@@ -160,6 +161,7 @@ pub fn run() {
             show_main(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             let log_dir = data_dir.join("logs");
@@ -201,6 +203,7 @@ pub fn run() {
             commands::save_api_key,
             commands::has_api_key,
             commands::test_llm,
+            commands::import_document_text,
             commands::start_session,
             commands::stop_session,
             commands::toggle_session,

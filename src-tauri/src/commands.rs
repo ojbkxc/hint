@@ -60,11 +60,24 @@ pub async fn test_llm(
     state: State<'_, AppState>,
     prompt: String,
     settings: Option<Settings>,
+    api_key: Option<String>,
 ) -> Result<llm::ChatResponse, String> {
     // 设置页未保存时可以用当前表单直接测试；不传则沿用已保存配置。
     let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
     let provider = settings.provider.as_str().to_string();
-    let key = secret::get(&provider).map_err(|error| format!("读取 API Key 失败：{error}"))?;
+    // 表单里刚输入、还没点「保存」的 Key 也能直接用于测试，避免把
+    // 凭据管理器的 "No matching credential found" 之类内部错误暴露给用户。
+    let key = match api_key
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+    {
+        Some(key) => key,
+        None => secret::get(&provider).map_err(|_| {
+            "当前接口还没有保存 API Key：请在上方输入框粘贴 Key 后点「保存」，\
+             或直接点「测试连接」自动保存并测试"
+                .to_string()
+        })?,
+    };
     let system = settings.system_prompt();
     llm::complete(
         &settings,
@@ -77,6 +90,14 @@ pub async fn test_llm(
     )
     .await
     .map_err(|error| format!("模型连接失败：{error}"))
+}
+
+/// 从本地文件提取资料文本（TXT / MD / DOCX / PDF）。
+#[tauri::command]
+pub async fn import_document_text(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::import::document_text(&path))
+        .await
+        .map_err(|error| format!("导入任务失败：{error}"))?
 }
 
 // ---------------------------------------------------------------------------

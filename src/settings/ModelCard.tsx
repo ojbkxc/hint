@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormAction, Provider, Settings } from "./types";
-import { PRESETS } from "./types";
+import { PRESETS, detectProvider, normalizeBaseUrl } from "./types";
 
 type Props = {
   form: Settings;
@@ -46,8 +46,9 @@ export default function ModelCard(props: Props) {
         预设模型名会随厂商更新，可在下方直接修改。
       </p>
       <p className="muted small">
-        Base URL：Anthropic 填 https://api.anthropic.com（带 /v1 也可），Gemini 填
-        https://generativelanguage.googleapis.com（带 /v1beta 也可），重复的版本段会被自动去重。
+        Base URL 只填域名也行，会自动补全：OpenAI 兼容补 `/v1`，Anthropic 和 Gemini
+        自动补版本段；误贴完整端点（含 `/chat/completions` 等）也会自动清理。
+        粘贴 Anthropic / Gemini 官方域名时会自动切换协议。
       </p>
 
       <label>
@@ -69,7 +70,20 @@ export default function ModelCard(props: Props) {
         <input
           value={form.baseUrl}
           onChange={(event) => props.onPatch({ baseUrl: event.target.value })}
-          placeholder="https://api.deepseek.com/v1"
+          onBlur={() => {
+            // 先按域名识别协议，再用识别到的协议规范化 URL：
+            // 这样粘贴 Anthropic / Gemini / 常见 OpenAI 兼容域名时，
+            // 协议会自动切过去，版本段也按对应协议补全。
+            const detected = detectProvider(form.baseUrl);
+            const provider = detected ?? form.provider;
+            const baseUrl = normalizeBaseUrl(form.baseUrl, provider);
+            if (baseUrl === form.baseUrl && provider === form.provider) return;
+            props.onPatch({
+              baseUrl,
+              ...(provider !== form.provider ? { provider } : {}),
+            });
+          }}
+          placeholder="https://api.deepseek.com/v1（只填域名也行）"
           spellCheck={false}
         />
       </label>

@@ -1,8 +1,73 @@
+/*
+ * hint 主题层（浅色默认）。
+ *
+ * 参照 pi-agent-desktop 的皮肤做法：颜色全部走语义变量，
+ * 组件规则只引用变量而不是硬编码色值，后续加深色主题只需要
+ * 覆盖 :root 里的变量。变量命名与参考项目保持一致：
+ * --bg / --surface / --text / --text-muted / --border / --accent …
+ *
+ * 浮层透明度：--overlay-alpha（0.2–1.0）直接作为 .overlay-root 的
+ * 背景 alpha。所有内容区都不再铺固定不透明衬底，滑块在整个浮层
+ * 面积上都能看出来；文字可读性靠深色字 + 白色光晕阴影保证。
+ */
+
 :root {
+  color-scheme: light;
+
+  /* 底色与表面 */
+  --bg: #f2f3f5;
+  --bg-glow: rgba(64, 120, 255, 0.08);
+  --surface: #ffffff;
+  --surface-muted: rgba(255, 255, 255, 0.72);
+  --surface-input: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-selected: rgba(47, 107, 255, 0.1);
+
+  /* 描边 */
+  --border: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --separator: rgba(0, 0, 0, 0.07);
+
+  /* 文字 */
+  --text: #1d1d1f;
+  --text-secondary: #3f4147;
+  --text-muted: #5f5f63;
+  --text-dim: #7c7c82;
+
+  /* 强调色 */
+  --accent: #2f6bff;
+  --accent-hover: #1e57e8;
+  --accent-soft: rgba(47, 107, 255, 0.1);
+  --accent-border: rgba(47, 107, 255, 0.35);
+  --on-accent: #ffffff;
+  --focus-ring: rgba(47, 107, 255, 0.28);
+
+  /* 状态色 */
+  --success: #1f7a4d;
+  --success-soft: rgba(31, 122, 77, 0.09);
+  --success-border: rgba(31, 122, 77, 0.3);
+  --warning: #946208;
+  --warning-soft: rgba(148, 98, 8, 0.1);
+  --warning-border: rgba(148, 98, 8, 0.32);
+  --danger: #c9342f;
+  --danger-soft: rgba(201, 52, 47, 0.08);
+  --danger-border: rgba(201, 52, 47, 0.32);
+
+  /* 阴影 */
+  --shadow-control: 0 1px 2px rgba(20, 22, 28, 0.06);
+  --shadow-card:
+    0 1px 2px rgba(20, 22, 28, 0.04), 0 8px 24px rgba(20, 22, 28, 0.05);
+  --shadow-popover:
+    0 16px 44px rgba(20, 22, 28, 0.14), 0 2px 8px rgba(20, 22, 28, 0.06);
+  --shadow-overlay: 0 10px 36px rgba(15, 18, 25, 0.22);
+
+  /* 滚动条 */
+  --scroll-thumb: rgba(0, 0, 0, 0.18);
+
   font-family: "Segoe UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont,
     "PingFang SC", sans-serif;
   font-size: 14px;
-  color: #e7ebf0;
+  color: var(--text);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -38,8 +103,8 @@ textarea {
   height: 100vh;
   overflow-y: auto;
   background:
-    radial-gradient(1200px 600px at 15% -10%, rgba(64, 120, 255, 0.16), transparent),
-    #0e1116;
+    radial-gradient(1200px 600px at 15% -10%, var(--bg-glow), transparent),
+    var(--bg);
   padding: 28px 32px 48px;
 }
 
@@ -60,14 +125,14 @@ textarea {
 
 .subtitle {
   margin: 4px 0 0;
-  color: #8a94a6;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .hint-badge {
-  border: 1px solid rgba(120, 160, 255, 0.28);
-  background: rgba(70, 110, 220, 0.12);
-  color: #a9beff;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 12px;
@@ -95,33 +160,34 @@ textarea {
 }
 
 .dashboard-banner.banner-info {
-  color: #cfe0ff;
-  background: rgba(63, 109, 255, 0.14);
-  border-color: rgba(120, 160, 255, 0.4);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
 }
 
 .dashboard-banner.banner-error {
-  color: #ffcfcf;
-  background: rgba(160, 40, 40, 0.16);
-  border-color: rgba(255, 120, 120, 0.45);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
 }
 
 .dashboard-banner:hover:not(:disabled) {
-  background: rgba(63, 109, 255, 0.2);
+  background: rgba(47, 107, 255, 0.16);
 }
 
 .dashboard-banner.banner-error:hover:not(:disabled) {
-  background: rgba(190, 50, 50, 0.22);
+  background: rgba(201, 52, 47, 0.14);
 }
 
 /* 窄窗口兜底：单列卡片，避免设置项被挤成一列字宽。
    必须放在文件末尾（见下方响应式覆盖段），否则会被后置基础规则覆盖。 */
 
 .card {
-  background: rgba(23, 28, 36, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 18px 18px 16px;
+  box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -135,7 +201,7 @@ textarea {
   margin: 0 0 2px;
   font-size: 15px;
   font-weight: 600;
-  color: #cfd7e3;
+  color: var(--text);
 }
 
 label {
@@ -143,25 +209,52 @@ label {
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
-  color: #8a94a6;
+  color: var(--text-muted);
+}
+
+/* 字段标题行：左侧文字，右侧「从文件导入」等小按钮。 */
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+button.ghost.mini-import {
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: 6px;
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+button.ghost.mini-import:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 input,
 select,
 textarea {
-  background: #0e131a;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--surface-input);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 9px 11px;
   outline: none;
+  color: var(--text);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input:hover:not(:focus),
+select:hover:not(:focus),
+textarea:hover:not(:focus) {
+  border-color: var(--border-strong);
 }
 
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: rgba(110, 150, 255, 0.65);
-  box-shadow: 0 0 0 3px rgba(80, 120, 255, 0.14);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 textarea {
@@ -185,7 +278,7 @@ textarea {
 .slider-row input[type="range"] {
   flex: 1;
   padding: 0;
-  accent-color: #3f6dff;
+  accent-color: var(--accent);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -196,7 +289,7 @@ textarea {
   min-width: 38px;
   text-align: right;
   font-size: 12px;
-  color: #c3cfdf;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -207,18 +300,20 @@ textarea {
 }
 
 button {
-  background: #1b2230;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 9px 16px;
+  color: var(--text);
+  box-shadow: var(--shadow-control);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.05s;
   white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
-  background: #242d3f;
-  border-color: rgba(130, 160, 255, 0.4);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
 }
 
 button:active:not(:disabled) {
@@ -231,20 +326,27 @@ button:disabled {
 }
 
 button.primary {
-  background: linear-gradient(180deg, #3f6dff, #2f57d6);
-  border-color: rgba(120, 160, 255, 0.5);
-  color: #fff;
+  background: linear-gradient(180deg, #3f7bff, var(--accent-hover));
+  border-color: var(--accent-hover);
+  color: var(--on-accent);
+  box-shadow:
+    var(--shadow-control), 0 4px 14px rgba(47, 107, 255, 0.22);
 }
 
 button.primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #4a78ff, #3963ea);
+  background: linear-gradient(180deg, #538bff, #1a4fd6);
 }
 
 button.ghost {
   padding: 5px 10px;
   font-size: 12px;
   background: transparent;
-  color: #9aa7bd;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
 }
 
 .preset-row {
@@ -256,23 +358,23 @@ button.ghost {
 .answer-box {
   margin: 4px 0 0;
   padding: 12px;
-  background: #0b0f15;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: #f7f8fa;
+  border: 1px solid var(--separator);
   border-radius: 8px;
   white-space: pre-wrap;
   line-height: 1.7;
-  color: #cfe0d6;
+  color: var(--text-secondary);
   font-family: inherit;
 }
 
 .status {
   margin: 0;
   font-size: 12px;
-  color: #8fb6ff;
+  color: var(--accent);
 }
 
 .muted {
-  color: #77808f;
+  color: var(--text-dim);
 }
 
 .small {
@@ -284,7 +386,7 @@ button.ghost {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: #ff9b9b;
+  color: var(--danger);
 }
 
 /* ---------- 顶部 Tab ---------- */
@@ -295,9 +397,10 @@ button.ghost {
   margin-bottom: 18px;
   padding: 4px;
   width: fit-content;
-  background: rgba(23, 28, 36, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
   border-radius: 11px;
+  box-shadow: var(--shadow-control);
 }
 
 .tab {
@@ -305,19 +408,20 @@ button.ghost {
   border: 1px solid transparent;
   padding: 7px 18px;
   border-radius: 8px;
-  color: #8a94a6;
+  color: var(--text-muted);
   font-size: 13px;
+  box-shadow: none;
 }
 
 .tab:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-hover);
   border-color: transparent;
 }
 
 .tab.active {
-  background: rgba(63, 109, 255, 0.18);
-  border-color: rgba(120, 160, 255, 0.35);
-  color: #cfe0ff;
+  background: var(--bg-selected);
+  border-color: var(--accent-border);
+  color: var(--accent);
 }
 
 .card-head {
@@ -332,14 +436,14 @@ button.ghost {
 }
 
 button.danger {
-  border-color: rgba(255, 110, 110, 0.32);
-  color: #ffb3b3;
-  background: rgba(160, 40, 40, 0.12);
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 button.danger:hover:not(:disabled) {
-  background: rgba(190, 50, 50, 0.2);
-  border-color: rgba(255, 120, 120, 0.5);
+  background: rgba(201, 52, 47, 0.14);
+  border-color: var(--danger);
 }
 
 button.small-danger {
@@ -351,7 +455,7 @@ button.small-danger {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--separator);
   padding-top: 12px;
 }
 
@@ -360,16 +464,16 @@ button.m5 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #97a2b6;
+  color: var(--text-muted);
 }
 
 .tag-m5 {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 999px;
-  border: 1px solid rgba(150, 165, 200, 0.3);
-  background: rgba(120, 135, 170, 0.12);
-  color: #8d99b0;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--text-dim);
 }
 
 .save-card {
@@ -382,16 +486,16 @@ button.m5 {
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(95, 211, 154, 0.35);
-  background: rgba(47, 143, 102, 0.16);
-  color: #7fe0b4;
+  border: 1px solid var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .model-path {
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
   word-break: break-all;
-  color: #a8b4c8;
+  color: var(--text-muted);
 }
 
 .model-ready {
@@ -416,7 +520,7 @@ button.m5 {
 
 .progress-text {
   font-size: 11px;
-  color: #9aa6bb;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -424,25 +528,25 @@ button.m5 {
 
 .progress-foot {
   font-size: 10px;
-  color: #75808f;
+  color: var(--text-dim);
 }
 
 .progress-track {
   height: 7px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--bg-hover);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: 4px;
-  background: linear-gradient(90deg, #2b57c4, #6ea0ff);
+  background: linear-gradient(90deg, var(--accent), #6ea0ff);
   transition: width 0.2s ease-out;
 }
 
 .progress-fill.active {
-  background: linear-gradient(90deg, #2f8f66, #5fd39a);
+  background: linear-gradient(90deg, var(--success), #5fd39a);
   background-size: 200% 100%;
   animation: progress-flow 1.6s linear infinite;
 }
@@ -462,27 +566,27 @@ button.m5 {
   font-size: 11px;
   padding: 2px 9px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #8a94a6;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
 .session-state.state-listening {
-  border-color: rgba(95, 211, 154, 0.4);
-  background: rgba(47, 143, 102, 0.14);
-  color: #7fe0b4;
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .session-state.state-connecting {
-  border-color: rgba(240, 179, 80, 0.4);
-  background: rgba(160, 120, 40, 0.14);
-  color: #f0c98a;
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .session-state.state-error {
-  border-color: rgba(255, 120, 120, 0.4);
-  background: rgba(160, 50, 50, 0.14);
-  color: #ffb3b3;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 /* ---------- 会话复盘 ---------- */
@@ -518,18 +622,23 @@ button.m5 {
   gap: 3px;
   padding: 9px 11px;
   border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--separator);
+  background: transparent;
+  box-shadow: none;
+}
+
+.session-item:hover:not(.active) {
+  background: var(--bg-hover);
 }
 
 .session-item.active {
-  border-color: rgba(120, 160, 255, 0.5);
-  background: rgba(63, 109, 255, 0.14);
+  border-color: var(--accent-border);
+  background: var(--bg-selected);
 }
 
 .session-title {
   font-size: 13px;
-  color: #d4dcea;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -537,7 +646,7 @@ button.m5 {
 
 .session-meta {
   font-size: 11px;
-  color: #7d8798;
+  color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -556,7 +665,7 @@ button.m5 {
   margin: 10px 0 0;
   font-size: 12px;
   font-weight: 600;
-  color: #9fb0c8;
+  color: var(--text-muted);
   letter-spacing: 0.5px;
 }
 
@@ -574,27 +683,28 @@ button.m5 {
 /* ---------- 浮层 ---------- */
 
 /*
- * 背景透明度可配置（参照 pluely / natively 的做法）。
- *
- * 分层：
- * - 窗口底色直接用滑块值当 alpha：调到 20% 时只剩两成底色，
- *   能清楚看到下方的视频画面；
- * - 文字所在区块（转录 / 答案 / 头尾栏）单独铺一层暗色衬底且带下限，
- *   因此无论滑块拉多低，答案都保持可照念的对比度；
- * - 从不使用整窗 `opacity`，文字本身永远不透明。
- *
- * 滑块值语义：1 = 最不透明，0.2 = 最透。
+ * 浮层透明度（浅色版）：
+ * - 整块浮层就是一层白色，alpha 直接等于滑块值：20% 时几乎全透，
+ *   能清楚看到下方的视频画面；100% 时纯白不透明。
+ * - 头/转录/答案/底栏都不再单独铺衬底，滑块在整个浮层面积上都可见。
+ * - 不使用整窗 opacity，文字本身永远不透明；深色文字叠白色光晕
+ *   （text-shadow）保证压在暗色视频画面上也能读。
+ * - 不使用 backdrop-filter：透明窗口上它采样不到桌面内容，
+ *   且在部分 WebView2 版本上会触发整窗合成异常。
  */
 .overlay-root {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: rgba(13, 16, 22, var(--overlay-alpha, 0.88));
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, var(--overlay-alpha, 0.88));
+  border: 1px solid rgba(0, 0, 0, 0.14);
   border-radius: 16px;
   overflow: hidden;
-  backdrop-filter: blur(10px);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  color: var(--text);
+  text-shadow:
+    0 0 4px rgba(255, 255, 255, 0.95),
+    0 0 10px rgba(255, 255, 255, 0.8),
+    0 1px 2px rgba(255, 255, 255, 0.9);
 }
 
 .overlay-header {
@@ -602,8 +712,8 @@ button.m5 {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(10, 13, 18, max(0.88, 0.45 + 0.5 * var(--overlay-alpha, 1)));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
   cursor: move;
   user-select: none;
 }
@@ -612,7 +722,7 @@ button.m5 {
   font-size: 13px;
   font-weight: 650;
   letter-spacing: 1.5px;
-  color: #dbe4f2;
+  color: var(--text);
 }
 
 .overlay-status {
@@ -620,7 +730,7 @@ button.m5 {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #8a94a6;
+  color: var(--text-muted);
   max-width: 65%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -631,37 +741,37 @@ button.m5 {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #5b6472;
+  background: #a3a7ae;
   display: inline-block;
   flex: 0 0 auto;
 }
 
 .tone-ok .dot {
-  background: #3f78ff;
-  box-shadow: 0 0 8px rgba(63, 120, 255, 0.8);
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(47, 107, 255, 0.55);
 }
 
 .tone-pending .dot {
-  background: #f0b350;
-  box-shadow: 0 0 8px rgba(240, 179, 80, 0.7);
+  background: #d99a2b;
+  box-shadow: 0 0 8px rgba(217, 154, 43, 0.55);
 }
 
 .tone-error .dot {
-  background: #ff6d6d;
-  box-shadow: 0 0 8px rgba(255, 109, 109, 0.7);
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(201, 52, 47, 0.5);
 }
 
 .tone-idle .dot,
 .tone-idle {
-  color: #8a94a6;
+  color: var(--text-muted);
 }
 
 .header-latency {
   margin-left: 8px;
   padding-left: 8px;
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
   font-style: normal;
-  color: #9fb0c8;
+  color: var(--text-muted);
 }
 
 .overlay-transcript {
@@ -672,15 +782,14 @@ button.m5 {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  /* 文字区单独铺暗色衬底，并设下限：滑块拉到最透时也不会看不清。 */
-  background: rgba(10, 13, 18, max(0.86, 0.4 + 0.5 * var(--overlay-alpha, 1)));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .overlay-empty {
   font-size: 12px;
   line-height: 1.6;
-  color: #6d7788;
+  color: var(--text-dim);
 }
 
 .line {
@@ -692,28 +801,28 @@ button.m5 {
 
 .line .who {
   flex: 0 0 auto;
-  color: #7f8ba0;
+  color: var(--text-dim);
   font-weight: 600;
 }
 
 .line.interviewer .who {
-  color: #6ea0ff;
+  color: #2f5fd0;
 }
 
 .line.interviewer .what {
-  color: #b9c9e6;
+  color: #24324a;
 }
 
 .line.me .who {
-  color: #5fd39a;
+  color: var(--success);
 }
 
 .line.me .what {
-  color: #bfd6cb;
+  color: #1f3329;
 }
 
 .line.echo .what {
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .echo-tag {
@@ -722,8 +831,8 @@ button.m5 {
   padding: 0 5px;
   font-size: 10px;
   font-style: normal;
-  color: #8a94a6;
-  border: 1px solid rgba(150, 160, 180, 0.3);
+  color: var(--text-muted);
+  border: 1px solid rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
 
@@ -732,8 +841,7 @@ button.m5 {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 与转录区一致：答案区自带暗色衬底，保证照念可读。 */
-  background: rgba(10, 13, 18, max(0.86, 0.4 + 0.5 * var(--overlay-alpha, 1)));
+  background: transparent;
 }
 
 .overlay-answer-toolbar {
@@ -758,7 +866,7 @@ button.m5 {
 /* 历史时间线：当前答案在上，更早的问答依次向下。 */
 .answer-history-timeline {
   margin-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
   padding-top: 8px;
   display: flex;
   flex-direction: column;
@@ -769,11 +877,11 @@ button.m5 {
   margin: 0;
   font-size: 10px;
   letter-spacing: 0.5px;
-  color: #5f6a7b;
+  color: var(--text-dim);
 }
 
 .answer-block.past {
-  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  border-left: 2px solid rgba(0, 0, 0, 0.14);
   padding-left: 9px;
 }
 
@@ -781,7 +889,7 @@ button.m5 {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #7f8ba0;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -791,7 +899,7 @@ button.m5 {
   margin: 3px 0 0;
   font-size: 13px;
   line-height: 1.65;
-  color: #a9b6c8;
+  color: #2c2e33;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -804,7 +912,7 @@ button.m5 {
   white-space: nowrap;
   font-size: 11px;
   line-height: 1.5;
-  color: #8a94a6;
+  color: var(--text-muted);
 }
 
 .pending-badge {
@@ -813,13 +921,11 @@ button.m5 {
   line-height: 1.6;
   padding: 0 7px;
   border-radius: 999px;
-  border: 1px solid rgba(240, 179, 80, 0.4);
-  background: rgba(160, 120, 40, 0.14);
-  color: #f0c98a;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning);
   white-space: nowrap;
 }
-
-/* 折叠式历史面板已改为答案区下方的时间线，相关规则移除。 */
 
 .answer-title {
   display: inline-flex;
@@ -827,7 +933,7 @@ button.m5 {
   gap: 6px;
   font-size: 11px;
   letter-spacing: 1px;
-  color: #7d8798;
+  color: var(--text-dim);
   text-transform: uppercase;
 }
 
@@ -835,14 +941,14 @@ button.m5 {
   font-size: 10px;
   letter-spacing: 0;
   text-transform: none;
-  color: #6d7788;
+  color: var(--text-dim);
 }
 
 .streaming-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #5fd39a;
+  background: var(--success);
   animation: pulse 1.1s ease-in-out infinite;
 }
 
@@ -867,11 +973,11 @@ button.mini {
   padding: 4px 9px;
   font-size: 11px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 button.mini.ghost {
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(0, 0, 0, 0.14);
 }
 
 .overlay-answer-body {
@@ -882,11 +988,12 @@ button.mini.ghost {
   overflow-x: hidden;
   font-size: 15px;
   line-height: 1.75;
-  /* 浮层可能半透明压在亮画面上：正文用近白 + 深色描边阴影维持对比度。 */
-  color: #f4f8fd;
+  /* 半透明白底压在视频画面上：深色正文 + 白色光晕保证任意画面下可读。 */
+  color: #14161a;
   text-shadow:
-    0 0 3px rgba(0, 0, 0, 0.95),
-    0 1px 4px rgba(0, 0, 0, 0.9);
+    0 0 4px rgba(255, 255, 255, 1),
+    0 0 9px rgba(255, 255, 255, 0.92),
+    0 1px 2px rgba(255, 255, 255, 0.95);
 }
 
 /* 当前答案块至少保留 3–4 行可见，历史在下方滚动查看。 */
@@ -901,13 +1008,13 @@ button.mini.ghost {
 }
 
 .answer-error {
-  color: #ff9b9b;
+  color: var(--danger);
   font-size: 13px;
 }
 
 .placeholder {
   font-size: 12px;
-  color: #6d7788;
+  color: var(--text-dim);
   line-height: 1.7;
 }
 
@@ -917,7 +1024,7 @@ button.mini.ghost {
   height: 15px;
   margin-left: 3px;
   vertical-align: -2px;
-  background: #5fd39a;
+  background: var(--success);
   border-radius: 2px;
   animation: blink 1s steps(1) infinite;
 }
@@ -935,9 +1042,9 @@ button.mini.ghost {
   gap: 10px;
   padding: 7px 12px;
   font-size: 10px;
-  color: #78839a;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(10, 13, 18, max(0.88, 0.45 + 0.5 * var(--overlay-alpha, 1)));
+  color: var(--text-dim);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
 }
 
 .footer-group {
@@ -961,7 +1068,7 @@ button.mini.ghost {
 }
 
 .level-label {
-  color: #78839a;
+  color: var(--text-dim);
 }
 
 .level-track {
@@ -969,7 +1076,7 @@ button.mini.ghost {
   width: 38px;
   height: 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.12);
   overflow: hidden;
 }
 
@@ -981,11 +1088,11 @@ button.mini.ghost {
 }
 
 .level-mic .level-fill {
-  background: linear-gradient(90deg, #2f8f66, #5fd39a);
+  background: linear-gradient(90deg, var(--success), #5fd39a);
 }
 
 .level-system .level-fill {
-  background: linear-gradient(90deg, #2b57c4, #6ea0ff);
+  background: linear-gradient(90deg, var(--accent), #6ea0ff);
 }
 
 .overlay-toast {
@@ -997,33 +1104,34 @@ button.mini.ghost {
   font-size: 11px;
   line-height: 1.5;
   text-align: left;
-  color: #ffcfcf;
-  background: rgba(90, 24, 24, 0.92);
-  border: 1px solid rgba(255, 120, 120, 0.35);
+  color: var(--danger);
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--danger-border);
   border-radius: 8px;
+  box-shadow: var(--shadow-popover);
   cursor: pointer;
   max-height: 62px;
   overflow: hidden;
 }
 
 .overlay-toast.toast-info {
-  color: #cfe0ff;
-  background: rgba(30, 42, 70, 0.94);
-  border-color: rgba(120, 160, 255, 0.4);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.97);
+  border-color: var(--accent-border);
 }
 
 .overlay-toast.toast-error {
-  color: #ffcfcf;
-  background: rgba(90, 24, 24, 0.94);
-  border-color: rgba(255, 120, 120, 0.45);
+  color: var(--danger);
+  background: rgba(255, 255, 255, 0.97);
+  border-color: var(--danger-border);
 }
 
 .overlay-toast.toast-info:hover {
-  background: rgba(38, 53, 88, 0.96);
+  background: #f2f6ff;
 }
 
 .overlay-toast.toast-error:hover {
-  background: rgba(110, 32, 32, 0.96);
+  background: #fdf3f2;
 }
 
 /* 答案区错误条：最多两行，超出省略；点击不遮挡 toast。 */
@@ -1035,8 +1143,8 @@ button.mini.ghost {
   gap: 6px 8px;
   margin: 0 0 8px;
   padding: 7px 10px;
-  border: 1px solid rgba(255, 120, 120, 0.4);
-  background: rgba(90, 24, 24, 0.55);
+  border: 1px solid var(--danger-border);
+  background: rgba(255, 255, 255, 0.92);
   border-radius: 8px;
 }
 
@@ -1045,7 +1153,7 @@ button.mini.ghost {
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #ffbdbd;
+  color: var(--danger);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1134,7 +1242,7 @@ button.mini.ghost {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--scroll-thumb);
   border-radius: 4px;
 }
 
