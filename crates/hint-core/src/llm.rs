@@ -135,6 +135,21 @@ fn openai_chat_url(base_url: &str) -> String {
     format!("{root}/v1/chat/completions")
 }
 
+/// OpenAI 兼容的 models 端点。
+///
+/// 与 [`openai_chat_url`] 同理：剥掉误填的 `/chat/completions`，没有版本段时
+/// 补 `/v1`，避免拼成 `/v1/v1/models` 或漏掉版本段。
+fn openai_models_url(base_url: &str) -> String {
+    let root = base(base_url);
+    let root = root.strip_suffix("/chat/completions").unwrap_or(root);
+    let root = root.trim_end_matches('/');
+    if has_version_suffix(root) {
+        format!("{root}/models")
+    } else {
+        format!("{root}/v1/models")
+    }
+}
+
 /// 路径最后一段是否形如 `v1` / `v2` / `v1beta` 的版本段。
 fn has_version_suffix(root: &str) -> bool {
     let last = root.rsplit('/').next().unwrap_or("");
@@ -159,6 +174,16 @@ fn anthropic_messages_url(base_url: &str) -> String {
     }
 }
 
+/// Anthropic 的 models 端点；去掉重复的 `/v1`，避免 `/v1/v1/models`。
+fn anthropic_models_url(base_url: &str) -> String {
+    let root = base(base_url);
+    if root.ends_with("/v1") {
+        format!("{root}/models")
+    } else {
+        format!("{root}/v1/models")
+    }
+}
+
 /// Gemini 的 generateContent 端点；`stream` 决定是否用 `alt=sse`。
 ///
 /// 同理去掉重复的 `/v1beta`；模型名里误带的 `models/` 前缀也会被剥掉。
@@ -177,6 +202,16 @@ fn gemini_url(base_url: &str, model: &str, stream: bool) -> String {
         "generateContent"
     };
     format!("{root}{version}/models/{model}:{action}")
+}
+
+/// Gemini 的 models 端点；去掉重复的 `/v1beta`，避免 `/v1beta/v1beta/models`。
+fn gemini_models_url(base_url: &str) -> String {
+    let root = base(base_url);
+    if root.ends_with("/v1beta") {
+        format!("{root}/models")
+    } else {
+        format!("{root}/v1beta/models")
+    }
 }
 
 /// 按状态码给出中文建议；正文原始片段由 [`ensure_success`] 单独附上。
@@ -277,6 +312,95 @@ pub async fn complete(
         ProviderKind::Anthropic => anthropic(&client, settings, api_key, request).await,
         ProviderKind::Gemini => gemini(&client, settings, api_key, request).await,
     }
+}
+
+/// 拉取接口可用的模型列表，供设置页下拉选择。
+///
+/// - OpenAI 兼容：`GET {base}/models`，取 `data[].id`；
+/// - Anthropic：`GET {base}/v1/models`，取 `data[].id`；
+/// - Gemini：`GET {base}/v1beta/models`，取 `models[].name`（剥掉 `models/` 前缀）。
+///
+/// 部分中转 / 自建网关不支持 `/models`（返回 404 或空列表）；空列表不算致命
+/// 错误，由前端提示用户手动填写模型名。
+pub async fn fetch_models(settings: &Settings, api_key: &str) -> Result<Vec<String>> {
+    let client = client()?;
+    match settings.provider {
+        ProviderKind::OpenAi => openai_models(&client, settings, api_key).await,
+        ProviderKind::Anthropic => anthropic_models(&client, settings, api_key).await,
+        ProviderKind::Gemini => gemini_models(&client, settings, api_key).await,
+    }
+}
+
+async fn openai_models(
+    client: &reqwest::Client,
+    settings: &Settings,
+    api_key: &str,
+) -> Result<Vec<String>> {
+    let url = openai_models_url(&settings.base_url);
+    let response = client.get(url).bearer_auth(api_key).send().await?;
+    let response = ensure_success(response, settings).await?;
+    let raw = response.text().await?;
+    let value = parse_json_response(&raw)?;
+    Ok(models_from_ids(value["data"].as_array()))
+}
+
+async fn anthropic_models(
+    client: &reqwest::Client,
+    settings: &Settings,
+    api_key: &str,
+) -> Result<Vec<String>> {
+    let url = anthropic_models_url(&settings.base_url);
+    let response = client
+        .get(url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await?;
+    let response = ensure_success(response, settings).await?;
+    let raw = response.text().await?;
+    let value = parse_json_response(&raw)?;
+    Ok(models_from_ids(value["data"].as_array()))
+}
+
+async fn gemini_models(
+    client: &reqwest::Client,
+    settings: &Settings,
+    api_key: &str,
+) -> Result<Vec<String>> {
+    let url = gemini_models_url(&settings.base_url);
+    let response = client
+        .get(url)
+        .header("x-goog-api-key", api_key)
+        .send()
+        .await?;
+    let response = ensure_success(response, settings).await?;
+    let raw = response.text().await?;
+    let value = parse_json_response(&raw)?;
+    // Gemini 的 name 形如 `models/gemini-2.5-flash`，剥掉 `models/` 前缀。
+    Ok(value["models"]
+        .as_array()
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| model["name"].as_str())
+                .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
+                .filter(|name| !name.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// 从 OpenAI / Anthropic 的 `data[].id` 数组里抽取模型名（去空白、去空项）。
+fn models_from_ids(data: Option<&Vec<Value>>) -> Vec<String> {
+    data.map(|items| {
+        items
+            .iter()
+            .filter_map(|item| item["id"].as_str())
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 async fn openai(
@@ -1163,6 +1287,45 @@ mod tests {
         assert_eq!(
             openai_chat_url("https://gateway.local/api"),
             "https://gateway.local/api/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn models_urls_handle_base_url_shapes() {
+        // OpenAI：裸域名补 /v1，带版本段不重复，误填 /chat/completions 被剥。
+        assert_eq!(
+            openai_models_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/models"
+        );
+        assert_eq!(
+            openai_models_url("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/v1/models"
+        );
+        assert_eq!(
+            openai_models_url("https://tyapi.lxseek.com/v1/chat/completions"),
+            "https://tyapi.lxseek.com/v1/models"
+        );
+        assert_eq!(
+            openai_models_url("https://gateway.local/v2"),
+            "https://gateway.local/v2/models"
+        );
+        // Anthropic：去重复 /v1。
+        assert_eq!(
+            anthropic_models_url("https://api.anthropic.com"),
+            "https://api.anthropic.com/v1/models"
+        );
+        assert_eq!(
+            anthropic_models_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/models"
+        );
+        // Gemini：去重复 /v1beta。
+        assert_eq!(
+            gemini_models_url("https://generativelanguage.googleapis.com"),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            gemini_models_url("https://generativelanguage.googleapis.com/v1beta"),
+            "https://generativelanguage.googleapis.com/v1beta/models"
         );
     }
 

@@ -10,10 +10,12 @@ type Props = {
   action: FormAction;
   answer: string;
   status: string;
+  /** 接口返回的可用模型列表（点「刷新模型」拉取）。 */
+  models: string[];
   onApiKey: (value: string) => void;
-  onSaveKey: () => void;
   onPatch: (next: Partial<Settings>) => void;
   onTest: () => Promise<{ text: string; model: string } | null>;
+  onLoadModels: () => void;
   onSave: () => void;
 };
 
@@ -90,29 +92,43 @@ export default function ModelCard(props: Props) {
 
       <label>
         模型名
-        <input
-          value={form.model}
-          onChange={(event) => props.onPatch({ model: event.target.value })}
-          placeholder="deepseek-chat"
-          spellCheck={false}
-        />
+        <div className="inline-row">
+          <input
+            list="model-options"
+            value={form.model}
+            onChange={(event) => props.onPatch({ model: event.target.value })}
+            placeholder="点「刷新模型」从接口拉取"
+            spellCheck={false}
+          />
+          <datalist id="model-options">
+            {props.models.map((model) => (
+              <option key={model} value={model} />
+            ))}
+          </datalist>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => void props.onLoadModels()}
+            disabled={busy}
+          >
+            {action === "models" ? "拉取中…" : "刷新模型"}
+          </button>
+        </div>
       </label>
 
       <label>
         API Key
-        <div className="inline-row">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => props.onApiKey(event.target.value)}
-            placeholder={keySaved ? "已保存，留空则不修改" : "粘贴 API Key"}
-            spellCheck={false}
-          />
-          <button type="button" onClick={props.onSaveKey} disabled={busy}>
-            {action === "key" ? "保存中…" : "保存"}
-          </button>
-        </div>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(event) => props.onApiKey(event.target.value)}
+          placeholder={keySaved ? "已保存，留空则不修改" : "粘贴 API Key"}
+          spellCheck={false}
+        />
       </label>
+      <p className="muted small">
+        填好后点下方「保存配置」一并保存；点「测试连接」会自动保存。
+      </p>
 
       <div className="action-row">
         <button type="button" onClick={() => void props.onTest()} disabled={busy}>

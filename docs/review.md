@@ -292,3 +292,10 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **Base URL 智能补全与协议识别**：前端 `normalizeBaseUrl`（失焦时补 `https://`、剥掉完整端点 `/chat/completions` `/messages` `:generateContent`、OpenAI 无版本段时补 `/v1`）与 `detectProvider`（anthropic.com / generativelanguage.googleapis.com / openai.com / deepseek.com / dashscope / bigmodel / moonshot / siliconflow / localhost → 对应协议）。后端 `llm.rs` 新增 `openai_chat_url`：完整端点原样使用、任意 `vN` 版本段只拼 `/chat/completions`、裸域名补 `/v1`——修复了用户把 Base URL 填成 `https://tyapi.lxseek.com/v1/chat/completions` 时被拼成 `…/chat/completions/chat/completions` 的 404。新增 1 项 URL 单测覆盖 7 种形态。
 - **测试连接使用未保存的 Key**：`test_llm` 新增可选参数 `apiKey`，表单里刚输入、尚未保存的 Key 直接用于测试；都没有时返回中文提示而不是 keyring 的 `No matching credential found`。前端在测试成功后自动保存该 Key（设置页「保存配置」也会一并保存输入框里的 Key），解决「填了 Key 直接点测试连接却报读取凭据失败」的困惑。
 - **版本与发布**：版本号统一为 1.0.2；`Cargo.lock` 同步新增依赖（`tauri-plugin-dialog` 2.8.4、`pdf-extract` 0.9.0、`zip` 2.6.1、`encoding_rs` 0.8）。按用户要求，Rust 编译与测试不在本地执行，全部以 CI 结果为准。
+
+## 十一、1.0.2 后增量（2026-11-18）
+
+按使用者反馈完成的两项设置页交互改动，Rust 侧验证走 GitHub Actions：
+
+- **模型名从接口下拉**：后端 `hint-core::llm` 新增 `fetch_models`（三协议各自的 `/models` 端点 + 鉴权头：OpenAI `GET {base}/models` 取 `data[].id`、Anthropic `GET {base}/v1/models` 取 `data[].id`、Gemini `GET {base}/v1beta/models` 取 `models[].name` 并剥掉 `models/` 前缀），并新增 `openai_models_url` / `anthropic_models_url` / `gemini_models_url` 复用版本段去重逻辑，避免 `/v1/v1/models`。壳层新增 `fetch_models` 命令，与 `test_llm` 同理支持用表单里未保存的 Key。前端 `useSettingsForm` 增加 `models` 状态与 `loadModels`，`ModelCard` 的模型名输入框改为 `input list` + `datalist`：点「刷新模型」拉取后可下拉选择，也支持手动输入列表外模型（兼容不支持 `/models` 的自建网关，空列表时提示手动填写）。新增 URL 单测覆盖三协议 7 种 base 形态。
+- **去掉 API Key 旁边的冗余保存按钮**：`save()` 本就会把输入框里未保存的 Key 一并写入凭据管理器，`testConnection` 成功后也会自动保存，卡片内独立的「保存」按钮与底部「保存配置」职责重复。现移除 `ModelCard` 的 `onSaveKey` 按钮与 `useSettingsForm` 的 `saveKey`，`FormAction` 去掉 `"key"`、新增 `"models"`，Key 保存统一走底部「保存配置」，并在 Key 输入框下方加一行说明。

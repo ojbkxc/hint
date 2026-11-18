@@ -92,6 +92,32 @@ pub async fn test_llm(
     .map_err(|error| format!("模型连接失败：{error}"))
 }
 
+/// 拉取接口可用的模型列表（设置页下拉选择用）。
+///
+/// 与 `test_llm` 同理：支持用表单里未保存的 Key；未保存时给出中文提示，
+/// 不把凭据管理器的内部错误暴露给用户。
+#[tauri::command]
+pub async fn fetch_models(
+    state: State<'_, AppState>,
+    settings: Option<Settings>,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
+    let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
+    let provider = settings.provider.as_str().to_string();
+    let key = match api_key
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+    {
+        Some(key) => key,
+        None => secret::get(&provider).map_err(|_| {
+            "当前接口还没有保存 API Key：请先保存 Key，再拉取模型列表".to_string()
+        })?,
+    };
+    llm::fetch_models(&settings, &key)
+        .await
+        .map_err(|error| format!("拉取模型列表失败：{error}"))
+}
+
 /// 从本地文件提取资料文本（TXT / MD / DOCX / PDF）。
 #[tauri::command]
 pub async fn import_document_text(path: String) -> Result<String, String> {

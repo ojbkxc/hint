@@ -203,6 +203,7 @@ pub fn run() {
             commands::save_api_key,
             commands::has_api_key,
             commands::test_llm,
+            commands::fetch_models,
             commands::import_document_text,
             commands::start_session,
             commands::stop_session,

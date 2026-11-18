@@ -3,7 +3,7 @@ export type AnswerStyle = "concise" | "outline";
 export type TriggerMode = "auto" | "manual";
 
 /** 设置页当前正在进行的操作，用于给对应按钮显示准确的阶段文案。 */
-export type FormAction = "" | "save" | "key" | "test";
+export type FormAction = "" | "save" | "test" | "models";
 
 export type Settings = {
   provider: Provider;

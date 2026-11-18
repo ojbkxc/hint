@@ -21,6 +21,7 @@ export function useSettingsForm() {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<FormAction>("");
+  const [models, setModels] = useState<string[]>([]);
 
   useEffect(() => {
     let disposed = false;
@@ -107,26 +108,34 @@ export function useSettingsForm() {
     }
   }
 
-  async function saveKey() {
-    if (!apiKey.trim()) {
-      setStatus("请先填写 API Key");
-      return;
-    }
+  async function loadModels(): Promise<void> {
     setBusy(true);
-    setAction("key");
+    setAction("models");
     setStatus("");
     try {
-      const result = await safeInvoke("save_api_key", {
-        provider: form.provider,
-        key: apiKey.trim(),
+      // 用当前表单（含未保存的 baseUrl / Key）直接拉取，不需要先保存。
+      const pendingKey = apiKey.trim();
+      const result = await safeInvoke<unknown>("fetch_models", {
+        settings: {
+          ...form,
+          baseUrl: normalizeBaseUrl(form.baseUrl, form.provider) || form.baseUrl,
+        },
+        apiKey: pendingKey,
       });
       if (!result.ok) {
-        setStatus(`保存 Key 失败：${result.error}`);
+        setStatus(`拉取模型列表失败：${result.error}`);
         return;
       }
-      setApiKey("");
-      await hasKeyFor(form.provider);
-      setStatus("API Key 已写入 Windows 凭据管理器");
+      const list = (result.data as unknown[])
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter((item) => item !== "");
+      setModels(list);
+      setStatus(
+        list.length
+          ? `已获取 ${list.length} 个可用模型，可在模型名处下拉选择`
+          : "接口没有返回可用模型，请手动填写模型名",
+      );
     } finally {
       setBusy(false);
       setAction("");
@@ -208,8 +217,9 @@ export function useSettingsForm() {
     action,
     patch,
     save,
-    saveKey,
     testConnection,
+    loadModels,
+    models,
     loadDevices,
   };
 }

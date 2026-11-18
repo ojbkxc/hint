@@ -126,10 +126,11 @@ export default function Dashboard() {
               action={form.action}
               answer={testAnswer}
               status={form.status}
+              models={form.models}
               onApiKey={form.setApiKey}
-              onSaveKey={() => void form.saveKey()}
               onPatch={form.patch}
               onTest={handleTest}
+              onLoadModels={() => void form.loadModels()}
               onSave={() => void form.save()}
             />
             <SessionCard control={session} />
