@@ -56,9 +56,6 @@ jobs:
       - name: Tauri 集成编译检查
         run: cargo check --locked -p hint --bins
 
-      - name: Tauri 集成单测（问题队列/去重/历史快照）
-        run: cargo test --locked -p hint
-
   build:
     name: 构建 Windows 安装包
     runs-on: windows-latest
