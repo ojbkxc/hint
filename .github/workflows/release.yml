@@ -47,6 +47,33 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      # 与 build.yml 同理：缓存的 target 里若残留不完整的
+      # sherpa-onnx-prebuilt/.../lib 目录，build.rs 会跳过下载并在链接时失败。
+      - name: 清理 sherpa 预编译库缓存
+        shell: pwsh
+        run: |
+          $removed = @()
+          if (Test-Path target/sherpa-onnx-prebuilt) {
+            Remove-Item -Recurse -Force target/sherpa-onnx-prebuilt
+            $removed += 'target/sherpa-onnx-prebuilt'
+          }
+          Get-ChildItem target -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            foreach ($sub in @('build', '.fingerprint')) {
+              $dir = Join-Path $_.FullName $sub
+              if (Test-Path $dir) {
+                Get-ChildItem $dir -Directory -Filter 'sherpa-onnx-sys-*' -ErrorAction SilentlyContinue | ForEach-Object {
+                  Remove-Item -Recurse -Force $_.FullName
+                  $removed += $_.FullName
+                }
+              }
+            }
+          }
+          if ($removed.Count -gt 0) {
+            Write-Host ("已清理: " + ($removed -join ', '))
+          } else {
+            Write-Host "没有需要清理的 sherpa 缓存"
+          }
+
       - name: 构建 Tauri 应用与 NSIS 安装包
         run: npm run tauri build
 

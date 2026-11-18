@@ -82,6 +82,36 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      # sherpa-onnx-sys 的 build.rs 只要看到 target/sherpa-onnx-prebuilt/.../lib
+      # 目录存在就跳过下载；缓存的构建目录若来自一次中断的构建，这里会残留
+      # 不完整的目录，导致链接阶段报 "could not find native static library
+      # sherpa-onnx-c-api"。同时清掉 build/fingerprint 产物，强制 build.rs
+      # 重新运行并下载完整静态库（其余 crate 的缓存保持不变）。
+      - name: 清理 sherpa 预编译库缓存
+        shell: pwsh
+        run: |
+          $removed = @()
+          if (Test-Path target/sherpa-onnx-prebuilt) {
+            Remove-Item -Recurse -Force target/sherpa-onnx-prebuilt
+            $removed += 'target/sherpa-onnx-prebuilt'
+          }
+          Get-ChildItem target -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            foreach ($sub in @('build', '.fingerprint')) {
+              $dir = Join-Path $_.FullName $sub
+              if (Test-Path $dir) {
+                Get-ChildItem $dir -Directory -Filter 'sherpa-onnx-sys-*' -ErrorAction SilentlyContinue | ForEach-Object {
+                  Remove-Item -Recurse -Force $_.FullName
+                  $removed += $_.FullName
+                }
+              }
+            }
+          }
+          if ($removed.Count -gt 0) {
+            Write-Host ("已清理: " + ($removed -join ', '))
+          } else {
+            Write-Host "没有需要清理的 sherpa 缓存"
+          }
+
       - name: 构建 Tauri 应用
         run: npm run tauri build
 
