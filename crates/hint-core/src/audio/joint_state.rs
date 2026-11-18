@@ -126,10 +126,7 @@ impl JointSpeechTracker {
         channel: JointChannel,
         now_ms: u64,
     ) -> Option<JointSpeechTransition> {
-        match channel {
-            JointChannel::Interviewer => self.interviewer_speaking = false,
-            JointChannel::Me => self.me_speaking = false,
-        }
+        // 直接走 on_edge(false)：内部会判断该通道是否已静默（无变化时返回 None）。
         self.on_edge(channel, false, now_ms)
     }
 }
