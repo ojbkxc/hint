@@ -19,8 +19,9 @@ pub enum LifecycleDir {
 }
 
 /// 生命周期状态。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LifecycleState {
+    #[default]
     Idle,
     Starting,
     Active,
