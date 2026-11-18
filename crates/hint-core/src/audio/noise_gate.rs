@@ -124,8 +124,8 @@ mod tests {
     #[test]
     fn metrics_ignore_nan() {
         let (rms, peak) = audio_metrics(&[0.0, f32::NAN, 1.0]);
-        // 只有 0.0 与 1.0 参与：rms = sqrt((0+1)/2)。
-        assert_eq!(rms, ((0.0 + 1.0) / 2.0).sqrt());
+        // 只有 0.0 与 1.0 参与：rms = sqrt((0+1)/2) = sqrt(0.5)。
+        assert!((rms - 0.5f32.sqrt()).abs() < 1e-6);
         assert_eq!(peak, 1.0);
     }
 
@@ -135,7 +135,7 @@ mod tests {
         let out = apply_noise_gate(&[0.05, 0.0], threshold);
         // 0.05 < 0.1：衰减为 0.05 * (0.05/0.1) = 0.025，小于原值。
         assert!(out[0] < 0.05);
-        assert_eq!(out[0], 0.025);
+        assert!((out[0] - 0.025).abs() < 1e-6);
         assert_eq!(out[1], 0.0);
     }
 
