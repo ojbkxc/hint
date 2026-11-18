@@ -22,6 +22,9 @@ use hint_core::pipeline;
 use hint_core::secret;
 use hint_core::settings::{Settings, TriggerMode};
 use hint_core::session::{LifecycleAction, LifecycleDir};
+use hint_core::stt::{
+    is_covered_by_live, split_into_speech_clips, ClipOptions, Outage, SttGapTracker,
+};
 use hint_store::{AnswerMetrics, CHANNEL_MIC, CHANNEL_SYSTEM};
 use hint_stt::WorkerClient;
 use hint_stt::download::user_message_for;
@@ -65,6 +68,18 @@ const HISTORY_LIMIT: usize = 24;
 const WORKER_IDLE: Duration = Duration::from_secs(300);
 /// STT 待处理队列容量；满了直接丢新段，不阻塞音频回调线程。
 const STT_QUEUE_CAPACITY: usize = 32;
+/// STT 断线恢复：每路环形缓冲容量（毫秒）。
+const RING_CAP_MS: u64 = 120_000;
+/// 出错时 outage 回溯时长（覆盖已发送但丢失的音频）。
+const ERROR_PREROLL_MS: u64 = 3_000;
+/// 看门狗：无识别结果的时长门槛。
+const STALL_MS: u64 = 15_000;
+/// 看门狗：判 stall 所需的最低语音输入。
+const STALL_SPEECH_MS: u64 = 4_000;
+/// stall 退避上限。
+const MAX_STALL_BACKOFF_MS: u64 = 120_000;
+/// outage 关闭后等待补录的时长。
+const SETTLE_MS: u64 = 2_000;
 
 /// 发送事件；失败只记日志，绝不影响主流程。
 pub(crate) fn emit<S: serde::Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
@@ -399,6 +414,21 @@ struct AnswerCtx {
     last_question: Option<String>,
 }
 
+/// STT 断线恢复状态：两路 tracker + 待补录队列 + stall 回收标志。
+struct SttRecoveryState {
+    interviewer: SttGapTracker,
+    me: SttGapTracker,
+    queue: VecDeque<PendingRecovery>,
+    stall_requested: bool,
+}
+
+/// 一个待补录的断线窗口。
+struct PendingRecovery {
+    channel: Channel,
+    outage: Outage,
+    ready_at: Instant,
+}
+
 /// 一次会话内跨线程共享的状态。
 pub(crate) struct SessionShared {
     session_id: i64,
@@ -409,6 +439,8 @@ pub(crate) struct SessionShared {
     /// 连续多问的答案队列；worker 串行消费，不再取消上一题。
     answers: Mutex<QuestionQueue>,
     ctx: Mutex<AnswerCtx>,
+    /// STT 断线恢复状态（环形缓冲 + 看门狗 + 补录队列）。
+    recovery: Mutex<SttRecoveryState>,
 }
 
 impl SessionShared {
@@ -637,6 +669,12 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
             recent_interviewer: VecDeque::new(),
             last_question: None,
         }),
+        recovery: Mutex::new(SttRecoveryState {
+            interviewer: SttGapTracker::new(JointChannel::Interviewer, RING_CAP_MS),
+            me: SttGapTracker::new(JointChannel::Me, RING_CAP_MS),
+            queue: VecDeque::new(),
+            stall_requested: false,
+        }),
     });
 
     let (jobs_tx, jobs_rx) = sync_channel::<SttJob>(STT_QUEUE_CAPACITY);
@@ -656,13 +694,38 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
                 return;
             }
             let mut finished = Vec::new();
-            {
+            let (start_ms, end_ms) = {
                 let mut guard = lock(&segmenters);
                 let segmenter = match chunk.channel {
                     Channel::Interviewer => &mut guard.interviewer,
                     Channel::Me => &mut guard.me,
                 };
+                let before = segmenter.total_ms;
                 segmenter.push(&chunk.samples, &mut finished);
+                (before, segmenter.total_ms)
+            };
+            // 断线恢复：喂环形缓冲 + 看门狗；stall 时置回收标志，由 dispatcher 处理。
+            let (rms, _) = hint_core::audio::audio_metrics(&chunk.samples);
+            let dur_ms = (end_ms - start_ms).max(0) as u64;
+            let stalled = {
+                let mut recovery = lock(&shared.recovery);
+                let tracker = match chunk.channel {
+                    Channel::Interviewer => &mut recovery.interviewer,
+                    Channel::Me => &mut recovery.me,
+                };
+                tracker.on_audio(
+                    &chunk.samples,
+                    start_ms,
+                    dur_ms,
+                    rms,
+                    SPEECH_RMS,
+                    STALL_MS,
+                    STALL_SPEECH_MS,
+                    MAX_STALL_BACKOFF_MS,
+                )
+            };
+            if stalled {
+                lock(&shared.recovery).stall_requested = true;
             }
             for segment in finished {
                 let job = SttJob {
@@ -871,6 +934,14 @@ pub(crate) fn stop_session(app: &AppHandle) -> Result<(), String> {
     } = runtime;
 
     shared.cancelled.store(true, Ordering::SeqCst);
+    {
+        // 会话结束：清空断线恢复状态，不再跑补录推理。
+        let mut recovery = lock(&shared.recovery);
+        recovery.interviewer.reset();
+        recovery.me.reset();
+        recovery.queue.clear();
+        recovery.stall_requested = false;
+    }
     if let Some(flag) = lock(&shared.answer_cancel).take() {
         flag.store(true, Ordering::SeqCst);
     }
@@ -1111,16 +1182,44 @@ fn dispatcher_loop(
     client: WorkerClient,
     done: Arc<(Mutex<bool>, std::sync::Condvar)>,
 ) {
+    let started = Instant::now();
     loop {
         if shared.cancelled.load(Ordering::Acquire) {
             break;
         }
+        // 看门狗触发 stall 时，回收挂死的 worker，下次 transcribe 会冷启。
+        let stall = {
+            let mut recovery = lock(&shared.recovery);
+            std::mem::take(&mut recovery.stall_requested)
+        };
+        if stall {
+            tracing::warn!("语音识别停滞，回收 worker 以触发冷启");
+            client.stop();
+        }
         match jobs.recv_timeout(Duration::from_secs(1)) {
             Ok(job) => {
+                let now_ms = started.elapsed().as_millis() as i64;
                 let result = client.transcribe(&job.wav, "auto");
                 match result {
                     Ok(transcript) => {
                         let text = transcript.text.trim().to_string();
+                        // 识别成功：关闭 outage（若有）并入补录队列。
+                        let outage = {
+                            let mut recovery = lock(&shared.recovery);
+                            let tracker = match job.channel {
+                                Channel::Interviewer => &mut recovery.interviewer,
+                                Channel::Me => &mut recovery.me,
+                            };
+                            tracker.on_transcript(&text, now_ms)
+                        };
+                        if let Some(outage) = outage {
+                            let mut recovery = lock(&shared.recovery);
+                            recovery.queue.push_back(PendingRecovery {
+                                channel: job.channel,
+                                outage,
+                                ready_at: Instant::now() + Duration::from_millis(SETTLE_MS),
+                            });
+                        }
                         if !text.is_empty() {
                             handle_transcript(
                                 &app,
@@ -1134,6 +1233,14 @@ fn dispatcher_loop(
                     }
                     Err(error) => {
                         tracing::warn!(%error, "本地语音识别失败");
+                        {
+                            let mut recovery = lock(&shared.recovery);
+                            let tracker = match job.channel {
+                                Channel::Interviewer => &mut recovery.interviewer,
+                                Channel::Me => &mut recovery.me,
+                            };
+                            tracker.on_error(now_ms, ERROR_PREROLL_MS);
+                        }
                         if !shared.cancelled.load(Ordering::Acquire) {
                             emit_status(
                                 &app,
@@ -1149,6 +1256,8 @@ fn dispatcher_loop(
                     tracing::info!("空闲超过 5 分钟，回收语音 worker");
                     client.stop();
                 }
+                // 实时段优先：队列空闲（1 秒无新 job）时才执行断线补录。
+                run_recovery(&app, &shared, &client);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -1158,6 +1267,109 @@ fn dispatcher_loop(
     let (done_lock, done_cv) = &*done;
     *lock(done_lock) = true;
     done_cv.notify_all();
+}
+
+/// 执行一个到期的补录窗口：切语音片段 → 识别 → 去重 → 写库 + 上报。
+fn run_recovery(app: &AppHandle, shared: &Arc<SessionShared>, client: &WorkerClient) {
+    let pending = {
+        let mut recovery = lock(&shared.recovery);
+        let now = Instant::now();
+        let position = recovery
+            .queue
+            .iter()
+            .position(|item| item.ready_at <= now);
+        position.and_then(|index| recovery.queue.remove(index))
+    };
+    let Some(pending) = pending else {
+        return;
+    };
+    let (frames, live_texts) = {
+        let recovery = lock(&shared.recovery);
+        let tracker = match pending.channel {
+            Channel::Interviewer => &recovery.interviewer,
+            Channel::Me => &recovery.me,
+        };
+        let start = pending.outage.start_ms;
+        let end = pending.outage.recovered_at_ms.unwrap_or(start);
+        let frames = tracker.ring().range(start, end);
+        let live = tracker.live_texts_between(start - 5_000, i64::MAX);
+        (frames, live)
+    };
+    if frames.is_empty() {
+        return;
+    }
+    let clips = split_into_speech_clips(&frames, &ClipOptions::default());
+    let state = app.state::<AppState>();
+    let mut recovered = 0usize;
+    for clip in clips {
+        if shared.cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        let wav = encode_wav(&clip.samples);
+        match client.transcribe(&wav, "auto") {
+            Ok(transcript) => {
+                let text = transcript.text.trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                if is_covered_by_live(&text, &live_texts, 0.7) {
+                    continue;
+                }
+                let is_echo = if pending.channel == Channel::Me {
+                    let recent = shared.recent_interviewer_texts();
+                    let refs: Vec<&str> = recent.iter().map(String::as_str).collect();
+                    pipeline::is_echo(&text, &refs)
+                } else {
+                    false
+                };
+                let channel_id = if pending.channel == Channel::Interviewer {
+                    CHANNEL_SYSTEM
+                } else {
+                    CHANNEL_MIC
+                };
+                {
+                    let store = lock(&state.store);
+                    if let Err(error) = store.add_segment(
+                        shared.session_id,
+                        channel_id,
+                        clip.start_ms,
+                        clip.end_ms,
+                        &text,
+                        is_echo,
+                    ) {
+                        tracing::warn!(%error, "补录写段落失败");
+                    }
+                }
+                emit(
+                    app,
+                    EVT_TRANSCRIPT,
+                    json!({
+                        "channel": if pending.channel == Channel::Interviewer { "interviewer" } else { "me" },
+                        "text": text,
+                        "isEcho": is_echo,
+                        "recovered": true,
+                    }),
+                );
+                // 补录到历史供后续问答参考，但不重新入队作答，避免重复答案。
+                if !is_echo {
+                    match pending.channel {
+                        Channel::Interviewer => {
+                            shared.push_turn(TurnRole::Interviewer, &text);
+                            shared.record_interviewer(&text, false);
+                        }
+                        Channel::Me => shared.push_turn(TurnRole::Me, &text),
+                    }
+                }
+                recovered += 1;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "补录识别失败");
+            }
+        }
+    }
+    if recovered > 0 {
+        tracing::info!(recovered, "断线补录完成");
+    }
 }
 
 fn handle_transcript(
