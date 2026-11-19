@@ -376,18 +376,33 @@ async fn gemini_models(
     let response = ensure_success(response, settings).await?;
     let raw = response.text().await?;
     let value = parse_json_response(&raw)?;
-    // Gemini 的 name 形如 `models/gemini-2.5-flash`，剥掉 `models/` 前缀。
-    Ok(value["models"]
+    Ok(models_from_gemini(&value))
+}
+
+/// 从 Gemini `/models` 响应里抽取可对话的模型名。
+///
+/// - `name` 形如 `models/gemini-2.5-flash`，剥掉 `models/` 前缀；
+/// - 只保留 `supportedGenerationMethods` 含 `generateContent` 的模型：
+///   Gemini 会同时返回 embedding、aqa 等不能对话的模型，混进下拉会误导；
+/// - 字段缺失时无法判断，保守保留。
+fn models_from_gemini(value: &Value) -> Vec<String> {
+    value["models"]
         .as_array()
         .map(|models| {
             models
                 .iter()
+                .filter(|model| match model["supportedGenerationMethods"].as_array() {
+                    Some(methods) => methods
+                        .iter()
+                        .any(|method| method.as_str() == Some("generateContent")),
+                    None => true,
+                })
                 .filter_map(|model| model["name"].as_str())
                 .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
                 .filter(|name| !name.trim().is_empty())
                 .collect()
         })
-        .unwrap_or_default())
+        .unwrap_or_default()
 }
 
 /// 从 OpenAI / Anthropic 的 `data[].id` 数组里抽取模型名（去空白、去空项）。
@@ -1326,6 +1341,37 @@ mod tests {
         assert_eq!(
             gemini_models_url("https://generativelanguage.googleapis.com/v1beta"),
             "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn gemini_models_filters_non_chat_models() {
+        let value = json!({
+            "models": [
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "supportedGenerationMethods": ["generateContent", "countTokens"]
+                },
+                {
+                    "name": "models/embedding-001",
+                    "supportedGenerationMethods": ["embedContent"]
+                },
+                {
+                    "name": "models/gemini-2.5-pro",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/legacy-model"
+                }
+            ]
+        });
+        assert_eq!(
+            models_from_gemini(&value),
+            vec![
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.5-pro".to_string(),
+                "legacy-model".to_string(),
+            ]
         );
     }
 

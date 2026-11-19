@@ -44,6 +44,8 @@ export function useSettingsForm() {
   useEffect(() => {
     let disposed = false;
     setKeySaved(false);
+    // 模型列表来自上一个协议的接口，切换协议后不再适用，清空避免选错。
+    setModels([]);
     void (async () => {
       const saved = await safeInvoke<unknown>("has_api_key", {
         provider: form.provider,
