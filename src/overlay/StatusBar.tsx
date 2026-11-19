@@ -1,18 +1,24 @@
-import type { LevelsState } from "./types";
+import type { LevelsState, SpeechState } from "./types";
 
 type Props = {
   levels: LevelsState;
   model: string;
   ttftMs: number | null;
   streaming: boolean;
+  speech: SpeechState;
 };
 
-export default function StatusBar({ levels, model, ttftMs, streaming }: Props) {
+export default function StatusBar({ levels, model, ttftMs, streaming, speech }: Props) {
   return (
     <footer className="overlay-footer">
       <span className="footer-group">
         <LevelBar label="麦克风" value={levels.mic} tone="mic" />
         <LevelBar label="系统声" value={levels.system} tone="system" />
+        {speech.joint !== "neither" && (
+          <span className={`speaking-badge speaking-${speech.joint}`}>
+            {jointText(speech.joint)}
+          </span>
+        )}
       </span>
       <span className="footer-group">
         <span className="footer-item" title={model || "尚未连接模型"}>
@@ -24,6 +30,19 @@ export default function StatusBar({ levels, model, ttftMs, streaming }: Props) {
       </span>
     </footer>
   );
+}
+
+function jointText(joint: SpeechState["joint"]): string {
+  switch (joint) {
+    case "interviewer":
+      return "面试官在说";
+    case "me":
+      return "你在说";
+    case "both":
+      return "双方同时";
+    default:
+      return "";
+  }
 }
 
 function LevelBar({ label, value, tone }: { label: string; value: number; tone: "mic" | "system" }) {

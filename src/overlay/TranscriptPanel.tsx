@@ -17,6 +17,7 @@ export default function TranscriptPanel({ lines }: Props) {
             <span className="what">
               {line.text}
               {line.isEcho && <em className="echo-tag">回声</em>}
+              {line.recovered && <em className="recovered-tag">补录</em>}
             </span>
           </div>
         ))

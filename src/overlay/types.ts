@@ -5,6 +5,8 @@ export type TranscriptLine = {
   channel: Channel;
   text: string;
   isEcho: boolean;
+  /** 断线补录的转录（非实时）。 */
+  recovered?: boolean;
 };
 
 export type AnswerState = {
@@ -33,6 +35,11 @@ export type AnswerHistoryEntry = {
 export type LevelsState = {
   mic: number;
   system: number;
+};
+
+/** 双通道联合语音状态（谁在说话）。 */
+export type SpeechState = {
+  joint: "neither" | "interviewer" | "me" | "both";
 };
 
 export type StatusState = {
@@ -70,4 +77,6 @@ export const HINT_EVENTS = {
   queue: "hint://queue",
   /** 浮层背景不透明度变化，payload { opacity: number }。 */
   overlayOpacity: "hint://overlay-opacity",
+  /** 双通道联合语音状态迁移，payload { channel, speaking, joint, atMs, msSinceOtherEdge }。 */
+  speechEdge: "hint://speech-edge",
 } as const;

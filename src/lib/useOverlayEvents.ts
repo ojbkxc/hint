@@ -5,6 +5,7 @@ import type {
   AnswerState,
   LevelsState,
   NoticeState,
+  SpeechState,
   StatusState,
   TranscriptLine,
 } from "../overlay/types";
@@ -20,6 +21,8 @@ type OverlayListenerState = {
   /** 本场已回答过的问答（不含当前这一轮），按时间先后追加。 */
   answerHistory: AnswerHistoryEntry[];
   levels: LevelsState;
+  /** 双通道联合语音状态（谁在说话）。 */
+  speech: SpeechState;
   status: StatusState;
   /** 非会话提示（模型下载、热键注册等）；不参与会话状态判断。 */
   notice: NoticeState;
@@ -42,6 +45,7 @@ const INITIAL_STATE: OverlayListenerState = {
   answer: EMPTY_ANSWER,
   answerHistory: [],
   levels: { mic: 0, system: 0 },
+  speech: { joint: "neither" },
   status: { state: "idle", message: "等待连接" },
   notice: { level: "", message: "" },
 };
@@ -95,6 +99,7 @@ export function useOverlayEvents() {
         channel,
         text,
         isEcho: payload.isEcho === true,
+        recovered: payload.recovered === true,
       };
       setState((current) => {
         if (disposed) return current;
@@ -223,6 +228,20 @@ export function useOverlayEvents() {
       patch({ levels: { mic, system } });
     });
 
+    // 双通道联合语音状态：谁在说话（面试官 / 我 / 同时 / 无）。
+    register(HINT_EVENTS.speechEdge, (payload) => {
+      if (!isRecord(payload)) return;
+      const joint = payload.joint;
+      if (
+        joint === "neither" ||
+        joint === "interviewer" ||
+        joint === "me" ||
+        joint === "both"
+      ) {
+        patch({ speech: { joint } });
+      }
+    });
+
     // 排队数在入队/出队时实时变化；不要等下一轮 reset 才刷新。
     register(HINT_EVENTS.queue, (payload) => {
       if (!isRecord(payload)) return;
@@ -253,7 +272,9 @@ export function useOverlayEvents() {
           ...(clearTranscript
             ? { transcript: [], answerHistory: [] }
             : {}),
-          ...(resetAnswer ? { answer: { ...EMPTY_ANSWER } } : {}),
+          ...(resetAnswer
+            ? { answer: { ...EMPTY_ANSWER }, speech: { joint: "neither" } }
+            : {}),
         };
       });
     });

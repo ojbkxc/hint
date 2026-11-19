@@ -17,6 +17,7 @@ export default function Overlay() {
     answer,
     answerHistory,
     levels,
+    speech,
     status,
     notice,
     hideOverlay,
@@ -131,6 +132,7 @@ export default function Overlay() {
         model={answer.model}
         ttftMs={answer.ttftMs}
         streaming={answer.streaming}
+        speech={speech}
       />
 
       {toast && (
