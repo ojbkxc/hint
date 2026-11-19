@@ -141,7 +141,11 @@ impl SttGapTracker {
         self.speech_ms_since_quiet = 0;
         self.consecutive_stalls = 0;
         self.drop_warned = false;
-        self.live_finals.push((now_ms, text.to_string()));
+        // 空结果（纯噪声段）说明 worker 活着、可以关闭 outage，但不值得记入
+        // 去重用的 live 文本池。
+        if !text.trim().is_empty() {
+            self.live_finals.push((now_ms, text.to_string()));
+        }
         // 只保留最近 120 秒的 live final，避免无限增长。
         self.live_finals
             .retain(|(ms, _)| now_ms - ms <= 120_000);

@@ -299,3 +299,14 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 
 - **模型名从接口下拉**：后端 `hint-core::llm` 新增 `fetch_models`（三协议各自的 `/models` 端点 + 鉴权头：OpenAI `GET {base}/models` 取 `data[].id`、Anthropic `GET {base}/v1/models` 取 `data[].id`、Gemini `GET {base}/v1beta/models` 取 `models[].name` 并剥掉 `models/` 前缀），并新增 `openai_models_url` / `anthropic_models_url` / `gemini_models_url` 复用版本段去重逻辑，避免 `/v1/v1/models`。壳层新增 `fetch_models` 命令，与 `test_llm` 同理支持用表单里未保存的 Key。前端 `useSettingsForm` 增加 `models` 状态与 `loadModels`，`ModelCard` 的模型名输入框改为 `input list` + `datalist`：点「刷新模型」拉取后可下拉选择，也支持手动输入列表外模型（兼容不支持 `/models` 的自建网关，空列表时提示手动填写）。新增 URL 单测覆盖三协议 7 种 base 形态。
 - **去掉 API Key 旁边的冗余保存按钮**：`save()` 本就会把输入框里未保存的 Key 一并写入凭据管理器，`testConnection` 成功后也会自动保存，卡片内独立的「保存」按钮与底部「保存配置」职责重复。现移除 `ModelCard` 的 `onSaveKey` 按钮与 `useSettingsForm` 的 `saveKey`，`FormAction` 去掉 `"key"`、新增 `"models"`，Key 保存统一走底部「保存配置」，并在 Key 输入框下方加一行说明。
+
+## 十二、语音链路深度修复（2026-11-19）
+
+以真机日志（下载失败后日志仅 126 字节）与端到端验证（真实下载 241 MB 模型 + worker 识别 TTS 中文语音）为线索，修复以下缺陷：
+
+- **资产清单实测有效**：三个文件的 URL、字节数、sha256 与清单逐字节一致；服务器返回 206 + `accept-ranges`，断点续传可用；worker 加载模型约 2.5 秒，5.57 秒中文语音识别 0.41 秒、结果与 TTS 原文一字不差。
+- **STT 看门狗真正生效**：`WorkerClient::transcribe` 全程持 `state` 锁、最长 120 秒，dispatcher 阻塞其中时执行不到 stall 回收分支，且 `client.stop()` 同样被锁阻塞。现新增 `WorkerClient::abort()`（只写原子标志、不抢锁），`post_wav` 读循环改为 250ms 轮询并检查 abort（总超时仍 120 秒兜底）；**音频回调线程**检测到 stall 时直接 `abort()`，`transcribe` 被中断后按失败路径回收 worker，下次自动冷启。
+- **补录与实时时间轴统一**：环形缓冲用音频时间轴（Segmenter 累计毫秒），dispatcher 原用自身 `Instant` 起点，两者错位会让 outage 的 `range()` 查不到音频。现统一用 `SttJob.end_ms` 驱动 `on_transcript` / `on_error`，删除 dispatcher 独立时钟。
+- **补录不再饿死实时转录**：`run_recovery` 逐片段识别期间新到的实时段暂存（`parked`）并立即返回，下个空闲周期用 `resume_from_ms` 从断点继续；成功/失败/空结果都推进游标，避免同一片段反复重试。去重窗口从 `i64::MAX` 收敛到 `[start-5s, end+5s]`，空识别结果不进入 live 文本池。
+- **下载失败可诊断**：补开始下载、每次尝试失败（含失败分类与源标签）、最终失败、磁盘预检失败、`prepare` 整体失败的日志；此前失败时日志只有启动一行。
+- **磁盘不足文案**：不再写死「约 300MB」，按实际预算输出「可用约 X MB，本次还需要约 Y MB」，续传时不再误导。
