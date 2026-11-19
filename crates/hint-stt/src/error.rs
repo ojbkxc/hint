@@ -58,7 +58,9 @@ impl FailureReason {
             FailureReason::Certificate => "证书校验失败。可能存在代理劫持或系统时间错误。",
             FailureReason::Http => "服务器返回错误。请稍后重试。",
             FailureReason::Integrity => "文件校验失败，已删除损坏部分。请重新下载。",
-            FailureReason::Storage => "磁盘空间不足或无法写入。需要约 300MB 可用空间。",
+            // 具体需要多少空间随续传进度变化（首次约 300MB，续传更少），
+            // 由错误消息本身给出，这里不再写死数字，避免误导。
+            FailureReason::Storage => "无法写入模型文件。请检查磁盘剩余空间与目录权限。",
             FailureReason::Unsupported => "当前系统不支持本地语音识别。",
             FailureReason::Unknown => "发生未知错误，请重试。",
         }
@@ -460,8 +462,10 @@ mod tests {
     fn storage_message_is_prefixed_with_chinese_guidance() {
         let error = SttError::storage("cannot write x.part: 磁盘空间不足");
         let message = error.user_message();
-        assert!(message.contains("磁盘空间不足或无法写入"), "{message}");
-        assert!(message.contains("300MB"), "{message}");
+        assert!(message.contains("无法写入模型文件"), "{message}");
+        assert!(message.contains("磁盘剩余空间"), "{message}");
+        // 具体需要多少空间由调用方按实际预算写进消息，这里不应写死数字。
+        assert!(!message.contains("300MB"), "{message}");
     }
 
     #[test]

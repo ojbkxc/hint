@@ -18,6 +18,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,8 @@ pub const STOP_GRACE: Duration = Duration::from_secs(1);
 const READY_LINE_LIMIT: usize = 4096;
 /// 响应体上限。
 const RESPONSE_LIMIT: usize = 128 * 1024;
+/// 可中断读取的轮询间隔：每次最多阻塞这么久，随后检查 abort 标志。
+const READ_POLL: Duration = Duration::from_millis(250);
 /// worker 传进来的命令行开关。
 pub const WORKER_FLAG: &str = "--voice-worker";
 
@@ -80,6 +83,11 @@ pub struct WorkerClient {
     state: Mutex<Option<Running>>,
     /// 上次使用时间；`None` 表示从未成功请求。
     last_used: Mutex<Option<Instant>>,
+    /// 中断标志：置位后正在进行的推理会在下一次轮询时中止并回收 worker。
+    ///
+    /// 这只是取消**推理**（放弃当前请求），不改变 `transcribe` 的锁语义；
+    /// 看门狗用它打断可能已挂死的长时间推理。
+    abort: AtomicBool,
 }
 
 impl WorkerClient {
@@ -110,6 +118,7 @@ impl WorkerClient {
             cwd: cwd.into(),
             state: Mutex::new(None),
             last_used: Mutex::new(None),
+            abort: AtomicBool::new(false),
         };
         client.ensure_started()?;
         Ok(client)
@@ -166,6 +175,8 @@ impl WorkerClient {
         if guard.is_none() {
             *guard = Some(self.start_worker()?);
         }
+        // 拿到锁后清掉上一次的 abort 请求，避免它影响本次推理。
+        self.abort.store(false, Ordering::SeqCst);
         let running = guard.as_mut().ok_or_else(|| SttError::Worker {
             message: "worker is not running".into(),
         })?;
@@ -173,11 +184,12 @@ impl WorkerClient {
         // 网络请求最长 120s；失败时必须在**释放锁之后**再回收进程，
         // 否则 `stop_process` 的等待会一直占着锁，`stop()` 只能干等到请求
         // 结束，拖慢「结束面试」。这里先拿结果、尽快释放锁，再停止进程。
-        let outcome = post_wav(running, wav, language);
+        // `abort()` 置位后 post_wav 会在下一次轮询中止（无需等待 120s 超时）。
+        let outcome = post_wav(running, wav, language, &self.abort);
         let dead = outcome.is_err().then(|| guard.take()).flatten();
         drop(guard);
         if let Some(mut dead) = dead {
-            // 任何失败都丢弃 worker：状态未知，下次冷启。
+            // 任何失败（含被 abort 打断）都丢弃 worker：状态未知，下次冷启。
             stop_process(&mut dead);
         }
 
@@ -199,6 +211,17 @@ impl WorkerClient {
         if let Some(mut running) = guard.take() {
             stop_process(&mut running);
         }
+    }
+
+    /// 请求中止正在进行的推理。
+    ///
+    /// 立即返回（不阻塞、不抢 `state` 锁）：置位后 [`WorkerClient::transcribe`]
+    /// 会在下一次读取轮询时放弃当前请求并回收 worker，下次调用自动冷启。
+    ///
+    /// 看门狗用它打断可能已挂死（推理超过 15 秒无结果）的请求——如果不打断，
+    /// `transcribe` 会持锁等到 120 秒超时，期间的看门狗判定无法落地。
+    pub fn abort(&self) {
+        self.abort.store(true, Ordering::SeqCst);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
@@ -452,12 +475,19 @@ fn parse_ready_line(line: &[u8]) -> Result<u16> {
     }
 }
 
-fn post_wav(running: &mut Running, wav: &[u8], language: &str) -> Result<Transcript> {
+fn post_wav(
+    running: &mut Running,
+    wav: &[u8],
+    language: &str,
+    abort: &AtomicBool,
+) -> Result<Transcript> {
     let address = format!("127.0.0.1:{}", running.port);
     let mut stream = TcpStream::connect(&address).map_err(|error| SttError::Worker {
         message: format!("cannot connect to worker on {address}: {error}"),
     })?;
-    let _ = stream.set_read_timeout(Some(INFERENCE_TIMEOUT));
+    // 读超时用较短的轮询间隔，循环里再按累计时长判断 120 秒总上限；
+    // 这样 abort 置位后最多等待一个轮询周期就能退出，而不是卡满 120 秒。
+    let _ = stream.set_read_timeout(Some(READ_POLL));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
 
     let request = format!(
@@ -478,20 +508,43 @@ fn post_wav(running: &mut Running, wav: &[u8], language: &str) -> Result<Transcr
             message: format!("cannot send audio to worker: {error}"),
         })?;
 
+    let deadline = Instant::now() + INFERENCE_TIMEOUT;
     let mut response = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
-        let read = stream.read(&mut chunk).map_err(|error| SttError::Worker {
-            message: format!("cannot read worker response: {error}"),
-        })?;
-        if read == 0 {
-            break;
-        }
-        response.extend_from_slice(&chunk[..read]);
-        if response.len() > RESPONSE_LIMIT {
+        if abort.load(Ordering::SeqCst) {
             return Err(SttError::Worker {
-                message: "worker response exceeded its size limit".into(),
+                message: "inference aborted by the watchdog".into(),
             });
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                response.extend_from_slice(&chunk[..read]);
+                if response.len() > RESPONSE_LIMIT {
+                    return Err(SttError::Worker {
+                        message: "worker response exceeded its size limit".into(),
+                    });
+                }
+            }
+            // 轮询超时：不是错误，回到循环顶部检查 abort 与总超时。
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if Instant::now() >= deadline {
+                    return Err(SttError::Worker {
+                        message: format!("worker did not answer within {INFERENCE_TIMEOUT:?}"),
+                    });
+                }
+            }
+            Err(error) => {
+                return Err(SttError::Worker {
+                    message: format!("cannot read worker response: {error}"),
+                });
+            }
         }
     }
     parse_http_response(&response)

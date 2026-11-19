@@ -1187,14 +1187,16 @@ fn dispatcher_loop(
         if shared.cancelled.load(Ordering::Acquire) {
             break;
         }
-        // 看门狗触发 stall 时，回收挂死的 worker，下次 transcribe 会冷启。
+        // 看门狗触发 stall 时，中止正在进行/挂死的推理并回收 worker。
+        // `abort()` 立即返回，会在下一次读取轮询时打断 `transcribe`，
+        // 而不是让它持锁卡满 120 秒超时；下次 transcribe 自动冷启。
         let stall = {
             let mut recovery = lock(&shared.recovery);
             std::mem::take(&mut recovery.stall_requested)
         };
         if stall {
-            tracing::warn!("语音识别停滞，回收 worker 以触发冷启");
-            client.stop();
+            tracing::warn!("语音识别停滞，中止当前推理并回收 worker 触发冷启");
+            client.abort();
         }
         match jobs.recv_timeout(Duration::from_secs(1)) {
             Ok(job) => {

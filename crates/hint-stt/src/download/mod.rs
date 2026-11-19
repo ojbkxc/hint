@@ -232,7 +232,14 @@ impl ModelManager {
         let guard = DownloadingGuard(&self.downloading);
         self.store_progress(None);
         let result = self.prepare_inner(on_progress, cancel);
-        if result.is_err() {
+        if let Err(error) = &result {
+            // 失败原因必须落日志：以前失败时只清进度，日志里没有任何线索。
+            tracing::error!(
+                model = assets::MODEL_ID,
+                reason = ?error.reason(),
+                %error,
+                "语音资产准备失败，进度已重置"
+            );
             // 失败/取消后清掉进度快照，状态退回 `Unprepared`。
             self.store_progress(None);
         }
@@ -276,8 +283,17 @@ impl ModelManager {
                     needed + 64 * 1024 * 1024
                 };
                 if free < budget {
+                    tracing::warn!(
+                        free_bytes = free,
+                        needed_bytes = budget,
+                        "可用磁盘空间不足，取消下载"
+                    );
+                    // 数字直接写进中文消息：续传时需求远小于首次的约 300MB，
+                    // 固定文案会误导用户。
                     return Err(SttError::storage(format!(
-                        "not enough disk space: {free} bytes free, about {budget} bytes needed"
+                        "磁盘空间不足：当前可用约 {} MB，本次还需要约 {} MB",
+                        free / 1024 / 1024,
+                        budget / 1024 / 1024
                     )));
                 }
             }
@@ -290,6 +306,14 @@ impl ModelManager {
             .sum::<u64>();
         let total = assets::TOTAL_BYTES;
         let on_progress = Arc::new(on_progress);
+
+        tracing::info!(
+            model = assets::MODEL_ID,
+            needed_bytes = needed,
+            remaining_installed = completed,
+            total_bytes = total,
+            "开始准备语音资产"
+        );
 
         for file in assets::ALL_FILES {
             if cancel.load(Ordering::Relaxed) {
@@ -433,6 +457,14 @@ where
     let urls = assets::resolve_urls(file);
     let mut last_error: Option<SttError> = None;
 
+    tracing::info!(
+        resource = file.name,
+        bytes = file.bytes,
+        sources = urls.len(),
+        part_bytes = fs::metadata(&part).map(|meta| meta.len()).unwrap_or(0),
+        "开始下载语音资产"
+    );
+
     for url in urls {
         let source = sanitize_origin(&url);
         for retry in 0..=DEFAULT_MAX_RETRIES {
@@ -495,6 +527,16 @@ where
                 }
                 Err(error) => {
                     let reason = error.reason();
+                    // 记录真实失败原因：以前只有成功日志，下载失败时日志里一片空白，
+                    // 无法区分 DNS / 证书 / 超时 / HTTP 状态码。
+                    tracing::warn!(
+                        resource = file.name,
+                        source = %source,
+                        retry,
+                        reason = ?reason,
+                        %error,
+                        "下载尝试失败"
+                    );
                     if reason.is_terminal() || error_is_cancelled(&error) {
                         return Err(error);
                     }
@@ -508,13 +550,20 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
+    let error = last_error.unwrap_or_else(|| {
         SttError::network(
             FailureReason::Unknown,
             format!("no download source configured for {}", file.name),
             None,
         )
-    }))
+    });
+    tracing::error!(
+        resource = file.name,
+        reason = ?error.reason(),
+        %error,
+        "语音资产下载失败，所有下载源均已尝试"
+    );
+    Err(error)
 }
 
 fn error_is_cancelled(error: &SttError) -> bool {
