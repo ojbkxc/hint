@@ -116,6 +116,33 @@ pub enum SttError {
 /// 用户主动取消下载时使用的固定消息，便于跨层识别「取消」而不是「失败」。
 pub const CANCELLED_MESSAGE: &str = "download cancelled";
 
+/// Worker 进程层的英文运行时错误 → 用户可读的中文。
+///
+/// 只翻译已知的几种；其余（尤其是 `diagnose_startup_failure` 生成的中文诊断）
+/// 原样返回。
+fn worker_message(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("inference aborted by the watchdog") {
+        return "语音识别卡住，已中止当前任务并重启引擎。".to_string();
+    }
+    if lower.contains("did not answer within") {
+        return "语音引擎长时间无响应，已重启。".to_string();
+    }
+    if lower.contains("cannot connect to worker") {
+        return "无法连接本地语音引擎，正在重新启动。".to_string();
+    }
+    if lower.contains("did not report its port within") {
+        return "语音引擎启动超时，请重试。".to_string();
+    }
+    if lower.contains("exited during startup") {
+        return "语音引擎启动失败，请检查模型文件后重试。".to_string();
+    }
+    if lower.contains("closed stdout before reporting its port") {
+        return "语音引擎意外退出，请重试。".to_string();
+    }
+    message.to_string()
+}
+
 impl SttError {
     /// 构造网络错误并自动脱敏消息。
     pub fn network(reason: FailureReason, message: impl Into<String>, status: Option<u16>) -> Self {
@@ -158,8 +185,9 @@ impl SttError {
                 format!("{}（{message}）", FailureReason::Integrity.user_message())
             }
             // Engine / Worker 的 message 多数已是中文诊断（见 diagnose_startup_failure），
-            // 直接展示，不再叠加「发生未知错误」之类的前缀。
-            SttError::Engine { message } | SttError::Worker { message } => message.clone(),
+            // 直接展示；Worker 里少数英文运行时错误先翻译成中文。
+            SttError::Engine { message } => message.clone(),
+            SttError::Worker { message } => worker_message(message),
             SttError::Config { message } => {
                 if message == CANCELLED_MESSAGE {
                     "下载已取消".to_string()
@@ -495,6 +523,39 @@ mod tests {
             message: "本地语音模型加载失败，模型文件可能已损坏".into(),
         };
         assert_eq!(error.user_message(), "本地语音模型加载失败，模型文件可能已损坏");
+    }
+
+    #[test]
+    fn known_worker_errors_are_translated() {
+        let cases = [
+            (
+                "inference aborted by the watchdog",
+                "语音识别卡住，已中止当前任务并重启引擎。",
+            ),
+            (
+                "worker did not answer within 120s",
+                "语音引擎长时间无响应，已重启。",
+            ),
+            (
+                "cannot connect to worker on 127.0.0.1:9: refused",
+                "无法连接本地语音引擎，正在重新启动。",
+            ),
+            (
+                "worker exited during startup with exit code: 1",
+                "语音引擎启动失败，请检查模型文件后重试。",
+            ),
+        ];
+        for (raw, expected) in cases {
+            let error = SttError::Worker {
+                message: raw.to_string(),
+            };
+            assert_eq!(error.user_message(), expected, "原始消息：{raw}");
+        }
+        // 未覆盖的消息原样返回（避免把中文诊断吞掉）。
+        let error = SttError::Worker {
+            message: "自定义诊断".into(),
+        };
+        assert_eq!(error.user_message(), "自定义诊断");
     }
 
     #[test]
