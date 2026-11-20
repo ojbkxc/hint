@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hint_core::{llm, secret, settings::Settings, session::LifecycleDir};
+use hint_core::session::{LifecycleDir, LifecycleState};
+use hint_core::{llm, secret, settings::Settings};
 use hint_stt::download::user_message_for;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
@@ -55,6 +56,23 @@ pub fn has_api_key(provider: String) -> Result<bool, String> {
     Ok(secret::has(&provider))
 }
 
+/// 解析本次请求要用的 API Key：优先用表单里未保存的 Key，否则读凭据管理器。
+///
+/// 读不到时返回调用方提供的中文提示，避免把凭据管理器的内部错误暴露给用户。
+fn resolve_api_key(
+    api_key: Option<String>,
+    provider: &str,
+    missing_hint: &str,
+) -> Result<String, String> {
+    match api_key
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+    {
+        Some(key) => Ok(key),
+        None => secret::get(provider).map_err(|_| missing_hint.to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn test_llm(
     state: State<'_, AppState>,
@@ -65,19 +83,13 @@ pub async fn test_llm(
     // 设置页未保存时可以用当前表单直接测试；不传则沿用已保存配置。
     let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
     let provider = settings.provider.as_str().to_string();
-    // 表单里刚输入、还没点「保存」的 Key 也能直接用于测试，避免把
-    // 凭据管理器的 "No matching credential found" 之类内部错误暴露给用户。
-    let key = match api_key
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-    {
-        Some(key) => key,
-        None => secret::get(&provider).map_err(|_| {
-            "当前接口还没有保存 API Key：请在上方输入框粘贴 Key 后点「保存」，\
-             或直接点「测试连接」自动保存并测试"
-                .to_string()
-        })?,
-    };
+    // 表单里刚输入、还没点「保存」的 Key 也能直接用于测试。
+    let key = resolve_api_key(
+        api_key,
+        &provider,
+        "当前接口还没有保存 API Key：请在上方输入框粘贴 Key 后点「保存」，\
+         或直接点「测试连接」自动保存并测试",
+    )?;
     let system = settings.system_prompt();
     llm::complete(
         &settings,
@@ -104,15 +116,11 @@ pub async fn fetch_models(
 ) -> Result<Vec<String>, String> {
     let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
     let provider = settings.provider.as_str().to_string();
-    let key = match api_key
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-    {
-        Some(key) => key,
-        None => secret::get(&provider).map_err(|_| {
-            "当前接口还没有保存 API Key：请先保存 Key，再拉取模型列表".to_string()
-        })?,
-    };
+    let key = resolve_api_key(
+        api_key,
+        &provider,
+        "当前接口还没有保存 API Key：请先保存 Key，再拉取模型列表",
+    )?;
     llm::fetch_models(&settings, &key)
         .await
         .map_err(|error| format!("拉取模型列表失败：{error}"))
@@ -155,13 +163,14 @@ pub async fn stop_session(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
     // 决策在锁内完成，再经生命周期队列串行执行，消除 check-exec 竞态。
+    // 按「当前状态的反面」决定方向：启动中/已运行 → Stop，空闲/正在停止 → Start，
+    // 这样在加载模型的 10–30 秒里再按一次热键也能排上停止。
     let dir = {
         let state = app.state::<AppState>();
         let queue = lock(&state.lifecycle);
-        if queue.is_active() {
-            LifecycleDir::Stop
-        } else {
-            LifecycleDir::Start
+        match queue.state() {
+            LifecycleState::Idle | LifecycleState::Stopping => LifecycleDir::Start,
+            LifecycleState::Starting | LifecycleState::Active => LifecycleDir::Stop,
         }
     };
     let task_app = app.clone();

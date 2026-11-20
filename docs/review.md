@@ -318,3 +318,13 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **取消下载不误报**：新增 `SttError::is_cancelled` 与共享 `CANCELLED_MESSAGE`，`prepare_model` 识别用户主动取消并给普通提示，不再显示「模型下载失败」。
 - **错误提示中文化**：`user_message_for` 改用 `user_message()`（此前用英文 Display，会把已诊断的「模型文件损坏」显示成「未知错误」）；Engine / Worker / Config 补中文映射，并加单测。
 - **文档**：README 补联合状态、噪声门、断线补录的说明与限制；验收清单新增 3.5 / 4.5 / 4.6 及模板行。
+## 十四、会话生命周期竞态与意图收敛（2026-11-20）
+
+本轮针对「快速连点开始/结束」「启动中再按热键」这类真实操作路径，修正了生命周期队列的两处竞态与三处语义问题：
+
+- **决策与执行之间的窗口**：`submit_lifecycle` 原先在锁内只做 `request`，解锁后才 `begin`。两个线程同时请求 Start 时都可能拿到 `Run`，第二个 `start_session` 因「会话已在进行中」失败并把状态回写成 Idle，而会话其实在跑——之后 Stop 被判成 Noop，会话再也停不下来。现把 `begin` 放进 `request` 同一把锁内，从结构上保证同一时刻只有一个在途请求。
+- **在途同向请求吞掉最后一次意图**：原合并规则「在途方向相同即合并」会在「启动中 → 用户按了 Stop（排队）→ 又按 Start」时把最后的 Start 静默吸收，队列执行完 Stop 后停在 Idle。现只在排队为空时合并；排队中存在异向请求时必须重新排队，按 `Stop → Start` 依次执行，最终落在最后一次意图上。
+- **启动中切换热键**：`toggle_session` 原先按 `is_active()` 判断，启动中（Starting）未激活，再按热键仍判成 Start 并被合并，用户无法取消 10–30 秒的模型加载。现按状态取反：`Idle / Stopping → Start`，`Starting / Active → Stop`，启动中按一次即可排队停止；停止中再按则排队重新启动。
+- **音频致命中断的状态一致性**：`end_session_after_audio_failure` 原先直调 `stop_session`，绕过了生命周期队列，队列状态停在 Active，之后的热键/托盘切换会一直判成 Stop。现改走 `submit_lifecycle(Stop)`。
+- **失败回写以真实会话为准**：`run_lifecycle` 失败时不再一律按方向回退，而是检查 `is_running`：Start 失败但会话在跑（重复启动）记 Active，Stop 失败但会话已收尾记 Idle，避免队列状态与真实会话长期不一致。
+- **顺带清理**：`Segmenter::push` 返回本块 RMS 供断线看门狗复用，采集路径只算一次 `audio_metrics`；`test_llm` / `fetch_models` 的 Key 解析统一为 `resolve_api_key`。

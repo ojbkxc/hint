@@ -80,8 +80,15 @@ impl LifecycleQueue {
     /// 同向重复请求被合并；目标已达成且队列空时为 `Noop`；否则入队，
     /// 无在途请求时返回 `Run`（调用方负责调 [`begin`] 并执行）。
     pub fn request(&mut self, dir: LifecycleDir) -> LifecycleAction {
-        // 同向合并：在途或排队尾部同向，不重复入队。
-        if self.in_flight == Some(dir) || self.pending.back() == Some(&dir) {
+        // 同向合并：排队尾部同向直接吸收。
+        if self.pending.back() == Some(&dir) {
+            return LifecycleAction::Coalesced;
+        }
+        // 只有在没有排队项时，在途的同向请求才算「已覆盖本次意图」。
+        // 若排队里已有异向请求（例如启动中的 Start 后面排着 Stop），
+        // 再来一次 Start 必须重新排队，否则会被在途的 Start 静默吞掉，
+        // 最终状态落在 Stop 上，丢失「最后一次意图」。
+        if self.in_flight == Some(dir) && self.pending.is_empty() {
             return LifecycleAction::Coalesced;
         }
         // 已达成：队列空且当前状态已是目标。
@@ -196,6 +203,46 @@ mod tests {
         assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Queued);
         // 排队尾部仍是 Stop，再来 Stop → 合并。
         assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Coalesced);
+    }
+
+    #[test]
+    fn start_stop_start_keeps_last_intent() {
+        let mut q = LifecycleQueue::default();
+        q.begin(LifecycleDir::Start);
+        // 启动中来 Stop → 排队。
+        assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Queued);
+        // 再来 Start：不能因为在途的 Start 相同就被吞掉，必须再排队，
+        // 否则队列执行完 Stop 后停在 Idle，最后一次意图丢失。
+        assert_eq!(q.request(LifecycleDir::Start), LifecycleAction::Queued);
+        q.finish(LifecycleDir::Start, true);
+        // 依次执行 Stop → Start，最终回到 Active。
+        let stop = q.next_pending().expect("应先执行 Stop");
+        q.begin(stop);
+        q.finish(stop, true);
+        assert_eq!(q.state(), LifecycleState::Idle);
+        let start = q.next_pending().expect("再执行 Start");
+        q.begin(start);
+        q.finish(start, true);
+        assert_eq!(q.state(), LifecycleState::Active);
+    }
+
+    #[test]
+    fn stop_start_stop_keeps_last_intent() {
+        let mut q = LifecycleQueue::default();
+        q.begin(LifecycleDir::Start);
+        q.finish(LifecycleDir::Start, true);
+        q.begin(LifecycleDir::Stop);
+        assert_eq!(q.request(LifecycleDir::Start), LifecycleAction::Queued);
+        assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Queued);
+        q.finish(LifecycleDir::Stop, true);
+        let start = q.next_pending().expect("应先执行 Start");
+        q.begin(start);
+        q.finish(start, true);
+        assert_eq!(q.state(), LifecycleState::Active);
+        let stop = q.next_pending().expect("再执行 Stop");
+        q.begin(stop);
+        q.finish(stop, true);
+        assert_eq!(q.state(), LifecycleState::Idle);
     }
 
     #[test]

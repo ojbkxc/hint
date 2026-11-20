@@ -148,25 +148,11 @@ impl Segmenter {
         }
     }
 
-    fn rms(samples: &[f32]) -> f32 {
-        let mut sum = 0.0f64;
-        let mut count = 0u64;
-        for &sample in samples {
-            if sample.is_finite() {
-                sum += f64::from(sample) * f64::from(sample);
-                count += 1;
-            }
-        }
-        if count == 0 {
-            0.0
-        } else {
-            (sum / count as f64).sqrt() as f32
-        }
-    }
-
-    fn push(&mut self, chunk: &[f32], out: &mut Vec<RawSegment>) {
+    /// 追加一块音频并切出完整段；返回本块的 RMS，供断线看门狗复用，避免重复计算。
+    fn push(&mut self, chunk: &[f32], out: &mut Vec<RawSegment>) -> f32 {
         let chunk_ms = samples_to_ms(chunk.len());
-        let loud = Self::rms(chunk) >= SPEECH_RMS;
+        let rms = hint_core::audio::audio_metrics(chunk).0;
+        let loud = rms >= SPEECH_RMS;
 
         if !self.speaking {
             self.preroll.extend_from_slice(chunk);
@@ -193,7 +179,7 @@ impl Segmenter {
         self.total_ms += chunk_ms as i64;
 
         if !self.speaking {
-            return;
+            return rms;
         }
         let buffered_ms = samples_to_ms(self.samples.len());
         let too_long = buffered_ms >= MAX_SEGMENT_MS;
@@ -213,6 +199,7 @@ impl Segmenter {
             self.silence_ms = 0;
             self.preroll.clear();
         }
+        rms
     }
 }
 
@@ -540,30 +527,39 @@ pub(crate) fn submit_lifecycle(
     app: &AppHandle,
     dir: LifecycleDir,
 ) -> (LifecycleAction, Result<i64, String>) {
+    // 决策与 begin 必须在同一把锁内完成：否则两个线程同时拿到 Run，
+    // 第二个 start 会因「会话已在进行中」失败并把状态回写成 Idle，
+    // 之后 Stop 被判成 Noop，会话再也停不下来。
     let action = {
         let state = app.state::<AppState>();
-        lock(&state.lifecycle).request(dir)
+        let mut queue = lock(&state.lifecycle);
+        let action = queue.request(dir);
+        if let LifecycleAction::Run(d) = action {
+            queue.begin(d);
+        }
+        action
     };
-    let result = match action {
-        LifecycleAction::Run(d) => run_lifecycle(app, d),
-        _ => Ok(0),
-    };
-    (action, result)
+    match action {
+        LifecycleAction::Run(d) => (action, run_lifecycle(app, d)),
+        _ => (action, Ok(0)),
+    }
 }
 
-/// 执行一个生命周期动作：begin → 执行 → finish → drain 排队请求。
+/// 执行一个已经 `begin` 的生命周期动作：执行 → finish → drain 排队请求。
 fn run_lifecycle(app: &AppHandle, dir: LifecycleDir) -> Result<i64, String> {
-    {
-        let state = app.state::<AppState>();
-        lock(&state.lifecycle).begin(dir);
-    }
     let result = match dir {
         LifecycleDir::Start => start_session(app),
         LifecycleDir::Stop => stop_session(app).map(|_| 0),
     };
+    // 失败时按「实际是否还有会话」回写，而不是一律回退：
+    // - Start 失败但会话其实在跑（重复启动）→ 记 Active；
+    // - Stop 失败但会话已经没了（并发收尾）→ 记 Idle。
+    // 否则队列状态会和真实会话长期不一致，之后的热键切换全部失效。
+    let running = is_running(app);
+    let finished_ok = result.is_ok() || running == (dir == LifecycleDir::Start);
     {
         let state = app.state::<AppState>();
-        lock(&state.lifecycle).finish(dir, result.is_ok());
+        lock(&state.lifecycle).finish(dir, finished_ok);
     }
     drain_lifecycle(app);
     result
@@ -578,11 +574,16 @@ fn drain_lifecycle(app: &AppHandle) {
             if queue.in_flight() {
                 return;
             }
-            queue.next_pending()
+            match queue.next_pending() {
+                Some(dir) => {
+                    queue.begin(dir);
+                    dir
+                }
+                None => return,
+            }
         };
-        let Some(dir) = next else { return };
         // 排队请求的执行结果无需返回给调用方，只需完成。
-        let _ = run_lifecycle(app, dir);
+        let _ = run_lifecycle(app, next);
     }
 }
 
@@ -699,18 +700,17 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
                 return;
             }
             let mut finished = Vec::new();
-            let (start_ms, end_ms) = {
+            let (start_ms, end_ms, rms) = {
                 let mut guard = lock(&segmenters);
                 let segmenter = match chunk.channel {
                     Channel::Interviewer => &mut guard.interviewer,
                     Channel::Me => &mut guard.me,
                 };
                 let before = segmenter.total_ms;
-                segmenter.push(&chunk.samples, &mut finished);
-                (before, segmenter.total_ms)
+                let rms = segmenter.push(&chunk.samples, &mut finished);
+                (before, segmenter.total_ms, rms)
             };
             // 断线恢复：喂环形缓冲 + 看门狗。
-            let (rms, _) = hint_core::audio::audio_metrics(&chunk.samples);
             let dur_ms = (end_ms - start_ms).max(0) as u64;
             let stalled = {
                 let mut recovery = lock(&shared.recovery);
@@ -884,15 +884,22 @@ fn is_fatal_audio_error(message: &str) -> bool {
 }
 
 /// 音频通道致命退出后，在后台把会话收尾（不能在采集线程里直接 stop）。
+///
+/// 走生命周期队列而不是直调 `stop_session`：否则队列里的状态会停在 Active，
+/// 之后的热键/托盘「切换」会一直判成 Stop，会话再也起不来。
 fn end_session_after_audio_failure(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let task_app = app.clone();
-        match tauri::async_runtime::spawn_blocking(move || stop_session(&task_app)).await {
-            Ok(Ok(())) => {
+        match tauri::async_runtime::spawn_blocking(move || {
+            submit_lifecycle(&task_app, LifecycleDir::Stop)
+        })
+        .await
+        {
+            Ok((_, Ok(_))) => {
                 emit_status(&app, "error", "音频采集中断，会话已结束");
             }
-            Ok(Err(error)) => tracing::warn!(%error, "音频中断后结束会话失败"),
+            Ok((_, Err(error))) => tracing::warn!(%error, "音频中断后结束会话失败"),
             Err(error) => tracing::warn!(%error, "音频中断后结束会话任务失败"),
         }
     });
