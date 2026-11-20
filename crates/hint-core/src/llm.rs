@@ -15,8 +15,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use futures_util::future::{Either, select};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::pin::pin;
 
 use crate::error::{CoreError, Result};
 use crate::settings::{ProviderKind, Settings};
@@ -872,9 +874,13 @@ async fn send_cancellable(
     if cancel.load(Ordering::Relaxed) {
         return Err(CoreError::Stream("已取消".into()));
     }
-    tokio::select! {
-        _ = wait_cancel(cancel) => Err(CoreError::Stream("已取消".into())),
-        response = request.send() => response.map_err(CoreError::from),
+    // 用 futures-util 的 select 而不是 tokio::select!（后者需要 tokio 的
+    // macros feature，会引入新依赖）。两边都 pin 住以满足 Unpin 要求。
+    let send = pin!(request.send());
+    let cancelled = pin!(wait_cancel(cancel));
+    match select(send, cancelled).await {
+        Either::Left((response, _)) => response.map_err(CoreError::from),
+        Either::Right(((), _)) => Err(CoreError::Stream("已取消".into())),
     }
 }
 
