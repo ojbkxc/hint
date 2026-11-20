@@ -126,7 +126,10 @@ export function stepLabel(step: DownloadStep): string {
 }
 
 export function sourceLabel(source: string): string {
-  if (source === "official") return "官方源";
-  if (source === "mirror") return "镜像源";
+  if (!source) return "";
+  // 后端进度里的 source 是脱敏后的源地址 origin（如 https://huggingface.co），
+  // 这里映射成用户能看懂的名字；也兼容旧的 official / mirror 标签。
+  if (source === "official" || source.includes("huggingface.co")) return "官方源";
+  if (source === "mirror" || source.includes("hf-mirror.com")) return "镜像源";
   return source;
 }

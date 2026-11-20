@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 
 use crate::assets::{self, RemoteFile};
-use crate::error::{FailureReason, Result, SttError, from_ureq, sanitize_origin, scrub_urls};
+use crate::error::{FailureReason, Result, SttError, from_ureq, scrub_urls};
 use crate::manifest;
 use crate::types::WorkerConfig;
 
@@ -465,8 +465,10 @@ where
         "开始下载语音资产"
     );
 
-    for url in urls {
-        let source = sanitize_origin(&url);
+    // 与 `resolve_urls` 的顺序一一对应；进度里用短标签（official / mirror），
+    // 不是 URL——前端据此显示「官方源 / 镜像源」，也是进度结构体文档的约定。
+    for (origin, url) in assets::ORIGINS.iter().zip(urls) {
+        let source = origin.label;
         for retry in 0..=DEFAULT_MAX_RETRIES {
             if cancel.load(Ordering::Relaxed) {
                 return Err(cancelled());

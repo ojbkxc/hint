@@ -331,4 +331,4 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **顺带清理**：`Segmenter::push` 返回本块 RMS 供断线看门狗复用，采集路径只算一次 `audio_metrics`；`test_llm` / `fetch_models` 的 Key 解析统一为 `resolve_api_key`。
 - **识别错误提示中文化**：看门狗中止、引擎无响应、连接失败、启动超时/退出这几类 Worker 英文消息映射为中文短句，避免浮层出现「语音识别失败，稍后自动重试：inference aborted by the watchdog」。
 
-另外修正了语音模型下载的并发窗口：`cancel_prepare` 原先直接把槽位 `take()` 掉，取消后立刻重新点下载会与尚未退出的旧任务并发写同一批 `.part` 文件；`PrepareGuard` 析构时又无条件清空槽位，可能抹掉新任务的取消标志。现在取消只置位、不腾槽，槽位由旧任务退出时清理，且 `PrepareGuard` 只清自己的标志，从结构上杜绝并发下载与「取消按钮失效」。`prepare_model` 同时改为返回 `bool`（true=完成，false=用户取消），前端据此区分文案——此前取消后设置页会显示「模型文件检查完成，可以开始面试」。
+另外修正了语音模型下载的并发窗口：`cancel_prepare` 原先直接把槽位 `take()` 掉，取消后立刻重新点下载会与尚未退出的旧任务并发写同一批 `.part` 文件；`PrepareGuard` 析构时又无条件清空槽位，可能抹掉新任务的取消标志。现在取消只置位、不腾槽，槽位由旧任务退出时清理，且 `PrepareGuard` 只清自己的标志，从结构上杜绝并发下载与「取消按钮失效」。`prepare_model` 同时改为返回 `bool`（true=完成，false=用户取消），前端据此区分文案——此前取消后设置页会显示「模型文件检查完成，可以开始面试」。下载进度里的 `source` 也修正为约定好的短标签 `official` / `mirror`（原先把源地址传了进去，设置页因此显示 `https://huggingface.co` 而不是「官方源」）。
