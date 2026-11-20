@@ -452,6 +452,11 @@ pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
             session::emit_notice(&app, "info", "语音模型已就绪");
             Ok(())
         }
+        // 用户主动取消不是失败：给普通提示，不要把「已取消」显示成错误。
+        Err(error) if error.is_cancelled() => {
+            session::emit_notice(&app, "info", "已取消语音模型下载");
+            Ok(())
+        }
         Err(error) => {
             let message = user_message_for(&error);
             session::emit_notice(&app, "error", format!("模型下载失败：{message}"));

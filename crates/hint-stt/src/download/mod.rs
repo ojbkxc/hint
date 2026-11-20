@@ -567,7 +567,7 @@ where
 }
 
 fn error_is_cancelled(error: &SttError) -> bool {
-    matches!(error, SttError::Config { message } if message == CANCELLED_MESSAGE)
+    error.is_cancelled()
 }
 
 /// 指数退避：500ms 起翻倍，封顶 10s；退避期间响应取消。
@@ -586,7 +586,7 @@ fn sleep_backoff(retry: u32, cancel: &AtomicBool) -> Result<()> {
 }
 
 /// 取消时使用的固定消息，便于在重试循环里识别。
-const CANCELLED_MESSAGE: &str = "download cancelled";
+const CANCELLED_MESSAGE: &str = crate::error::CANCELLED_MESSAGE;
 
 /// 一次传输。
 ///
@@ -893,8 +893,9 @@ pub fn parse_content_range(header: Option<&str>) -> Option<ContentRange> {
 
 /// 下载失败时的用户提示（包含分类文案 + 脱敏细节）。
 pub fn user_message_for(error: &SttError) -> String {
-    let message = scrub_urls(&error.to_string());
-    format!("{} {message}", error.reason().user_message())
+    // 用 user_message() 而不是 Display：后者是英文枚举前缀，
+    // 会把「模型文件损坏」这类已诊断清楚的原因显示成「未知错误」。
+    scrub_urls(&error.user_message())
 }
 
 #[cfg(test)]

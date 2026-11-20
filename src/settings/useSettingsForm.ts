@@ -128,10 +128,16 @@ export function useSettingsForm() {
         setStatus(`拉取模型列表失败：${result.error}`);
         return;
       }
-      const list = (result.data as unknown[])
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter((item) => item !== "");
+      // 后端保证返回字符串数组，但前端仍做类型防御：异常响应不应让设置页报错。
+      const raw = Array.isArray(result.data) ? result.data : [];
+      const list = Array.from(
+        new Set(
+          raw
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter((item) => item !== ""),
+        ),
+      );
       setModels(list);
       setStatus(
         list.length

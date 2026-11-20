@@ -113,6 +113,9 @@ pub enum SttError {
     Json { message: String },
 }
 
+/// 用户主动取消下载时使用的固定消息，便于跨层识别「取消」而不是「失败」。
+pub const CANCELLED_MESSAGE: &str = "download cancelled";
+
 impl SttError {
     /// 构造网络错误并自动脱敏消息。
     pub fn network(reason: FailureReason, message: impl Into<String>, status: Option<u16>) -> Self {
@@ -151,8 +154,26 @@ impl SttError {
             SttError::Storage { message } => {
                 format!("{}（{message}）", FailureReason::Storage.user_message())
             }
+            SttError::Integrity { message } => {
+                format!("{}（{message}）", FailureReason::Integrity.user_message())
+            }
+            // Engine / Worker 的 message 多数已是中文诊断（见 diagnose_startup_failure），
+            // 直接展示，不再叠加「发生未知错误」之类的前缀。
+            SttError::Engine { message } | SttError::Worker { message } => message.clone(),
+            SttError::Config { message } => {
+                if message == CANCELLED_MESSAGE {
+                    "下载已取消".to_string()
+                } else {
+                    format!("配置错误：{message}")
+                }
+            }
             other => other.to_string(),
         }
+    }
+
+    /// 是否为用户主动取消（不是失败）。
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, SttError::Config { message } if message == CANCELLED_MESSAGE)
     }
 }
 
