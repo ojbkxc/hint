@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hint_core::session::{LifecycleDir, LifecycleState};
+use hint_core::session::LifecycleDir;
 use hint_core::{llm, secret, settings::Settings};
 use hint_stt::download::user_message_for;
 use serde_json::{Value, json};
@@ -163,16 +163,9 @@ pub async fn stop_session(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
     // 决策在锁内完成，再经生命周期队列串行执行，消除 check-exec 竞态。
-    // 按「当前状态的反面」决定方向：启动中/已运行 → Stop，空闲/正在停止 → Start，
-    // 这样在加载模型的 10–30 秒里再按一次热键也能排上停止。
-    let dir = {
-        let state = app.state::<AppState>();
-        let queue = lock(&state.lifecycle);
-        match queue.state() {
-            LifecycleState::Idle | LifecycleState::Stopping => LifecycleDir::Start,
-            LifecycleState::Starting | LifecycleState::Active => LifecycleDir::Stop,
-        }
-    };
+    // 按「当前生命周期状态的反面」决定方向：启动中/已运行 → Stop，
+    // 空闲/正在停止 → Start，这样在加载模型的 10–30 秒里再按一次也能排上停止。
+    let dir = session::toggle_dir(&app);
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _ = session::submit_lifecycle(&task_app, dir);

@@ -21,7 +21,7 @@ use hint_core::llm::{self, ChatRequest, Turn, TurnRole};
 use hint_core::pipeline;
 use hint_core::secret;
 use hint_core::settings::{Settings, TriggerMode};
-use hint_core::session::{LifecycleAction, LifecycleDir};
+use hint_core::session::{LifecycleAction, LifecycleDir, LifecycleState};
 use hint_core::stt::{
     is_covered_by_live, split_into_speech_clips, ClipOptions, Outage, SttGapTracker,
 };
@@ -516,6 +516,19 @@ struct Segmenters {
 pub(crate) fn is_running(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
     lock(&state.session).is_some()
+}
+
+/// 「切换」语义的方向：按生命周期状态取反，而不是按是否已有会话。
+///
+/// 启动中（模型加载 10–30 秒）会话尚未建立，若按 `is_running` 判断会再次
+/// 请求 Start 并被合并，用户按热键取消不了；停止中则应当反向排队重新启动。
+pub(crate) fn toggle_dir(app: &AppHandle) -> LifecycleDir {
+    let state = app.state::<AppState>();
+    let queue = lock(&state.lifecycle);
+    match queue.state() {
+        LifecycleState::Idle | LifecycleState::Stopping => LifecycleDir::Start,
+        LifecycleState::Starting | LifecycleState::Active => LifecycleDir::Stop,
+    }
 }
 
 /// 会话生命周期请求的唯一入口：锁内决策，锁外执行。
