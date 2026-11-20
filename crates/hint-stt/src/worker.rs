@@ -470,12 +470,17 @@ fn percent_decode(value: &str) -> String {
     while index < bytes.len() {
         match bytes[index] {
             b'%' if index + 2 < bytes.len() => {
-                match u8::from_str_radix(&value[index + 1..index + 3], 16) {
-                    Ok(byte) => {
+                // 直接在字节上解十六进制：不能用 `&value[a..b]` 切片，
+                // 查询串含多字节 UTF-8 时可能落在字符边界之外导致 panic。
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                match hex {
+                    Some(byte) => {
                         out.push(byte);
                         index += 3;
                     }
-                    Err(_) => {
+                    None => {
                         out.push(bytes[index]);
                         index += 1;
                     }

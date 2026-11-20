@@ -174,9 +174,12 @@ fn anthropic_messages_url(base_url: &str) -> String {
     }
 }
 
-/// Anthropic 的 models 端点；去掉重复的 `/v1`，避免 `/v1/v1/models`。
+/// Anthropic 的 models 端点；去掉误填的 `/messages` 与重复的 `/v1`，
+/// 避免 `/v1/messages/v1/models` 或 `/v1/v1/models`。
 fn anthropic_models_url(base_url: &str) -> String {
     let root = base(base_url);
+    let root = root.strip_suffix("/messages").unwrap_or(root);
+    let root = root.trim_end_matches('/');
     if root.ends_with("/v1") {
         format!("{root}/models")
     } else {
@@ -858,6 +861,29 @@ async fn stream_once(
     }
 }
 
+/// 可取消的发送：取消置位后立即返回，避免挂起的建连/等首字节拖住答案队列。
+///
+/// `reqwest` 的 `send()` 要等响应头；服务端接受连接却不响应时可能挂到读超时，
+/// 用户按「重新生成」后旧请求仍占着串行的答案 worker。
+async fn send_cancellable(
+    request: reqwest::RequestBuilder,
+    cancel: &AtomicBool,
+) -> Result<reqwest::Response> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(CoreError::Stream("已取消".into()));
+    }
+    tokio::select! {
+        _ = wait_cancel(cancel) => Err(CoreError::Stream("已取消".into())),
+        response = request.send() => response.map_err(CoreError::from),
+    }
+}
+
+async fn wait_cancel(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn openai_stream(
     client: &reqwest::Client,
@@ -875,12 +901,11 @@ async fn openai_stream(
 
     let url = openai_chat_url(&settings.base_url);
     let body = openai_body(settings, request, true);
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .json(&body)
-        .send()
-        .await?;
+    let response = send_cancellable(
+        client.post(url).bearer_auth(api_key).json(&body),
+        cancel,
+    )
+    .await?;
     let response = ensure_success(response, settings).await?;
 
     let mut text = String::new();
@@ -941,13 +966,15 @@ async fn anthropic_stream(
 
     let url = anthropic_messages_url(&settings.base_url);
     let body = anthropic_body(settings, request, true);
-    let response = client
-        .post(url)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send()
-        .await?;
+    let response = send_cancellable(
+        client
+            .post(url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body),
+        cancel,
+    )
+    .await?;
     let response = ensure_success(response, settings).await?;
 
     let mut text = String::new();
@@ -1010,12 +1037,14 @@ async fn gemini_stream(
 
     let url = gemini_url(&settings.base_url, &settings.model, true);
     let body = gemini_body(request);
-    let response = client
-        .post(url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await?;
+    let response = send_cancellable(
+        client
+            .post(url)
+            .header("x-goog-api-key", api_key)
+            .json(&body),
+        cancel,
+    )
+    .await?;
     let response = ensure_success(response, settings).await?;
 
     let mut text = String::new();
@@ -1331,6 +1360,11 @@ mod tests {
         );
         assert_eq!(
             anthropic_models_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/models"
+        );
+        // 误填完整端点：聊天可用，拉模型也要能工作。
+        assert_eq!(
+            anthropic_models_url("https://api.anthropic.com/v1/messages"),
             "https://api.anthropic.com/v1/models"
         );
         // Gemini：去重复 /v1beta。

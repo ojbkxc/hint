@@ -89,14 +89,19 @@ export function useModelManager() {
     if (!result.ok) {
       // 用户主动取消时后端返回错误，期间 phase 可能仍是 downloading；
       // 用最新状态覆盖，并给出中文提示。
+      // 后端错误已带「模型下载失败：」前缀，剥掉后再拼，避免双重前缀。
+      const prefix = "模型下载失败：";
+      const detail = result.error.startsWith(prefix)
+        ? result.error.slice(prefix.length)
+        : result.error;
       await refresh();
       if (disposed.current) return;
       setView((current) => ({
         ...current,
         phase: current.phase === "ready" ? "ready" : current.phase,
-        error: current.phase === "ready" ? "" : `模型下载失败：${result.error}`,
+        error: current.phase === "ready" ? "" : `模型下载失败：${detail}`,
       }));
-      setNotice(`模型下载未完成：${result.error}`);
+      setNotice(`模型下载未完成：${detail}`);
       return;
     }
 

@@ -19,8 +19,12 @@ use crate::settings::{Settings, TriggerMode};
 /// 判定为扬声器回声。
 pub const ECHO_OVERLAP_THRESHOLD: f64 = 0.70;
 
-/// 麦克风文本少于 6 个汉字时不判回声（太短，重合度没有统计意义）。
+/// 麦克风文本少于 6 个汉字（且少于 12 个英文字母）时不判回声，太短没有统计意义。
 pub const MIN_ECHO_HAN_CHARS: usize = 6;
+
+/// 英文麦克风文本少于 12 个字母时不判回声（与汉字门槛同理；英文面试
+/// 外放时同样需要回声过滤）。
+pub const MIN_ECHO_LATIN_CHARS: usize = 12;
 
 /// 每次组装 user prompt 时携带的历史轮数上限。
 pub const PROMPT_HISTORY_TURNS: usize = 6;
@@ -73,6 +77,14 @@ const REQUEST_VERBS: &[&str] = &[
     "讲讲",
     "描述一下",
     "描述",
+    "说明一下",
+    "说明",
+    "解释一下",
+    "解释",
+    "评价一下",
+    "评价",
+    "分析一下",
+    "分析",
     "举例",
     "举个例子",
     "举一个例子",
@@ -410,14 +422,23 @@ fn looks_like_english_question(text: &str) -> bool {
     let Some(first) = words.first().copied() else {
         return false;
     };
+    // 礼貌前缀不参与句式判断：「Please describe…」「Please tell me…」。
+    let (first, rest) = if matches!(first, "please" | "pls") {
+        match words.split_first() {
+            Some((_, tail)) if !tail.is_empty() => (tail[0], tail),
+            _ => return false,
+        }
+    } else {
+        (first, &words[..])
+    };
     if EN_WH_WORDS.contains(&first) {
         return true;
     }
     if EN_IMPERATIVE_OPENERS.contains(&first) {
         return true;
     }
-    if words.len() >= 2 {
-        let pair = format!("{} {}", words[0], words[1]);
+    if rest.len() >= 2 {
+        let pair = format!("{} {}", rest[0], rest[1]);
         if EN_QUESTION_OPENERS.contains(&pair.as_str()) {
             return true;
         }
@@ -498,14 +519,17 @@ fn is_cjk(ch: char) -> bool {
 /// 麦克风段是否为扬声器回声。
 ///
 /// 规则（对应产品文档第 6 节）：
-/// - 去空白与标点后，麦克风文本少于 [`MIN_ECHO_HAN_CHARS`] 个汉字 → 不判回声；
-/// - 中文按字符 2-gram 去重集合计算覆盖率；
+/// - 去空白与标点后，麦克风文本少于 [`MIN_ECHO_HAN_CHARS`] 个汉字且少于
+///   [`MIN_ECHO_LATIN_CHARS`] 个英文字母 → 不判回声；
+/// - 按字符 2-gram 去重集合计算覆盖率（中英文通用）；
 /// - 麦克风 2-gram 有 ≥ [`ECHO_OVERLAP_THRESHOLD`] 出现在最近面试官文本中 → 回声。
 ///
 /// `recent_interviewer` 传入面试官最近若干段（通常是最近 8 秒）的识别文本。
 pub fn is_echo(mic_text: &str, recent_interviewer: &[&str]) -> bool {
     let mic = compact(mic_text);
-    if mic.chars().filter(|ch| is_cjk(*ch)).count() < MIN_ECHO_HAN_CHARS {
+    let han = mic.chars().filter(|ch| is_cjk(*ch)).count();
+    let latin = mic.chars().filter(|ch| ch.is_ascii_alphabetic()).count();
+    if han < MIN_ECHO_HAN_CHARS && latin < MIN_ECHO_LATIN_CHARS {
         return false;
     }
     let mic_grams = bigrams(&mic);
@@ -752,6 +776,9 @@ mod tests {
             "简单说下你的优势。",
             "你讲下你们团队的协作方式。",
             "请描述一下你负责的模块。",
+            "请说明一下你在团队里的职责分工。",
+            "解释一下这个设计为什么这么定。",
+            "评价一下你们团队的质量文化。",
             "我们来谈谈测试左移。",
             "大家简单自我介绍一下。",
         ];
@@ -799,6 +826,7 @@ mod tests {
             "Tell me about a difficult bug you fixed.",
             "Why did you choose Rust for this service?",
             "Describe your testing process.",
+            "Please walk me through your last project.",
         ] {
             assert_question(text);
         }
@@ -889,11 +917,13 @@ mod tests {
     }
 
     #[test]
-    fn english_mic_text_is_not_echo() {
-        assert!(!is_echo(
+    fn english_echo_is_detected() {
+        assert!(is_echo(
             "hello can you hear me",
             &["hello can you hear me"]
         ));
+        // 太短的英文仍不判回声。
+        assert!(!is_echo("yes", &["yes"]));
     }
 
     #[test]

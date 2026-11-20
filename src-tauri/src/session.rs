@@ -518,19 +518,6 @@ pub(crate) fn is_running(app: &AppHandle) -> bool {
     lock(&state.session).is_some()
 }
 
-/// 「切换」语义的方向：按生命周期状态取反，而不是按是否已有会话。
-///
-/// 启动中（模型加载 10–30 秒）会话尚未建立，若按 `is_running` 判断会再次
-/// 请求 Start 并被合并，用户按热键取消不了；停止中则应当反向排队重新启动。
-pub(crate) fn toggle_dir(app: &AppHandle) -> LifecycleDir {
-    let state = app.state::<AppState>();
-    let queue = lock(&state.lifecycle);
-    match queue.state() {
-        LifecycleState::Idle | LifecycleState::Stopping => LifecycleDir::Start,
-        LifecycleState::Starting | LifecycleState::Active => LifecycleDir::Stop,
-    }
-}
-
 /// 会话生命周期请求的唯一入口：锁内决策，锁外执行。
 ///
 /// 所有 start/stop/toggle（命令、托盘、热键）都经此串行化，从结构上消除
@@ -540,22 +527,65 @@ pub(crate) fn submit_lifecycle(
     app: &AppHandle,
     dir: LifecycleDir,
 ) -> (LifecycleAction, Result<i64, String>) {
-    // 决策与 begin 必须在同一把锁内完成：否则两个线程同时拿到 Run，
-    // 第二个 start 会因「会话已在进行中」失败并把状态回写成 Idle，
-    // 之后 Stop 被判成 Noop，会话再也停不下来。
-    let action = {
-        let state = app.state::<AppState>();
-        let mut queue = lock(&state.lifecycle);
-        let action = queue.request(dir);
-        if let LifecycleAction::Run(d) = action {
-            queue.begin(d);
-        }
+    let action = begin_decision(app, |queue| queue.request(dir));
+    execute_lifecycle(app, action)
+}
+
+/// 切换语义：方向在锁内根据生命周期状态决定，命令层与热键共用。
+///
+/// 返回 `(决定的方向, 决策结果, 本次执行结果)`。启动中再按一次会排队停止，
+/// 停止中再按一次会排队重新启动。
+pub(crate) fn submit_toggle(
+    app: &AppHandle,
+) -> (LifecycleDir, LifecycleAction, Result<i64, String>) {
+    let mut chosen = LifecycleDir::Start;
+    let action = begin_decision(app, |queue| {
+        let (dir, action) = queue.request_toggle();
+        chosen = dir;
         action
-    };
+    });
+    let (_, result) = execute_lifecycle(app, action);
+    (chosen, action, result)
+}
+
+/// 在锁内完成「决策 + begin」。
+///
+/// 两步必须在同一把锁内：否则两个线程同时拿到 `Run`，第二个 start 会因
+/// 「会话已在进行中」失败并把状态回写成 Idle，之后 Stop 被判成 Noop，
+/// 会话再也停不下来。
+fn begin_decision(
+    app: &AppHandle,
+    decide: impl FnOnce(&mut hint_core::session::LifecycleQueue) -> LifecycleAction,
+) -> LifecycleAction {
+    let state = app.state::<AppState>();
+    let mut queue = lock(&state.lifecycle);
+    let action = decide(&mut queue);
+    if let LifecycleAction::Run(d) = action {
+        queue.begin(d);
+    }
+    action
+}
+
+fn execute_lifecycle(
+    app: &AppHandle,
+    action: LifecycleAction,
+) -> (LifecycleAction, Result<i64, String>) {
     match action {
         LifecycleAction::Run(d) => (action, run_lifecycle(app, d)),
         _ => (action, Ok(0)),
     }
+}
+
+/// 会话是否「忙」：已有运行中的会话，或正在启动/停止。
+///
+/// 启动过程中 `state.session` 还是 `None`（模型冷加载要 10–30 秒），
+/// 只查 `is_running` 会让删模型、清空记录这类操作插进启动流程。
+pub(crate) fn is_busy(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    if lock(&state.session).is_some() {
+        return true;
+    }
+    lock(&state.lifecycle).state() != LifecycleState::Idle
 }
 
 /// 执行一个已经 `begin` 的生命周期动作：执行 → finish → drain 排队请求。
@@ -1187,6 +1217,36 @@ pub(crate) fn spawn_stop(app: &AppHandle) {
     });
 }
 
+/// 托盘 / 热键的「切换」入口：方向在生命周期队列锁内决定。
+pub(crate) fn spawn_toggle(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let task_app = app.clone();
+        match tauri::async_runtime::spawn_blocking(move || {
+            let (_, _, result) = submit_toggle(&task_app);
+            result
+        })
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "托盘/热键切换会话失败");
+                // 启动失败且确实没有会话时走状态错误，否则只提示，避免把
+                // 正在进行的会话标成「启动失败」。
+                if is_running(&app) {
+                    emit_notice(&app, "error", error);
+                } else {
+                    emit_status(&app, "error", error);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "托盘/热键切换会话任务失败");
+                emit_status(&app, "error", format!("切换任务失败：{error}"));
+            }
+        }
+    });
+}
+
 pub(crate) fn spawn_regenerate(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1537,6 +1597,12 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
             previous.store(true, Ordering::SeqCst);
         }
     }
+    // 停止会话发生在上面的检查之后：此时新 cancel 标志尚未被 stop_session
+    // 看到，必须自己确认一次，否则会在会话结束后继续流式输出。
+    if shared.cancelled.load(Ordering::Acquire) {
+        cancel.store(true, Ordering::SeqCst);
+        return;
+    }
 
     // 新的一轮开始：通知前端清空上一轮答案，并带上本轮问题与排队数。
     emit(
@@ -1579,11 +1645,16 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
     // 旧流被重新生成 / 会话停止取代后，stream 内部要到下一个 delta 才会
     // 观察到取消；这里在 emit 前先看自己的取消标志，避免旧 delta 污染新答案。
     let cancel_for_delta = Arc::clone(&cancel);
+    // 会话停止时 stop_session 只会取消「当时槽位里的那个」标志；如果本轮
+    // 是在停止瞬间刚出队的，需要额外看会话级 cancelled，避免继续推 delta。
+    let session_for_delta = Arc::clone(shared);
     let partial = Arc::new(Mutex::new(PartialAnswer::default()));
     let partial_for_delta = Arc::clone(&partial);
     let started = Instant::now();
     let result = llm::stream(&settings, &key, request, &cancel, |delta| {
-        if cancel_for_delta.load(Ordering::Acquire) {
+        if cancel_for_delta.load(Ordering::Acquire)
+            || session_for_delta.cancelled.load(Ordering::Acquire)
+        {
             return;
         }
         {

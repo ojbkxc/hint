@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { safeInvoke } from "../lib/tauri";
 import {
   EMPTY_SETTINGS,
@@ -22,6 +22,8 @@ export function useSettingsForm() {
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<FormAction>("");
   const [models, setModels] = useState<string[]>([]);
+  // 模型列表请求序号：切换协议/Base URL 后，旧请求的响应必须丢弃。
+  const modelsRequest = useRef(0);
 
   useEffect(() => {
     let disposed = false;
@@ -44,7 +46,11 @@ export function useSettingsForm() {
   useEffect(() => {
     let disposed = false;
     setKeySaved(false);
+    // 输入框里刚粘贴的 Key 属于旧协议，切协议后必须清空，否则会把 A 的
+    // Key 存进 B（或拿去测试 B），必然认证失败。
+    setApiKey("");
     // 模型列表来自上一个协议的接口，切换协议后不再适用，清空避免选错。
+    modelsRequest.current += 1;
     setModels([]);
     void (async () => {
       const saved = await safeInvoke<unknown>("has_api_key", {
@@ -56,6 +62,12 @@ export function useSettingsForm() {
       disposed = true;
     };
   }, [form.provider]);
+
+  // Base URL 变了（切预设或手改域名）后，上一接口拉到的模型名不再可信。
+  useEffect(() => {
+    modelsRequest.current += 1;
+    setModels([]);
+  }, [form.baseUrl]);
 
   const patch = useCallback((next: Partial<Settings>) => {
     setForm((current) => ({ ...current, ...next }));
@@ -73,8 +85,8 @@ export function useSettingsForm() {
     setAction("save");
     setStatus("");
     try {
-      // 表单里填了 Key 就随「保存配置」一并保存，避免填了 Key 却没点旁边
-      // 的「保存」按钮、以为配置已完整的常见困惑。
+      // 表单里填了 Key 就随「保存全部配置」一并保存，避免用户以为还要
+      // 单独点一个 Key 保存按钮（该按钮已移除）。
       const pendingKey = apiKey.trim();
       if (pendingKey) {
         const savedKey = await safeInvoke("save_api_key", {
@@ -101,7 +113,7 @@ export function useSettingsForm() {
       setStatus(
         present
           ? "配置已保存"
-          : "配置已保存，但当前接口还没有保存 API Key，开始面试会失败。请在上方填入 Key 并点「保存」。",
+          : "配置已保存，但当前接口还没有保存 API Key，开始面试会失败。请在上方填入 Key 并点「保存全部配置」。",
       );
       return true;
     } finally {
@@ -114,6 +126,7 @@ export function useSettingsForm() {
     setBusy(true);
     setAction("models");
     setStatus("");
+    const requestId = ++modelsRequest.current;
     try {
       // 用当前表单（含未保存的 baseUrl / Key）直接拉取，不需要先保存。
       const pendingKey = apiKey.trim();
@@ -124,8 +137,15 @@ export function useSettingsForm() {
         },
         apiKey: pendingKey,
       });
+      // 请求期间切换了协议/Base URL：这批模型不属于当前配置，直接丢弃。
+      if (modelsRequest.current !== requestId) return;
       if (!result.ok) {
-        setStatus(`拉取模型列表失败：${result.error}`);
+        // 后端错误已带「拉取模型列表失败：」前缀，避免重复拼接。
+        const prefix = "拉取模型列表失败：";
+        const detail = result.error.startsWith(prefix)
+          ? result.error.slice(prefix.length)
+          : result.error;
+        setStatus(`拉取模型列表失败：${detail}`);
         return;
       }
       // 后端保证返回字符串数组，但前端仍做类型防御：异常响应不应让设置页报错。

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { safeInvoke } from "../lib/tauri";
 import {
   downloadMarkdown,
@@ -18,6 +18,8 @@ export function useSessions(enabled: boolean) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [notice, setNotice] = useState("");
+  // 详情请求序号：快速连点两条会话时，只接受最后一次的结果。
+  const detailRequest = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -37,12 +39,15 @@ export function useSessions(enabled: boolean) {
   }, [enabled, refresh]);
 
   const open = useCallback(async (id: string) => {
+    const requestId = ++detailRequest.current;
     setSelectedId(id);
     setDetail(null);
     setDetailError("");
     setNotice("");
     setDetailLoading(true);
     const result = await safeInvoke<unknown>("session_detail", { id });
+    // 期间用户又点了别的会话：旧响应不能覆盖新选择。
+    if (detailRequest.current !== requestId) return;
     if (!result.ok) {
       setDetailError(`加载会话失败：${result.error}`);
     } else {

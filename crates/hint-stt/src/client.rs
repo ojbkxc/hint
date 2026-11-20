@@ -648,13 +648,19 @@ fn decode_chunked(mut raw: &[u8]) -> Result<Vec<u8>> {
         if size == 0 {
             return Ok(out);
         }
-        if raw.len() < size + 2 {
+        // 畸形长度不能让分发线程 panic：用 checked_add 并检查实际剩余长度。
+        let Some(end) = size.checked_add(2) else {
+            return Err(SttError::Worker {
+                message: "malformed chunk size".into(),
+            });
+        };
+        if raw.len() < end {
             return Err(SttError::Worker {
                 message: "truncated chunk in worker response".into(),
             });
         }
         out.extend_from_slice(&raw[..size]);
-        raw = &raw[size + 2..];
+        raw = &raw[end..];
     }
 }
 

@@ -170,6 +170,10 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
             rt.fatal();
             break;
         }
+        // 断线期间该通道没有音频：先清电平、重置迟滞检测器并把联合状态标为
+        // 静默。否则断开前若正在说话，重连后同向边会被状态机吸收，界面会
+        // 一直停在「你在说」。
+        rt.finish_channel(Channel::Me);
         rt.sleep_backoff(failures);
     }
 

@@ -343,12 +343,9 @@ fn handle_pressed_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) {
     } else if shortcut == combo(Code::KeyA) {
         session::spawn_regenerate(app);
     } else if shortcut == combo(Code::KeyR) {
-        // 与设置页/命令层的 toggle 一致：按生命周期状态取反，
+        // 与设置页/命令层的切换一致：方向在生命周期队列锁内决定，
         // 启动中再按一次会排队停止，而不是被合并成一个无效的 Start。
-        match session::toggle_dir(app) {
-            hint_core::session::LifecycleDir::Start => session::spawn_start(app),
-            hint_core::session::LifecycleDir::Stop => session::spawn_stop(app),
-        }
+        session::spawn_toggle(app);
     } else if shortcut == combo(Code::KeyS) {
         commands::emit_capture_placeholder(app);
     }

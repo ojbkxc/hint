@@ -18,7 +18,10 @@ use std::thread;
 use std::time::Duration;
 
 /// 等待通道初始化结果的上限。
-const INIT_WAIT: Duration = Duration::from_secs(10);
+///
+/// 蓝牙/虚拟声卡在系统刚唤醒时打开可能需要 10 秒以上；10 秒会把「稍后
+/// 成功」误报成通道失败。15 秒与「模型加载 10–30 秒」的启动预期匹配。
+const INIT_WAIT: Duration = Duration::from_secs(15);
 
 type InitResult = std::result::Result<(), String>;
 

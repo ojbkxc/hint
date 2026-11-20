@@ -125,21 +125,34 @@ impl Settings {
 
     /// 原子写入：先写临时文件，再替换目标，避免中途崩溃留下半截 JSON。
     ///
-    /// Windows 的 `rename` 不能覆盖已存在的目标，因此失败时先删除再重试；
-    /// 这段时间窗口极小，且临时文件内容始终完整。
+    /// Windows 上 `rename` 不能覆盖已存在的目标；杀毒软件或索引器短暂占用
+    /// 时还会失败。这里先重试，仍失败则退回「复制覆盖」——原实现是「先删
+    /// 旧文件再 rename」，一旦第二次 rename 失败，用户配置会整个丢失。
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let temp = path.with_extension("json.tmp");
         std::fs::write(&temp, serde_json::to_string_pretty(self)?)?;
-        match std::fs::rename(&temp, path) {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                let _ = std::fs::remove_file(path);
-                std::fs::rename(&temp, path)?;
+        let mut last_error = None;
+        for _ in 0..3 {
+            match std::fs::rename(&temp, path) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+            }
+        }
+        // 复制会直接覆盖已存在目标；失败时旧文件仍在（不会先被删掉）。
+        match std::fs::copy(&temp, path) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&temp);
                 Ok(())
             }
+            Err(copy_error) => Err(crate::error::CoreError::Io(
+                last_error.unwrap_or(copy_error),
+            )),
         }
     }
 

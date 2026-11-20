@@ -29,7 +29,12 @@ fn bigrams(text: &str) -> HashSet<(char, char)> {
 pub fn is_covered_by_live(text: &str, live_texts: &[String], threshold: f64) -> bool {
     let normalized = normalize(text);
     if normalized.chars().count() < 3 {
-        return false;
+        // 太短没有 2-gram，但完全相同的短句（如「好的」「收到」）仍应被
+        // 实时结果覆盖，避免补录重复上屏。
+        return !normalized.is_empty()
+            && live_texts
+                .iter()
+                .any(|live| normalize(live) == normalized);
     }
     if live_texts.is_empty() {
         return false;

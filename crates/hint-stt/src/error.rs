@@ -434,8 +434,15 @@ pub fn from_ureq(error: ureq::Error, resource: &str) -> SttError {
         ureq::Error::Status(code, response) => {
             // 丢弃 body：里面可能带签名 URL，不读进日志。
             let _ = response;
+            // 408/429/5xx 是临时性状态：归类为可重试的 Network，让下载器
+            // 在同一源上按退避重试（模块文档承诺「每源重试 5 次」）。
+            // 其余 4xx 属于配置/协议问题，换源也无用，保持 Http。
+            let reason = match code {
+                408 | 429 | 500..=599 => FailureReason::Network,
+                _ => FailureReason::Http,
+            };
             SttError::network(
-                FailureReason::Http,
+                reason,
                 format!("HTTP {code} while fetching {resource}"),
                 Some(code),
             )

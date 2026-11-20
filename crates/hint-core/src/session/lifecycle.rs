@@ -1,15 +1,15 @@
 //! 会话生命周期队列：串行化 start/stop 请求，消除 check-exec 竞态。
 //!
 //! 规则（参照 natively-cluely 的 `meetingLifecycleQueue`）：
-//! - **同向合并**：在途或排队尾部的同向请求不重复入队（last intent wins）；
-//! - **异向排队**：在途请求完成前，异向请求入队等待，完成后自动接续；
+//! - **同向合并**：在途或排队中的同向请求不重复入队；
+//! - **异向排队**：在途请求完成前，异向请求排队等待，完成后自动接续；
+//! - **最后意图优先**：排队槽只有一格，后来的意图覆盖先前的（避免连点积压
+//!   出几十次启动/停止）；
 //! - **已达成**：队列为空且当前状态已是目标时返回 `Noop`；
 //! - **失败回写**：start 失败回 Idle，stop 失败回 Active（会话其实还在跑）。
 //!
 //! 纯逻辑、无线程、无 I/O，便于单测。执行编排（锁内决策、锁外执行）在
 //! `src-tauri/src/session.rs`。
-
-use std::collections::VecDeque;
 
 /// 会话生命周期请求方向。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +47,9 @@ pub struct LifecycleQueue {
     state: LifecycleState,
     /// 当前在途请求的方向；无在途时为 `None`。
     in_flight: Option<LifecycleDir>,
-    /// 等待执行的排队请求。
-    pending: VecDeque<LifecycleDir>,
+    /// 排队中的请求。只保留最后一次意图：排队项再次被覆盖时，
+    /// 中间那几次启停本来就不需要真的执行。
+    pending: Option<LifecycleDir>,
 }
 
 impl LifecycleQueue {
@@ -77,33 +78,42 @@ impl LifecycleQueue {
 
     /// 请求一个生命周期动作，返回决策结果。
     ///
-    /// 同向重复请求被合并；目标已达成且队列空时为 `Noop`；否则入队，
-    /// 无在途请求时返回 `Run`（调用方负责调 [`begin`] 并执行）。
+    /// 同向重复请求被合并；目标已达成且队列空时为 `Noop`；异向请求覆盖
+    /// 排队槽（最后意图优先），无在途请求时返回 `Run`（调用方负责调
+    /// [`begin`] 并执行）。
     pub fn request(&mut self, dir: LifecycleDir) -> LifecycleAction {
-        // 同向合并：排队尾部同向直接吸收。
-        if self.pending.back() == Some(&dir) {
+        // 排队里已经是同一意图：合并。
+        if self.pending == Some(dir) {
             return LifecycleAction::Coalesced;
         }
         // 只有在没有排队项时，在途的同向请求才算「已覆盖本次意图」。
-        // 若排队里已有异向请求（例如启动中的 Start 后面排着 Stop），
-        // 再来一次 Start 必须重新排队，否则会被在途的 Start 静默吞掉，
-        // 最终状态落在 Stop 上，丢失「最后一次意图」。
-        if self.in_flight == Some(dir) && self.pending.is_empty() {
+        // 若排队里已有异向请求，再来一次同向请求必须覆盖排队槽，否则会被
+        // 在途的同向请求静默吞掉，最终状态落在异向上，丢失最后一次意图。
+        if self.in_flight == Some(dir) && self.pending.is_none() {
             return LifecycleAction::Coalesced;
         }
         // 已达成：队列空且当前状态已是目标。
-        if self.pending.is_empty() && self.at_target(dir) {
+        if self.pending.is_none() && self.at_target(dir) {
             return LifecycleAction::Noop;
         }
-        self.pending.push_back(dir);
+        // 覆盖排队槽：中间意图不需要真的执行，最后意图才是用户要的结果。
+        self.pending = Some(dir);
         if self.in_flight.is_none() {
-            let front = self
-                .pending
-                .pop_front()
-                .expect("刚入队，队首必然存在");
+            let front = self.pending.take().expect("刚入队，队首必然存在");
             return LifecycleAction::Run(front);
         }
         LifecycleAction::Queued
+    }
+
+    /// 「切换」：在锁内根据当前状态取反，避免「先读状态、再请求」的窗口。
+    ///
+    /// 返回 `(决定的方向, 请求结果)`，供调用方在同一把锁里完成 `begin`。
+    pub fn request_toggle(&mut self) -> (LifecycleDir, LifecycleAction) {
+        let dir = match self.state {
+            LifecycleState::Idle | LifecycleState::Stopping => LifecycleDir::Start,
+            LifecycleState::Starting | LifecycleState::Active => LifecycleDir::Stop,
+        };
+        (dir, self.request(dir))
     }
 
     /// 开始执行一个方向：置在途标志并切换到 Starting / Stopping。
@@ -129,18 +139,16 @@ impl LifecycleQueue {
         };
     }
 
-    /// 取下一个待执行的请求，跳过已达成目标的项。
+    /// 取排队中的请求；已达成目标的项直接丢弃。
     ///
-    /// 返回 `None` 表示队列已空（或全部已达成）。
+    /// 返回 `None` 表示没有待执行请求（或唯一一项已达成）。
     pub fn next_pending(&mut self) -> Option<LifecycleDir> {
-        while let Some(front) = self.pending.front() {
-            if self.at_target(*front) {
-                self.pending.pop_front();
-                continue;
-            }
-            return self.pending.pop_front();
+        let dir = self.pending.take()?;
+        if self.at_target(dir) {
+            None
+        } else {
+            Some(dir)
         }
-        None
     }
 }
 
@@ -211,19 +219,12 @@ mod tests {
         q.begin(LifecycleDir::Start);
         // 启动中来 Stop → 排队。
         assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Queued);
-        // 再来 Start：不能因为在途的 Start 相同就被吞掉，必须再排队，
-        // 否则队列执行完 Stop 后停在 Idle，最后一次意图丢失。
+        // 再来 Start：覆盖排队槽（最后意图优先），不会被在途的 Start 吞掉。
         assert_eq!(q.request(LifecycleDir::Start), LifecycleAction::Queued);
         q.finish(LifecycleDir::Start, true);
-        // 依次执行 Stop → Start，最终回到 Active。
-        let stop = q.next_pending().expect("应先执行 Stop");
-        q.begin(stop);
-        q.finish(stop, true);
-        assert_eq!(q.state(), LifecycleState::Idle);
-        let start = q.next_pending().expect("再执行 Start");
-        q.begin(start);
-        q.finish(start, true);
+        // 最后意图 Start 已达成（Active），不需要再 Stop→Start 折腾。
         assert_eq!(q.state(), LifecycleState::Active);
+        assert_eq!(q.next_pending(), None);
     }
 
     #[test]
@@ -233,16 +234,45 @@ mod tests {
         q.finish(LifecycleDir::Start, true);
         q.begin(LifecycleDir::Stop);
         assert_eq!(q.request(LifecycleDir::Start), LifecycleAction::Queued);
+        // Stop 覆盖排队中的 Start：最终应当是 Idle。
         assert_eq!(q.request(LifecycleDir::Stop), LifecycleAction::Queued);
         q.finish(LifecycleDir::Stop, true);
-        let start = q.next_pending().expect("应先执行 Start");
-        q.begin(start);
-        q.finish(start, true);
-        assert_eq!(q.state(), LifecycleState::Active);
-        let stop = q.next_pending().expect("再执行 Stop");
-        q.begin(stop);
-        q.finish(stop, true);
         assert_eq!(q.state(), LifecycleState::Idle);
+        assert_eq!(q.next_pending(), None);
+    }
+
+    #[test]
+    fn toggle_decides_inside_the_queue() {
+        let mut q = LifecycleQueue::default();
+        // Idle → Start，并立即 Run。
+        let (dir, action) = q.request_toggle();
+        assert_eq!(dir, LifecycleDir::Start);
+        assert_eq!(action, LifecycleAction::Run(LifecycleDir::Start));
+        q.begin(LifecycleDir::Start);
+        // Starting → Stop（排队），连续切换仍合并成一个 Stop。
+        let (dir, action) = q.request_toggle();
+        assert_eq!(dir, LifecycleDir::Stop);
+        assert_eq!(action, LifecycleAction::Queued);
+        let (dir, action) = q.request_toggle();
+        assert_eq!(dir, LifecycleDir::Stop);
+        assert_eq!(action, LifecycleAction::Coalesced);
+        q.finish(LifecycleDir::Start, true);
+        let stop = q.next_pending().expect("应执行 Stop");
+        assert_eq!(stop, LifecycleDir::Stop);
+    }
+
+    #[test]
+    fn pending_is_bounded_when_toggling_repeatedly() {
+        let mut q = LifecycleQueue::default();
+        q.begin(LifecycleDir::Start);
+        // 连点 100 次 Stop：排队槽只有一格，不会积压出上百次启停。
+        for _ in 0..100 {
+            let (_, action) = q.request_toggle();
+            assert!(!matches!(action, LifecycleAction::Run(_)));
+        }
+        q.finish(LifecycleDir::Start, true);
+        assert_eq!(q.next_pending(), Some(LifecycleDir::Stop));
+        assert_eq!(q.next_pending(), None);
     }
 
     #[test]

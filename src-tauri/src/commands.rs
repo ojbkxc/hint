@@ -162,13 +162,12 @@ pub async fn stop_session(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
-    // 决策在锁内完成，再经生命周期队列串行执行，消除 check-exec 竞态。
-    // 按「当前生命周期状态的反面」决定方向：启动中/已运行 → Stop，
-    // 空闲/正在停止 → Start，这样在加载模型的 10–30 秒里再按一次也能排上停止。
-    let dir = session::toggle_dir(&app);
+    // 方向在生命周期队列的锁内决定，再串行执行；启动中/已运行 → Stop，
+    // 空闲/正在停止 → Start。这样在加载模型的 10–30 秒里再按一次也能排上停止。
     let task_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let _ = session::submit_lifecycle(&task_app, dir);
+    let dir = tauri::async_runtime::spawn_blocking(move || {
+        let (dir, _, _) = session::submit_toggle(&task_app);
+        dir
     })
     .await
     .map_err(|error| format!("切换会话任务失败：{error}"))?;
@@ -264,9 +263,11 @@ pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-pub fn delete_all_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    if lock(&state.session).is_some() {
-        return Err("会话进行中，结束后再清空会话记录。".to_string());
+pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result<usize, String> {
+    // 启动中的会话记录已经落库，但 state.session 仍为空；此时清空会把
+    // 正在启动的会话一起删掉，后续写入全部失败。
+    if session::is_busy(&app) {
+        return Err("会话正在启动或进行中，结束后再清空会话记录。".to_string());
     }
     let store = lock(&state.store);
     store
@@ -275,10 +276,14 @@ pub fn delete_all_sessions(state: State<'_, AppState>) -> Result<usize, String> 
 }
 
 #[tauri::command]
-pub fn delete_session(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+pub fn delete_session(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+) -> Result<bool, String> {
     let session_id = parse_id(&id)?;
-    if lock(&state.session).is_some() {
-        return Err("会话进行中，结束后再删除记录。".to_string());
+    if session::is_busy(&app) {
+        return Err("会话正在启动或进行中，结束后再删除记录。".to_string());
     }
     let store = lock(&state.store);
     store
@@ -496,8 +501,9 @@ pub fn cancel_prepare(state: State<'_, AppState>) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn remove_model(app: AppHandle) -> Result<(), String> {
-    if session::is_running(&app) {
-        return Err("会话进行中，结束后再删除模型。".to_string());
+    // is_busy 同时覆盖「启动中」：模型正在被 worker 加载时删文件会留下半删状态。
+    if session::is_busy(&app) {
+        return Err("会话正在启动或进行中，结束后再删除模型。".to_string());
     }
     let (manager, done) = {
         let state = app.state::<AppState>();

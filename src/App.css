@@ -805,6 +805,13 @@ button.m5 {
   font-weight: 600;
 }
 
+/* 长英文 / URL / 无空格文本在 320px 浮层里必须能在容器内换行。 */
+.line .what {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .line.interviewer .who {
   color: #2f5fd0;
 }

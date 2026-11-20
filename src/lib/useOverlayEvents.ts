@@ -328,7 +328,8 @@ export function useOverlayEvents() {
   const clearAnswer = useCallback(() => {
     setState((current) => ({
       ...current,
-      answer: { ...EMPTY_ANSWER },
+      // 「清空」只清浮层显示；后端的待答队列还在，排队数不能被抹成 0。
+      answer: { ...EMPTY_ANSWER, pending: current.answer.pending },
     }));
   }, []);
 

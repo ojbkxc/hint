@@ -324,11 +324,33 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 本轮针对「快速连点开始/结束」「启动中再按热键」这类真实操作路径，修正了生命周期队列的两处竞态与三处语义问题：
 
 - **决策与执行之间的窗口**：`submit_lifecycle` 原先在锁内只做 `request`，解锁后才 `begin`。两个线程同时请求 Start 时都可能拿到 `Run`，第二个 `start_session` 因「会话已在进行中」失败并把状态回写成 Idle，而会话其实在跑——之后 Stop 被判成 Noop，会话再也停不下来。现把 `begin` 放进 `request` 同一把锁内，从结构上保证同一时刻只有一个在途请求。
-- **在途同向请求吞掉最后一次意图**：原合并规则「在途方向相同即合并」会在「启动中 → 用户按了 Stop（排队）→ 又按 Start」时把最后的 Start 静默吸收，队列执行完 Stop 后停在 Idle。现只在排队为空时合并；排队中存在异向请求时必须重新排队，按 `Stop → Start` 依次执行，最终落在最后一次意图上。
-- **启动中切换热键**：`toggle_session` 原先按 `is_active()` 判断，启动中（Starting）未激活，再按热键仍判成 Start 并被合并，用户无法取消 10–30 秒的模型加载。现抽出 `session::toggle_dir`，按状态取反：`Idle / Stopping → Start`，`Starting / Active → Stop`；设置页命令与 `Ctrl+Shift+R` 热键（`lib.rs::handle_pressed_shortcut`）共用同一判定，启动中按一次即可排队停止，停止中再按则排队重新启动。
+- **在途同向请求吞掉最后一次意图**：原合并规则「在途方向相同即合并」会在「启动中 → 用户按了 Stop（排队）→ 又按 Start」时把最后的 Start 静默吸收，队列执行完 Stop 后停在 Idle。现在排队槽只保留最后意图，新意图覆盖旧意图；目标已达成时直接跳过，最终落在最后一次意图上（第十五节进一步收敛为单槽）。
+- **启动中切换热键**：`toggle_session` 原先按 `is_active()` 判断，启动中（Starting）未激活，再按热键仍判成 Start 并被合并，用户无法取消 10–30 秒的模型加载。现按生命周期状态取反：`Idle / Stopping → Start`，`Starting / Active → Stop`；第十五节把方向决策移进队列锁内（`request_toggle`），命令与热键共用。
 - **音频致命中断的状态一致性**：`end_session_after_audio_failure` 原先直调 `stop_session`，绕过了生命周期队列，队列状态停在 Active，之后的热键/托盘切换会一直判成 Stop。现改走 `submit_lifecycle(Stop)`。
 - **失败回写以真实会话为准**：`run_lifecycle` 失败时不再一律按方向回退，而是检查 `is_running`：Start 失败但会话在跑（重复启动）记 Active，Stop 失败但会话已收尾记 Idle，避免队列状态与真实会话长期不一致。
 - **顺带清理**：`Segmenter::push` 返回本块 RMS 供断线看门狗复用，采集路径只算一次 `audio_metrics`；`test_llm` / `fetch_models` 的 Key 解析统一为 `resolve_api_key`。
 - **识别错误提示中文化**：看门狗中止、引擎无响应、连接失败、启动超时/退出这几类 Worker 英文消息映射为中文短句，避免浮层出现「语音识别失败，稍后自动重试：inference aborted by the watchdog」。
 
 另外修正了语音模型下载的并发窗口：`cancel_prepare` 原先直接把槽位 `take()` 掉，取消后立刻重新点下载会与尚未退出的旧任务并发写同一批 `.part` 文件；`PrepareGuard` 析构时又无条件清空槽位，可能抹掉新任务的取消标志。现在取消只置位、不腾槽，槽位由旧任务退出时清理，且 `PrepareGuard` 只清自己的标志，从结构上杜绝并发下载与「取消按钮失效」。`prepare_model` 同时改为返回 `bool`（true=完成，false=用户取消），前端据此区分文案——此前取消后设置页会显示「模型文件检查完成，可以开始面试」。下载进度里的 `source` 也修正为约定好的短标签 `official` / `mirror`（原先把源地址传了进去，设置页因此显示 `https://huggingface.co` 而不是「官方源」）。
+
+## 十五、1.0.3 后全量复查（2026-11-20）
+
+对 v1.0.2→v1.0.3 的全部改动做了一轮逐文件复查，修复了以下问题，并在 CI 上重新验证：
+
+- **启动中的破坏性操作**：`remove_model` / `delete_session` / `delete_all_sessions` 原先只查 `state.session`；启动的 10–30 秒内会话尚未注册，删模型会与 worker 加载并发、清空记录会删掉正在创建的会话。新增 `session::is_busy`（会话存在或生命周期非 Idle）统一拦截。
+- **停止瞬间仍继续流式**：`answer_one` 在检查 `cancelled` 之后才创建新的取消标志，若停止恰好发生在两步之间，`stop_session` 取消的是旧标志，本轮会继续请求并推 delta。现在创建标志后再查一次会话级 `cancelled`，delta 回调也同时看会话级标志。
+- **切换请求的原子性**：`toggle_dir` + `submit_lifecycle` 是两次加锁，并发双击可能都读到同一状态。新增 `LifecycleQueue::request_toggle`，方向与 `begin` 在同一把锁内完成；命令层与 `Ctrl+Shift+R` 统一走 `submit_toggle` / `spawn_toggle`，删除 `toggle_dir`。
+- **排队意图收敛**：排队槽从 `VecDeque` 改为单槽「最后意图优先」。连点热键不会积压几十次启动/停止，`drain_lifecycle` 也不会递归很深；中间意图本来就不需要真的执行。
+- **下载重试分类**：`from_ureq` 把所有非 2xx 归为 Http（不可重试），408/429/5xx 不会在同源重试。现改为归入可重试的 Network，兑现「每源重试 5 次」。
+- **补录短文本去重**：归一化后 <3 字符直接返回「未覆盖」，会让「好的」「收到」这类补录与实时结果重复上屏；现在先做精确匹配。
+- **模型列表**：`anthropic_models_url` 未剥 `/messages`，Base URL 填完整端点时会把 models 拼成 `…/messages/v1/models`。已修复并加单测。
+- **取消延迟**：三协议流式的 `send()` 改为可取消（`send_cancellable`），用户按「重新生成」或结束会话时不再被挂起的建连拖住最长 60 秒。
+- **资料导入编码**：新增 UTF-16 BOM（记事本「Unicode」），且先于 UTF-8 判断——UTF-16LE 的 ASCII 字节是合法 UTF-8（带 NUL），先试 UTF-8 会解出整份乱码。
+- **英文面试回声**：回声门槛原先只认汉字，英文麦克风文本永远不算回声；现在英文 ≥12 个字母同样按 2-gram 覆盖率判定。
+- **问题判定**：请求动词补充「说明 / 解释 / 评价 / 分析」，英文支持 `Please …` 前缀，漏答面进一步收窄。
+- **配置保存**：Windows 上「先删旧文件再 rename」在第二次失败时会丢掉整个 `settings.json`；改为 rename 重试 3 次后复制覆盖，失败时旧文件仍在。
+- **音频重连状态**：通道短暂断线重连时先 `finish_channel`（清电平、重置迟滞边、联合状态回静默），避免重连后卡在「你在说 / 面试官在说」。初始化等待从 10 秒放宽到 15 秒，减少蓝牙/虚拟声卡误报。
+- **健壮性**：chunked 响应长度改用 `checked_add`（畸形长度不再 panic）；worker 查询串 `%xx` 改在字节上解码（多字节字符不再可能触发字符串切片 panic）。
+- **前端**：切协议时清空输入框里未保存的 Key（避免 A 的 Key 存进 B）；Base URL 变化时清空模型列表并丢弃过期响应；会话详情加请求序号，快速连点不再显示错会话；「清空」保留排队数；长英文/URL 在 320px 下可换行；修正两处重复的「拉取模型列表失败 / 模型下载失败」前缀与过时的「保存」按钮文案。
+
+**保留的已知取舍**：断线补录的去重仍以整段 2-gram 覆盖率 0.7 判定，跨越「失败段 + 成功段」的片段可能漏补或重复，属启发式限制（README 已注明补录只补文字、不重新触发回答）；stall 看门狗 15 秒阈值未调整，冷启动极慢时仍可能触发一次误回收，但下一轮会自愈。

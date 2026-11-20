@@ -6,9 +6,20 @@
 
 /// 把用户文件的内容解码成字符串。
 ///
-/// 先按 UTF-8 解码（含 BOM 自动剥离），失败时回退 GBK——中文 Windows
-/// 上的老 txt 很多是 GBK 编码。两者都失败时用有损 UTF-8 保证不丢内容。
+/// 先看 UTF-16 BOM（Windows 记事本的「Unicode」就是 UTF-16LE），再按 UTF-8
+/// 解码（含 BOM 自动剥离），失败时回退 GBK——中文 Windows 上的老 txt 很多是
+/// GBK 编码。两者都失败时用有损 UTF-8 保证不丢内容。
 pub fn decode_text(bytes: &[u8]) -> String {
+    // 必须在 UTF-8 之前判断：UTF-16LE 的 ASCII 字节是合法的 UTF-8（带 NUL），
+    // 先试 UTF-8 会把整份文件解成一串带 \0 的假文本。
+    if let Some(rest) = bytes.strip_prefix(b"\xFF\xFE") {
+        let (decoded, _, _) = encoding_rs::UTF_16LE.decode(rest);
+        return decoded.into_owned();
+    }
+    if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {
+        let (decoded, _, _) = encoding_rs::UTF_16BE.decode(rest);
+        return decoded.into_owned();
+    }
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_string();
@@ -169,6 +180,23 @@ mod tests {
         assert_eq!(decode_text(&with_bom), "简历");
         // GBK 编码的「简历」：0xBC 0xF2 0xC0 0xFA。
         assert_eq!(decode_text(&[0xBC, 0xF2, 0xC0, 0xFA]), "简历");
+    }
+
+    #[test]
+    fn decode_text_handles_utf16_bom() {
+        // Windows 记事本「Unicode」= UTF-16LE + BOM。
+        let mut le = vec![0xFF, 0xFE];
+        for unit in "简历：中文".encode_utf16() {
+            le.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(decode_text(&le), "简历：中文");
+
+        // UTF-16BE（少见，但 BOM 存在时按它解）。
+        let mut be = vec![0xFE, 0xFF];
+        for unit in "简历".encode_utf16() {
+            be.extend_from_slice(&unit.to_be_bytes());
+        }
+        assert_eq!(decode_text(&be), "简历");
     }
 
     #[test]

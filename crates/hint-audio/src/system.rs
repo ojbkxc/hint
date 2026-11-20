@@ -121,6 +121,9 @@ pub(crate) fn run(
                  必要时结束会话后在设置页重新选择设备",
             );
         }
+        // 断线期间没有音频：清电平、重置迟滞检测器并让联合状态回到静默，
+        // 避免重连后同向边被吸收、状态卡在「面试官在说」。
+        rt.finish_channel(Channel::Interviewer);
         rt.sleep_backoff(failures);
     }
 
