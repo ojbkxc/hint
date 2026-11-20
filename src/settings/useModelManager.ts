@@ -82,7 +82,7 @@ export function useModelManager() {
       completedBytes: current.completedBytes,
     }));
 
-    const result = await safeInvoke<unknown>("prepare_model");
+    const result = await safeInvoke<boolean>("prepare_model");
     setBusy(false);
     if (disposed.current) return;
 
@@ -97,6 +97,13 @@ export function useModelManager() {
         error: current.phase === "ready" ? "" : `模型下载失败：${result.error}`,
       }));
       setNotice(`模型下载未完成：${result.error}`);
+      return;
+    }
+
+    // 后端返回 false 表示用户主动取消（不是失败）；已下载部分会保留。
+    if (result.data === false) {
+      setNotice("已取消语音模型下载，已下载部分会保留，可稍后继续。");
+      await refresh();
       return;
     }
 

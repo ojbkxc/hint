@@ -420,7 +420,7 @@ impl Drop for PrepareGuard {
 }
 
 #[tauri::command]
-pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
+pub async fn prepare_model(app: AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let cancel = {
         let mut slot = lock(&state.prepare_cancel);
@@ -464,12 +464,13 @@ pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
     match result {
         Ok(()) => {
             session::emit_notice(&app, "info", "语音模型已就绪");
-            Ok(())
+            Ok(true)
         }
         // 用户主动取消不是失败：给普通提示，不要把「已取消」显示成错误。
+        // 返回 false 让前端区分「检查完成」与「用户取消」。
         Err(error) if error.is_cancelled() => {
             session::emit_notice(&app, "info", "已取消语音模型下载");
-            Ok(())
+            Ok(false)
         }
         Err(error) => {
             let message = user_message_for(&error);
