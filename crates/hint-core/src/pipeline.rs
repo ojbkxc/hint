@@ -541,7 +541,6 @@ fn bigrams(text: &str) -> HashSet<(char, char)> {
 ///
 /// 复用 [`Settings::system_prompt`]（角色、回答风格、简历、项目资料），
 /// 再补充实时口述场景的约束：答案要能直接照念、资料未覆盖时不许编造。
-/// 组装 system prompt。
 ///
 /// 身份、表达、事实边界、语言与风格等长期约束在
 /// [`Settings::system_prompt`]；这里只追加实时口述场景独有的补充，

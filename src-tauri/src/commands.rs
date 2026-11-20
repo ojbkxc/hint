@@ -404,16 +404,25 @@ pub fn model_status(state: State<'_, AppState>) -> Result<Value, String> {
     serde_json::to_value(status).map_err(|error| format!("序列化模型状态失败：{error}"))
 }
 
-/// 下载期间在 `AppState::prepare_cancel` 里占位；Drop 时无条件清空，
-/// 保证成功、失败、取消、spawn_blocking JoinError 四条路径都不泄漏标志。
+/// 下载期间在 `AppState::prepare_cancel` 里占位；Drop 时清空。
+///
+/// 只清自己的占位：取消后用户立刻重新下载时，新任务的标志可能已经写进槽位，
+/// 无条件清空会把新任务的取消标志一起抹掉（之后无法取消，还会允许并发下载）。
 struct PrepareGuard {
     app: AppHandle,
+    flag: Arc<AtomicBool>,
 }
 
 impl Drop for PrepareGuard {
     fn drop(&mut self) {
         let state = self.app.state::<AppState>();
-        *lock(&state.prepare_cancel) = None;
+        let mut slot = lock(&state.prepare_cancel);
+        if slot
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &self.flag))
+        {
+            *slot = None;
+        }
     }
 }
 
@@ -422,16 +431,19 @@ pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let cancel = {
         let mut slot = lock(&state.prepare_cancel);
-        if let Some(previous) = slot.as_ref() {
-            if !previous.load(Ordering::Acquire) {
-                return Err("模型下载已在进行中。".to_string());
-            }
+        // 取消只置位、不腾槽：旧任务真正退出（PrepareGuard 析构）前，
+        // 不允许第二个下载并发写同一批 .part 文件。
+        if slot.is_some() {
+            return Err("模型下载已在进行中。".to_string());
         }
         let flag = Arc::new(AtomicBool::new(false));
         *slot = Some(Arc::clone(&flag));
         flag
     };
-    let _guard = PrepareGuard { app: app.clone() };
+    let _guard = PrepareGuard {
+        app: app.clone(),
+        flag: Arc::clone(&cancel),
+    };
 
     let manager = state.model.clone();
     let task_app = app.clone();
@@ -476,8 +488,10 @@ pub async fn prepare_model(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn cancel_prepare(state: State<'_, AppState>) -> Result<bool, String> {
-    let mut slot = lock(&state.prepare_cancel);
-    match slot.take() {
+    // 只置位、不腾槽：槽位由 PrepareGuard 在旧任务真正退出后清理，
+    // 避免「取消后立刻再点下载」时两个任务并发写同一批 .part 文件。
+    let slot = lock(&state.prepare_cancel);
+    match slot.as_ref() {
         Some(flag) => {
             flag.store(true, Ordering::SeqCst);
             Ok(true)

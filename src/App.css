@@ -1396,3 +1396,25 @@ button.mini.ghost {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 浮层最小宽度（320px）：底部两路电平 + 联合状态标识 + 模型/首字
+   会超出可用宽度被裁切。隐藏中文字段名（保留电平条与 title 提示），
+   并收紧间距与模型名宽度。 */
+@media (max-width: 380px) {
+  .overlay-footer {
+    gap: 6px;
+    padding: 4px 8px;
+  }
+
+  .footer-group {
+    gap: 6px;
+  }
+
+  .overlay-footer .level-label {
+    display: none;
+  }
+
+  .overlay-footer .footer-item {
+    max-width: 72px;
+  }
+}

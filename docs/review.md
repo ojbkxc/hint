@@ -328,3 +328,5 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **音频致命中断的状态一致性**：`end_session_after_audio_failure` 原先直调 `stop_session`，绕过了生命周期队列，队列状态停在 Active，之后的热键/托盘切换会一直判成 Stop。现改走 `submit_lifecycle(Stop)`。
 - **失败回写以真实会话为准**：`run_lifecycle` 失败时不再一律按方向回退，而是检查 `is_running`：Start 失败但会话在跑（重复启动）记 Active，Stop 失败但会话已收尾记 Idle，避免队列状态与真实会话长期不一致。
 - **顺带清理**：`Segmenter::push` 返回本块 RMS 供断线看门狗复用，采集路径只算一次 `audio_metrics`；`test_llm` / `fetch_models` 的 Key 解析统一为 `resolve_api_key`。
+
+另外修正了语音模型下载的并发窗口：`cancel_prepare` 原先直接把槽位 `take()` 掉，取消后立刻重新点下载会与尚未退出的旧任务并发写同一批 `.part` 文件；`PrepareGuard` 析构时又无条件清空槽位，可能抹掉新任务的取消标志。现在取消只置位、不腾槽，槽位由旧任务退出时清理，且 `PrepareGuard` 只清自己的标志，从结构上杜绝并发下载与「取消按钮失效」。
