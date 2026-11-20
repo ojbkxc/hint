@@ -310,3 +310,11 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **补录不再饿死实时转录**：`run_recovery` 逐片段识别期间新到的实时段暂存（`parked`）并立即返回，下个空闲周期用 `resume_from_ms` 从断点继续；成功/失败/空结果都推进游标，避免同一片段反复重试。去重窗口从 `i64::MAX` 收敛到 `[start-5s, end+5s]`，空识别结果不进入 live 文本池。
 - **下载失败可诊断**：补开始下载、每次尝试失败（含失败分类与源标签）、最终失败、磁盘预检失败、`prepare` 整体失败的日志；此前失败时日志只有启动一行。
 - **磁盘不足文案**：不再写死「约 300MB」，按实际预算输出「可用约 X MB，本次还需要约 Y MB」，续传时不再误导。
+
+## 十三、健壮性与提示完善（2026-11-19）
+
+- **Gemini 模型列表**：`models_from_gemini` 只保留 `supportedGenerationMethods` 含 `generateContent` 的模型（Gemini 会返回 embedding / aqa 等不能对话的模型），字段缺失时保守保留；加单测。
+- **设置页模型列表**：切换协议时清空上一接口的列表；`loadModels` 做数组类型防御与去重，异常响应不再让设置页报错。
+- **取消下载不误报**：新增 `SttError::is_cancelled` 与共享 `CANCELLED_MESSAGE`，`prepare_model` 识别用户主动取消并给普通提示，不再显示「模型下载失败」。
+- **错误提示中文化**：`user_message_for` 改用 `user_message()`（此前用英文 Display，会把已诊断的「模型文件损坏」显示成「未知错误」）；Engine / Worker / Config 补中文映射，并加单测。
+- **文档**：README 补联合状态、噪声门、断线补录的说明与限制；验收清单新增 3.5 / 4.5 / 4.6 及模板行。
