@@ -490,6 +490,32 @@ mod tests {
     }
 
     #[test]
+    fn engine_message_is_shown_as_is() {
+        let error = SttError::Engine {
+            message: "本地语音模型加载失败，模型文件可能已损坏".into(),
+        };
+        assert_eq!(error.user_message(), "本地语音模型加载失败，模型文件可能已损坏");
+    }
+
+    #[test]
+    fn cancelled_config_is_recognized_and_friendly() {
+        let error = SttError::Config {
+            message: CANCELLED_MESSAGE.into(),
+        };
+        assert!(error.is_cancelled());
+        assert_eq!(error.user_message(), "下载已取消");
+    }
+
+    #[test]
+    fn non_cancelled_config_is_prefixed() {
+        let error = SttError::Config {
+            message: "threads must be 1..=16".into(),
+        };
+        assert!(!error.is_cancelled());
+        assert!(error.user_message().starts_with("配置错误："));
+    }
+
+    #[test]
     fn reason_flags_match_the_spec() {
         assert!(FailureReason::Network.is_transient());
         assert!(FailureReason::Timeout.is_transient());
