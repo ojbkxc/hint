@@ -32,6 +32,10 @@ const STREAM_RETRY_DELAY: Duration = Duration::from_millis(1_500);
 /// 流式调用的最大尝试次数（首次 + 自动重试一次）。
 const MAX_STREAM_ATTEMPTS: usize = 2;
 
+/// 单条 SSE 数据的缓冲上限。正常情况下每收到一个换行就会处理并清空，
+/// 缓冲里只留着半行；没有换行的异常/恶意端点会让缓冲无限增长，这里兜底。
+const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
+
 /// Anthropic / Gemini 要求首条消息必须是用户侧；历史以「我」开头时补的占位。
 const LEADING_USER_PLACEHOLDER: &str = "（继续之前的对话）";
 
@@ -1234,6 +1238,13 @@ where
             if !matches!(dispatch_sse_line(&line, &mut handle)?, SseStep::Continue) {
                 return Ok(());
             }
+        }
+        // 完整的行都处理完后，剩余部分是一条尚未收到换行的数据。
+        if buffer.len() > MAX_SSE_LINE_BYTES {
+            return Err(CoreError::Stream(format!(
+                "流式响应的单条数据超过 {} KB，已停止生成。",
+                MAX_SSE_LINE_BYTES / 1024
+            )));
         }
     }
 

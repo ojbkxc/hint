@@ -1091,6 +1091,11 @@ pub(crate) fn regenerate(app: &AppHandle) -> Result<(), String> {
         "还没有识别到面试官的问题，等面试官提问后再按 Ctrl+Shift+A（或点浮层「重新生成」）。"
             .to_string()
     })?;
+    // 纯标点/空白的问题入队会被判为重复并静默丢弃；此时先返回错误，
+    // 避免已经取消了当前答案却没有任何新请求（前端会一直显示流式状态）。
+    if normalize_for_dedup(&question).is_empty() {
+        return Err("还没有识别到可用于回答的面试官问题，请等面试官提问后再试。".to_string());
+    }
     // 取消当前流（失败/取消不会发错误提示），并丢掉积压的问题。
     if let Some(flag) = lock(&shared.answer_cancel).as_ref() {
         flag.store(true, Ordering::SeqCst);

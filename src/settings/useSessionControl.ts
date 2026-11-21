@@ -25,6 +25,8 @@ export type SessionControl = {
   message: string;
   running: boolean;
   busy: boolean;
+  /** 当前正在执行的操作；用于区分「启动中」与「结束中」的按钮文案。 */
+  busyAction: "" | "start" | "stop";
   error: string;
   notice: string;
   sessionId: number | null;
@@ -40,7 +42,7 @@ const ACTIVE_STATES = new Set(["connecting", "listening"]);
  */
 export function useSessionControl(): SessionControl {
   const [status, setStatus] = useState<SessionStatus>({ state: "idle", message: "" });
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"" | "start" | "stop">("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -82,7 +84,7 @@ export function useSessionControl(): SessionControl {
   }, []);
 
   const start = useCallback(async () => {
-    setBusy(true);
+    setBusyAction("start");
     setError("");
     setNotice("");
     // 命令要冷启语音引擎（约 10–30 秒），先切到 connecting，
@@ -92,7 +94,7 @@ export function useSessionControl(): SessionControl {
     try {
       result = await safeInvoke<unknown>("start_session");
     } finally {
-      if (!disposed.current) setBusy(false);
+      if (!disposed.current) setBusyAction("");
     }
     if (disposed.current) return;
     if (!result.ok) {
@@ -117,12 +119,12 @@ export function useSessionControl(): SessionControl {
   }, []);
 
   const stop = useCallback(async () => {
-    setBusy(true);
+    setBusyAction("stop");
     setError("");
     setNotice("");
     const result = await safeInvoke<unknown>("stop_session");
     if (disposed.current) return;
-    setBusy(false);
+    setBusyAction("");
     if (!result.ok) {
       setError(`结束会话失败：${result.error}`);
       return;
@@ -133,12 +135,14 @@ export function useSessionControl(): SessionControl {
   }, []);
 
   const running = ACTIVE_STATES.has(status.state);
+  const busy = busyAction !== "";
 
   return {
     state: status.state,
     message: status.message,
     running,
     busy,
+    busyAction,
     error,
     notice,
     sessionId,

@@ -313,13 +313,18 @@ export function useOverlayEvents() {
   const regenerate = useCallback(async () => {
     const result = await safeInvoke("regenerate_answer");
     if (!result.ok) return result.error;
+    // 不要在这里清空答案文本：后端随后会发 reset 帧，并在那时把上一轮答案
+    // 归档到时间线。若前端提前清空，reset 帧看到 previous.text 为空就不会
+    // 归档，旧答案会从「更早的回答」里消失。这里只切到流式状态，等 reset
+    // 帧统一清空并归档。
     setState((current) => ({
       ...current,
       answer: {
-        ...EMPTY_ANSWER,
+        ...current.answer,
         streaming: true,
-        question: current.answer.question,
-        pending: current.answer.pending,
+        done: false,
+        error: "",
+        retryable: false,
       },
     }));
     return null;

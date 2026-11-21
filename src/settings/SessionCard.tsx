@@ -12,7 +12,7 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 export default function SessionCard({ control }: Props) {
-  const { state, message, running, busy, error, notice, sessionId } = control;
+  const { state, message, running, busy, busyAction, error, notice, sessionId } = control;
   const listening = state === "listening";
   const connecting = state === "connecting";
 
@@ -61,7 +61,7 @@ export default function SessionCard({ control }: Props) {
           onClick={control.stop}
           disabled={busy || !running}
         >
-          {busy && running ? "正在结束…" : "结束面试"}
+          {busyAction === "stop" ? "正在结束…" : "结束面试"}
         </button>
       </div>
 
