@@ -11,7 +11,7 @@
 //! ```
 //!
 //! VAD 参数固定为 cc-haha 的实测调参：window 512、threshold 0.5、
-//! min_speech 0.25s、min_silence 0.5s、max_speech 30s。
+//! min_speech 0.15s、min_silence 0.5s、max_speech 30s。
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};

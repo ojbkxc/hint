@@ -918,6 +918,7 @@ async fn openai_stream(
     let mut ttft_ms = 0u64;
     pump_sse(
         response,
+        cancel,
         |data| {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(SseStep::Cancelled);
@@ -987,6 +988,7 @@ async fn anthropic_stream(
     let mut ttft_ms = 0u64;
     pump_sse(
         response,
+        cancel,
         |data| {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(SseStep::Cancelled);
@@ -1101,6 +1103,7 @@ async fn gemini_stream(
     if is_event_stream {
         pump_sse(
             response,
+            cancel,
             |data| {
                 let value: Value = match serde_json::from_str(data) {
                     Ok(value) => value,
@@ -1172,6 +1175,7 @@ enum SseStep {
 /// 正常的 EOF 视为结束（部分兼容服务不发 `[DONE]`）。
 async fn pump_sse<F>(
     response: reqwest::Response,
+    cancel: &AtomicBool,
     mut handle: F,
     emitted: &AtomicUsize,
 ) -> Result<()>
@@ -1181,7 +1185,20 @@ where
     let mut stream = response.bytes_stream();
     let mut buffer: Vec<u8> = Vec::new();
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        // 响应头已到、服务端却长时间不再发数据时，`next()` 会一直挂着；
+        // 与取消轮询做 select，让「重新生成 / 结束会话」立即生效。
+        let next = pin!(stream.next());
+        let cancelled = pin!(wait_cancel(cancel));
+        let Some(chunk) = (match select(next, cancelled).await {
+            Either::Left((item, _)) => item,
+            Either::Right(((), _)) => return Ok(()),
+        }) else {
+            break;
+        };
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(error) => {

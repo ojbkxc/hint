@@ -1,6 +1,6 @@
-# hint 1.0.4 真机验收清单
+# hint 1.0.5 真机验收清单
 
-- 适用产物：`hint_1.0.4_x64-setup.exe`（NSIS），或免安装的 `hint.exe`。
+- 适用产物：`hint_1.0.5_x64-setup.exe`（NSIS），或免安装的 `hint.exe`。
 - 适用系统：Windows 10 / Windows 11 x64。
 - 验收人：无需开发背景，按步骤操作，记录「实际结果」与「是否通过」。
 - 统一日志位置：`%APPDATA%\com.ojbkxc.hint\logs\hint.log`（超过 5 MB 轮转为 `hint.1.log`）。
@@ -17,7 +17,7 @@ Get-Content "$env:APPDATA\com.ojbkxc.hint\logs\hint.log" -Tail 100
 explorer "$env:APPDATA\com.ojbkxc.hint"
 ```
 
-> 说明：以下「预期结果」均以 1.0.4 的实际行为为准。凡涉及具体文案的，看到意思相同的中文提示即可，不要求逐字一致。
+> 说明：以下「预期结果」均以 1.0.5 的实际行为为准。凡涉及具体文案的，看到意思相同的中文提示即可，不要求逐字一致。
 
 ---
 
@@ -25,7 +25,7 @@ explorer "$env:APPDATA\com.ojbkxc.hint"
 
 ### 1.1 安装包可运行
 
-- 步骤：双击 `hint_1.0.4_x64-setup.exe`，按向导完成安装，桌面/开始菜单出现 hint 快捷方式。
+- 步骤：双击 `hint_1.0.5_x64-setup.exe`，按向导完成安装，桌面/开始菜单出现 hint 快捷方式。
 - 预期结果：安装过程不需要管理员权限（当前用户安装）；安装完成后能启动，主窗口标题为「hint · 面试提词器」。
 - 失败排查：确认系统为 x64；查看安装器窗口的错误提示；`Get-ChildItem "$env:LOCALAPPDATA\Programs"` 检查安装目录（NSIS currentUser 默认位置）。
 

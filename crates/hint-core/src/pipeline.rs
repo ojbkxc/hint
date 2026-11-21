@@ -279,6 +279,17 @@ const EN_QUESTION_OPENERS: &[&str] = &[
     "are you",
     "were you",
     "have you",
+    "is there",
+    "are there",
+    "should i",
+    "should we",
+    "should you",
+    "do i",
+    "do we",
+    "does it",
+    "does that",
+    "does she",
+    "does he",
     "tell me",
     "walk me",
     "give me",
@@ -431,10 +442,12 @@ fn looks_like_english_question(text: &str) -> bool {
     } else {
         (first, &words[..])
     };
-    if EN_WH_WORDS.contains(&first) {
+    // 缩写词形：「What's …」按 what 处理（STT 常无问号）。
+    let first_base = first.strip_suffix("'s").unwrap_or(first);
+    if EN_WH_WORDS.contains(&first_base) {
         return true;
     }
-    if EN_IMPERATIVE_OPENERS.contains(&first) {
+    if EN_IMPERATIVE_OPENERS.contains(&first_base) {
         return true;
     }
     if rest.len() >= 2 {
@@ -827,6 +840,9 @@ mod tests {
             "Why did you choose Rust for this service?",
             "Describe your testing process.",
             "Please walk me through your last project.",
+            "What's your biggest weakness",
+            "Is there anything you would change",
+            "Should we expect you to relocate",
         ] {
             assert_question(text);
         }

@@ -487,8 +487,15 @@ impl SessionShared {
 
     fn recent_interviewer_texts(&self) -> Vec<String> {
         let ctx = lock(&self.ctx);
+        // 取用时也要按时间过滤：面试官长时间没说话时，队列里保留的旧文本
+        // 不该继续参与回声判定，否则候选人的正常回答会被误判成回声。
+        let now = Instant::now();
         ctx.recent_interviewer
             .iter()
+            .filter(|line| {
+                now.saturating_duration_since(line.at)
+                    <= Duration::from_millis(RECENT_INTERVIEWER_MS)
+            })
             .map(|line| line.text.clone())
             .collect()
     }
@@ -1342,7 +1349,10 @@ fn process_job(app: &AppHandle, shared: &Arc<SessionShared>, client: &WorkerClie
                     Channel::Interviewer => &mut recovery.interviewer,
                     Channel::Me => &mut recovery.me,
                 };
-                tracker.on_error(job.end_ms, ERROR_PREROLL_MS);
+                // outage 必须覆盖失败任务本身的音频：单个分段最长 12 秒，
+                // 只回溯 3 秒会让段首大部分内容永远补不回来。
+                let failed_ms = (job.end_ms - job.start_ms).max(0) as u64;
+                tracker.on_error(job.end_ms, failed_ms + ERROR_PREROLL_MS);
             }
             if !shared.cancelled.load(Ordering::Acquire) {
                 emit_status(

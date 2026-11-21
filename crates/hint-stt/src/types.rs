@@ -119,7 +119,9 @@ fn default_min_silence_seconds() -> f32 {
     0.5
 }
 fn default_min_speech_seconds() -> f32 {
-    0.25
+    // 会话分段器最短语音是 250ms；worker 侧门槛必须更低，否则切段后
+    // 的短促「嗯 / 对 / 好的」会在 VAD 再判一次噪声时被丢掉。
+    0.15
 }
 fn default_max_speech_seconds() -> f32 {
     30.0
@@ -257,7 +259,7 @@ mod tests {
         assert_eq!(config.max_audio_seconds, 120.0);
         assert_eq!(config.vad_threshold, 0.5);
         assert_eq!(config.min_silence_seconds, 0.5);
-        assert_eq!(config.min_speech_seconds, 0.25);
+        assert!((config.min_speech_seconds - 0.15).abs() < f32::EPSILON);
         assert_eq!(config.max_speech_seconds, 30.0);
         assert!((config.vad_buffer_seconds() - 31.5).abs() < f32::EPSILON);
     }
