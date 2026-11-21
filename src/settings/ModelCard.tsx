@@ -16,7 +16,6 @@ type Props = {
   onPatch: (next: Partial<Settings>) => void;
   onTest: () => Promise<{ text: string; model: string } | null>;
   onLoadModels: () => void;
-  onSave: () => void;
 };
 
 export default function ModelCard(props: Props) {
@@ -127,15 +126,12 @@ export default function ModelCard(props: Props) {
         />
       </label>
       <p className="muted small">
-        填好后点下方「保存配置」一并保存；点「测试连接」会自动保存。
+        填好后点页面底部「保存全部配置」一并保存；点「测试连接」会自动保存。
       </p>
 
       <div className="action-row">
         <button type="button" onClick={() => void props.onTest()} disabled={busy}>
           {action === "test" ? "测试中…" : "测试连接"}
-        </button>
-        <button type="button" className="primary" onClick={props.onSave} disabled={busy}>
-          {action === "save" ? "保存中…" : "保存配置"}
         </button>
       </div>
 

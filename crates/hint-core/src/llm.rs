@@ -263,6 +263,23 @@ fn truncate(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
+/// 错误响应体最多读取的字节数；避免异常端点返回超大 body 撑爆内存。
+const ERROR_BODY_LIMIT: usize = 64 * 1024;
+
+/// 有上限地读取错误响应体：最多读 `ERROR_BODY_LIMIT` 字节，超出部分直接丢弃。
+async fn read_error_body(response: reqwest::Response) -> String {
+    let mut stream = response.bytes_stream();
+    let mut collected = Vec::new();
+    while collected.len() < ERROR_BODY_LIMIT {
+        match stream.next().await {
+            Some(Ok(chunk)) => collected.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+    let end = collected.len().min(ERROR_BODY_LIMIT);
+    String::from_utf8_lossy(&collected[..end]).into_owned()
+}
+
 /// 非 2xx 响应统一转成「中文建议 + 状态码 + 原始响应片段」的错误。
 async fn ensure_success(
     response: reqwest::Response,
@@ -273,7 +290,7 @@ async fn ensure_success(
         return Ok(response);
     }
     let code = status.as_u16();
-    let raw = response.text().await.unwrap_or_default();
+    let raw = read_error_body(response).await;
     let body = if raw.trim().is_empty() {
         "（空响应体）".to_string()
     } else {

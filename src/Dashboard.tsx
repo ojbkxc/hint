@@ -131,7 +131,6 @@ export default function Dashboard() {
               onPatch={form.patch}
               onTest={handleTest}
               onLoadModels={() => void form.loadModels()}
-              onSave={() => void form.save()}
             />
             <SessionCard control={session} />
             <ModelDownloadCard

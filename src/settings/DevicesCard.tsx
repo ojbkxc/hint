@@ -96,7 +96,7 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
         </p>
       ) : (
         <p className="muted small">
-          选择后记得点「保存配置」。系统输出走 loopback 采集，面试官的声音来自这里。
+          选择后记得点「保存全部配置」。系统输出走 loopback 采集，面试官的声音来自这里。
           双通道电平条在浮层底部实时跳动才算通过。
         </p>
       )}
