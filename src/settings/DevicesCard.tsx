@@ -47,59 +47,85 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
           {loading ? "检测中…" : "刷新设备"}
         </button>
       </div>
+      <div className="card-body">
+        <div className="field">
+          <label className="field-label" htmlFor="device-mic">
+            麦克风（我的声音）
+          </label>
+          <select
+            id="device-mic"
+            className="form-input"
+            value={form.micDevice}
+            onChange={(event) => patch({ micDevice: event.target.value })}
+          >
+            <option value="">系统默认</option>
+            {micMissing && <option value={form.micDevice}>已保存设备（当前未检测到）</option>}
+            {inputs.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <label>
-        麦克风（我的声音）
-        <select
-          value={form.micDevice}
-          onChange={(event) => patch({ micDevice: event.target.value })}
-        >
-          <option value="">系统默认</option>
-          {micMissing && <option value={form.micDevice}>已保存设备（当前未检测到）</option>}
-          {inputs.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.name}
-            </option>
-          ))}
-        </select>
-      </label>
+        <div className="field">
+          <label className="field-label" htmlFor="device-output">
+            系统输出（面试官声音）
+          </label>
+          <select
+            id="device-output"
+            className="form-input"
+            value={form.outputDevice}
+            onChange={(event) => patch({ outputDevice: event.target.value })}
+          >
+            <option value="">系统默认</option>
+            {outputMissing && (
+              <option value={form.outputDevice}>已保存设备（当前未检测到）</option>
+            )}
+            {outputs.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <label>
-        系统输出（面试官声音）
-        <select
-          value={form.outputDevice}
-          onChange={(event) => patch({ outputDevice: event.target.value })}
-        >
-          <option value="">系统默认</option>
-          {outputMissing && (
-            <option value={form.outputDevice}>已保存设备（当前未检测到）</option>
-          )}
-          {outputs.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {error ? (
-        <p className="error-text">
-          {error}
-          <br />
-          请确认麦克风未被其它程序独占后点「刷新设备」。
-        </p>
-      ) : loading ? (
-        <p className="muted small">正在检测音频设备…</p>
-      ) : inputs.length === 0 && outputs.length === 0 ? (
-        <p className="muted small">
-          未检测到可用音频设备。请插入麦克风/扬声器后点「刷新设备」；也可以先用「系统默认」开始。
-        </p>
-      ) : (
-        <p className="muted small">
-          选择后记得点「保存全部配置」。系统输出走 loopback 采集，面试官的声音来自这里。
-          双通道电平条在浮层底部实时跳动才算通过。
-        </p>
-      )}
+        {error ? (
+          <>
+            <p className="error-text">{error}</p>
+            <p className="muted small">请确认麦克风未被其它程序独占后点「刷新设备」。</p>
+          </>
+        ) : loading ? (
+          <p className="status-info">正在检测音频设备…</p>
+        ) : inputs.length === 0 && outputs.length === 0 ? (
+          <div className="empty-state">
+            <svg
+              className="empty-state-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" />
+              <path d="M5 11a7 7 0 0 0 14 0" />
+              <path d="M12 18v3" />
+              <path d="M8 21h8" />
+            </svg>
+            <p className="empty-state-text">
+              未检测到可用音频设备。请插入麦克风/扬声器后点「刷新设备」；也可以先用「系统默认」开始。
+            </p>
+          </div>
+        ) : (
+          <p className="muted small">
+            选择后记得点「保存全部配置」。系统输出走 loopback 采集，面试官的声音来自这里。
+            双通道电平条在浮层底部实时跳动才算通过。
+          </p>
+        )}
+      </div>
     </section>
   );
 }

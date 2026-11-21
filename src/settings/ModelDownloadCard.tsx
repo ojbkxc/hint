@@ -5,6 +5,7 @@ import {
   stepLabel,
   type ModelView,
 } from "./modelTypes";
+import { deriveStatusTone, statusToneClass } from "./statusTone";
 
 type Props = {
   view: ModelView;
@@ -29,51 +30,52 @@ export default function ModelDownloadCard({
         <h2>语音模型</h2>
         {view.phase === "ready" && <span className="tag-ok">已就绪</span>}
       </div>
+      <div className="card-body">
+        <p className="muted small">
+          本地 SenseVoice 语音识别模型（约 241MB），首次使用前必须下载。模型只存本机，
+          不参与任何上传。
+        </p>
 
-      <p className="muted small">
-        本地 SenseVoice 语音识别模型（约 241MB），首次使用前必须下载。模型只存本机，
-        不参与任何上传。
-      </p>
-
-      {view.phase === "loading" ? (
-        <p className="muted small">正在读取模型状态…</p>
-      ) : view.phase === "ready" ? (
-        <ReadyBody view={view} />
-      ) : view.phase === "downloading" ? (
-        <ProgressBody view={view} />
-      ) : (
-        <UnpreparedBody view={view} />
-      )}
-
-      <div className="action-row">
-        {view.phase === "downloading" ? (
-          <button type="button" onClick={onCancel}>
-            取消下载
-          </button>
+        {view.phase === "loading" ? (
+          <p className="muted small">正在读取模型状态…</p>
+        ) : view.phase === "ready" ? (
+          <ReadyBody view={view} />
+        ) : view.phase === "downloading" ? (
+          <ProgressBody view={view} />
         ) : (
-          <button
-            type="button"
-            className="primary"
-            onClick={onDownload}
-            disabled={busy || view.phase === "loading"}
-            title={
-              view.phase === "ready"
-                ? "只核对文件是否存在且大小一致，不会重新下载或覆盖"
-                : undefined
-            }
-          >
-            {view.phase === "ready" ? "检查模型文件" : "下载模型"}
-          </button>
+          <UnpreparedBody view={view} />
         )}
-        {view.phase === "ready" && (
-          <button type="button" className="danger" onClick={onRemove} disabled={busy}>
-            删除模型
-          </button>
-        )}
-      </div>
 
-      {notice && <p className="status">{notice}</p>}
-      {view.error && <p className="error-text">{view.error}</p>}
+        <div className="action-row">
+          {view.phase === "downloading" ? (
+            <button type="button" className="secondary" onClick={onCancel}>
+              取消下载
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary"
+              onClick={onDownload}
+              disabled={busy || view.phase === "loading"}
+              title={
+                view.phase === "ready"
+                  ? "只核对文件是否存在且大小一致，不会重新下载或覆盖"
+                  : undefined
+              }
+            >
+              {view.phase === "ready" ? "检查模型文件" : "下载模型"}
+            </button>
+          )}
+          {view.phase === "ready" && (
+            <button type="button" className="danger" onClick={onRemove} disabled={busy}>
+              删除模型
+            </button>
+          )}
+        </div>
+
+        {notice && <p className={statusToneClass(deriveStatusTone(notice))}>{notice}</p>}
+        {view.error && <p className="error-text">{view.error}</p>}
+      </div>
     </section>
   );
 }
@@ -108,7 +110,7 @@ function UnpreparedBody({ view }: { view: ModelView }) {
           <span className="progress-text">
             {formatBytes(view.downloadedBytes)} / {formatBytes(view.totalBytes)}
           </span>
-          <span className="progress-text">{percent.toFixed(0)}%</span>
+          <span className="progress-text">{percent.toFixed(1)}%</span>
         </div>
         <div className="progress-track">
           <div className="progress-fill" style={{ width: `${Math.max(0, percent)}%` }} />

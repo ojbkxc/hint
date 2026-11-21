@@ -30,49 +30,50 @@ export default function SessionCard({ control }: Props) {
         <h2>面试会话</h2>
         <span className={`session-state state-${state}`}>{STATE_LABEL[state] ?? state}</span>
       </div>
-
-      <p className="muted small">
-        开始后面板会启动双通道采集与本地识别，转录和答案实时显示在浮层。
-        快捷键 Ctrl+Shift+R 也可开始 / 结束。
-      </p>
-
-      {connecting && (
+      <div className="card-body">
         <p className="muted small">
-          正在加载本地语音模型，首次启动可能需要 10–30 秒，期间请勿重复点击。
+          开始后面板会启动双通道采集与本地识别，转录和答案实时显示在浮层。
+          快捷键 Ctrl+Shift+R 也可开始 / 结束。
         </p>
-      )}
 
-      {message && !error && !connecting && <p className="muted small">当前状态：{message}</p>}
-      {sessionId !== null && listening && (
-        <p className="muted small">本次会话编号：{sessionId}</p>
-      )}
+        {connecting && (
+          <p className="muted small">
+            正在加载本地语音模型，首次启动可能需要 10–30 秒，期间请勿重复点击。
+          </p>
+        )}
 
-      <div className="action-row">
-        <button
-          type="button"
-          className="primary"
-          onClick={control.start}
-          disabled={busy || running}
-        >
-          {startLabel}
-        </button>
-        <button
-          type="button"
-          onClick={control.stop}
-          disabled={busy || !running}
-        >
-          {busyAction === "stop" ? "正在结束…" : "结束面试"}
-        </button>
+        {message && !error && !connecting && <p className="muted small">当前状态：{message}</p>}
+        {sessionId !== null && listening && (
+          <p className="muted small">本次会话编号：{sessionId}</p>
+        )}
+
+        <div className="action-row">
+          <button
+            type="button"
+            className="primary"
+            onClick={control.start}
+            disabled={busy || running}
+          >
+            {startLabel}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={control.stop}
+            disabled={busy || !running}
+          >
+            {busyAction === "stop" ? "正在结束…" : "结束面试"}
+          </button>
+        </div>
+
+        {error && (
+          <>
+            <p className="error-text">{error}</p>
+            <p className="muted small">可检查上方 API Key / 语音模型状态后重新开始。</p>
+          </>
+        )}
+        {notice && !error && <p className="status-info">{notice}</p>}
       </div>
-
-      {error && (
-        <p className="error-text">
-          {error}
-          <br />
-          可检查上方 API Key / 语音模型状态后重新开始。
-        </p>
-      )}
-      {notice && !error && <p className="status">{notice}</p>}
     </section>
   );
 }

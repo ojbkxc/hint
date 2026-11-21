@@ -1,3 +1,4 @@
+import { deriveStatusTone, statusToneClass } from "../settings/statusTone";
 import type { SessionDetail, SessionSummary } from "./types";
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
   onDelete: () => void;
   onDeleteAll: () => void;
 };
+
+const SKELETON_KEYS = ["skeleton-1", "skeleton-2", "skeleton-3"];
 
 export default function SessionReview(props: Props) {
   const {
@@ -59,33 +62,52 @@ export default function SessionReview(props: Props) {
         </div>
 
         {error ? (
-          <p className="error-text">{error}</p>
-        ) : !loading && sessions.length === 0 ? (
-          <p className="muted small">还没有会话记录。完成一次面试后，这里会列出可回看的转录与问答。</p>
+          <div className="card-body">
+            <p className="error-text" role="alert">
+              {error}
+            </p>
+          </div>
         ) : loading ? (
-          <p className="muted small">正在读取会话列表…</p>
-        ) : (
-          <ul className="session-items">
-            {sessions.map((session) => {
-              const title = session.note || session.startedAt || `会话 ${session.id}`;
-              const meta = [session.model || "模型未知", durationText(session)]
-                .filter((part) => part !== "")
-                .join(" · ");
-              return (
-                <li key={session.id}>
-                  <button
-                    type="button"
-                    className={`session-item${session.id === selectedId ? " active" : ""}`}
-                    onClick={() => onOpen(session.id)}
-                    title={`${title}${meta ? `（${meta}）` : ""}`}
-                  >
-                    <span className="session-title">{title}</span>
-                    <span className="session-meta">{meta || "时间未知"}</span>
-                  </button>
+          <div className="card-body" aria-busy="true">
+            <span className="visually-hidden">正在读取会话列表…</span>
+            <ul className="session-items" aria-hidden="true">
+              {SKELETON_KEYS.map((key) => (
+                <li key={key}>
+                  <div className="skeleton skeleton-text" />
                 </li>
-              );
-            })}
-          </ul>
+              ))}
+            </ul>
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="card-body">
+            <EmptyState text="还没有会话记录。完成一次面试后，这里会列出可回看的转录与问答。" />
+          </div>
+        ) : (
+          <div className="card-body">
+            <ul className="session-items">
+              {sessions.map((session) => {
+                const title = session.note || session.startedAt || `会话 ${session.id}`;
+                const meta = [session.model || "模型未知", durationText(session)]
+                  .filter((part) => part !== "")
+                  .join(" · ");
+                const active = session.id === selectedId;
+                return (
+                  <li key={session.id}>
+                    <button
+                      type="button"
+                      className={`session-item${active ? " active" : ""}`}
+                      onClick={() => onOpen(session.id)}
+                      aria-current={active ? "true" : undefined}
+                      title={`${title}${meta ? `（${meta}）` : ""}`}
+                    >
+                      <span className="session-title">{title}</span>
+                      <span className="session-meta">{meta || "时间未知"}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
       </section>
 
@@ -111,19 +133,55 @@ export default function SessionReview(props: Props) {
           </div>
         </div>
 
-        {notice && <p className="status">{notice}</p>}
-        {detailError && <p className="error-text">{detailError}</p>}
+        <div className="card-body" aria-busy={detailLoading || undefined}>
+          {notice && (
+            <p className={statusToneClass(deriveStatusTone(notice))} role="status">
+              {notice}
+            </p>
+          )}
+          {detailError && (
+            <p className="error-text" role="alert">
+              {detailError}
+            </p>
+          )}
 
-        {!selectedId ? (
-          <p className="muted small">从左侧选择一条会话查看详情。</p>
-        ) : detailLoading ? (
-          <p className="muted small">正在加载会话…</p>
-        ) : detail ? (
-          <SessionBody detail={detail} />
-        ) : (
-          !detailError && <p className="muted small">没有可显示的内容。</p>
-        )}
+          {!selectedId ? (
+            <EmptyState text="从左侧选择一条会话查看详情。" />
+          ) : detailLoading ? (
+            <>
+              <span className="visually-hidden">正在加载会话…</span>
+              {SKELETON_KEYS.map((key) => (
+                <div key={key} className="skeleton skeleton-text" />
+              ))}
+            </>
+          ) : detail ? (
+            <SessionBody detail={detail} />
+          ) : (
+            !detailError && <EmptyState text="没有可显示的内容。" />
+          )}
+        </div>
       </section>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="empty-state">
+      <svg
+        className="empty-state-icon"
+        width="36"
+        height="36"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        aria-hidden="true"
+      >
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M7 9h10M7 13h10M7 17h6" />
+      </svg>
+      <p className="empty-state-text">{text}</p>
     </div>
   );
 }
@@ -142,20 +200,40 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
       {detail.segments.length === 0 ? (
         <p className="muted small">该会话没有转录记录。</p>
       ) : (
-        <div className="review-transcript">
-          {detail.segments.map((segment) => (
-            <div
-              key={segment.id}
-              className={`line ${segment.channel === "interviewer" ? "interviewer" : "me"}${segment.isEcho ? " echo" : ""}`}
-            >
-              <span className="who">{segment.channel === "interviewer" ? "面试官" : "我"}</span>
-              <span className="what">
-                {segment.text}
-                {segment.isEcho && <em className="echo-tag">回声</em>}
-              </span>
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="legend" aria-label="转录颜色图例">
+            <span className="legend-item">
+              <i className="legend-swatch swatch-interviewer" aria-hidden="true" />
+              面试官
+            </span>
+            <span className="legend-item">
+              <i className="legend-swatch swatch-me" aria-hidden="true" />
+              我
+            </span>
+            <span className="legend-item">
+              <i className="legend-swatch swatch-echo" aria-hidden="true" />
+              回声
+            </span>
+            <span className="legend-item">
+              <i className="legend-swatch swatch-recovered" aria-hidden="true" />
+              补录
+            </span>
+          </div>
+          <div className="review-transcript">
+            {detail.segments.map((segment) => (
+              <div
+                key={segment.id}
+                className={`line ${segment.channel === "interviewer" ? "interviewer" : "me"}${segment.isEcho ? " echo" : ""}`}
+              >
+                <span className="who">{segment.channel === "interviewer" ? "面试官" : "我"}</span>
+                <span className="what">
+                  {segment.text}
+                  {segment.isEcho && <em className="echo-tag">回声</em>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       <h3 className="review-subtitle">回答</h3>

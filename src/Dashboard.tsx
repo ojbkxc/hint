@@ -8,6 +8,7 @@ import SessionCard from "./settings/SessionCard";
 import { useModelManager } from "./settings/useModelManager";
 import { useSessionControl } from "./settings/useSessionControl";
 import { useSettingsForm } from "./settings/useSettingsForm";
+import { deriveStatusTone, statusToneClass } from "./settings/statusTone";
 import SessionReview from "./sessions/SessionReview";
 import { useSessions } from "./sessions/useSessions";
 import { isRecord, pickText } from "./lib/data";
@@ -90,6 +91,8 @@ export default function Dashboard() {
       {banner && (
         <button
           type="button"
+          role="status"
+          aria-live={banner.level === "error" ? "assertive" : "polite"}
           className={`dashboard-banner banner-${banner.level}`}
           onClick={() => setBanner(null)}
           title="点击关闭"
@@ -102,9 +105,11 @@ export default function Dashboard() {
         {TABS.map((item) => (
           <button
             key={item.id}
+            id={`tab-${item.id}`}
             type="button"
             role="tab"
             aria-selected={tab === item.id}
+            aria-controls={`tabpanel-${item.id}`}
             className={`tab${tab === item.id ? " active" : ""}`}
             onClick={() => setTab(item.id)}
           >
@@ -114,10 +119,21 @@ export default function Dashboard() {
       </nav>
 
       {tab === "settings" ? (
-        !form.loaded ? (
-          <p className="muted">正在读取配置…</p>
-        ) : (
-          <div className="dashboard-grid">
+        <div
+          className="tabpanel"
+          role="tabpanel"
+          id="tabpanel-settings"
+          aria-labelledby="tab-settings"
+        >
+          {!form.loaded ? (
+            <div className="dashboard-grid" aria-busy="true">
+              <span className="visually-hidden">正在读取配置</span>
+              {[0, 1, 2, 3].map((key) => (
+                <div key={key} className="skeleton" style={{ height: 160 }} />
+              ))}
+            </div>
+          ) : (
+            <div className="dashboard-grid">
             <ModelCard
               form={form.form}
               apiKey={form.apiKey}
@@ -150,29 +166,42 @@ export default function Dashboard() {
               loadDevices={form.loadDevices}
             />
             <div className="card save-card">
-              <h2>保存</h2>
-              <p className="muted small">
-                模型、资料、回答行为与设备选择都保存在同一份配置里，修改后请点下方按钮。
-                遇到问题时可在日志目录的 <code>logs\hint.log</code> 里查看原因并反馈给开发者。
-              </p>
-              <div className="action-row">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => void form.save()}
-                  disabled={form.busy}
-                >
-                  {form.action === "save" ? "保存中…" : "保存全部配置"}
-                </button>
-                <button type="button" className="ghost" onClick={() => void openLogDir()}>
-                  打开日志目录
-                </button>
+              <div className="card-head">
+                <h2>保存</h2>
               </div>
-              {form.status && <p className="status">{form.status}</p>}
+              <div className="card-body">
+                <p className="muted small">
+                  模型、资料、回答行为与设备选择都保存在同一份配置里，修改后请点下方按钮。
+                  遇到问题时可在日志目录的 <code>logs\hint.log</code> 里查看原因并反馈给开发者。
+                </p>
+                <div className="action-row">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => void form.save()}
+                    disabled={form.busy}
+                  >
+                    {form.action === "save" ? "保存中…" : "保存全部配置"}
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void openLogDir()}>
+                    打开日志目录
+                  </button>
+                </div>
+                {form.status && (
+                  <p className={statusToneClass(deriveStatusTone(form.status))}>{form.status}</p>
+                )}
+              </div>
             </div>
-          </div>
-        )
+            </div>
+          )}
+        </div>
       ) : (
+        <div
+          className="tabpanel"
+          role="tabpanel"
+          id="tabpanel-review"
+          aria-labelledby="tab-review"
+        >
         <SessionReview
           sessions={sessions.sessions}
           loading={sessions.loading}
@@ -188,6 +217,7 @@ export default function Dashboard() {
           onDelete={() => void sessions.remove()}
           onDeleteAll={() => void sessions.removeAll()}
         />
+        </div>
       )}
     </div>
   );

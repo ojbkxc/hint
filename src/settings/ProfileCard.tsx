@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { describeError, isTauri, safeInvoke } from "../lib/tauri";
 import type { Settings } from "./types";
+import { deriveStatusTone, statusToneClass } from "./statusTone";
 
 /** 与后端提示词截断保持一致：简历与项目资料各最多 6000 字。 */
 const IMPORT_LIMIT = 6000;
@@ -65,50 +66,76 @@ export default function ProfileCard({ form, patch }: Props) {
 
   return (
     <section className="card">
-      <h2>资料注入</h2>
-      <label>
-        <span className="field-head">
-          <span>简历</span>
-          <button
-            type="button"
-            className="ghost mini-import"
-            onClick={() => void importFile("resume")}
-            disabled={importing !== ""}
+      <div className="card-head">
+        <h2>资料注入</h2>
+      </div>
+      <div className="card-body">
+        <div className="field">
+          <div className="field-head">
+            <label className="field-label" htmlFor="profile-resume">
+              简历
+            </label>
+            <button
+              type="button"
+              className="ghost mini-import"
+              onClick={() => void importFile("resume")}
+              disabled={importing !== ""}
+            >
+              {importing === "resume" ? "导入中…" : "从文件导入"}
+            </button>
+          </div>
+          <textarea
+            id="profile-resume"
+            className="form-input form-textarea"
+            rows={9}
+            value={form.resume}
+            onChange={(event) => patch({ resume: event.target.value })}
+            placeholder="粘贴简历文本，或点右上角「从文件导入」选择 TXT / MD / DOCX / PDF。简历与项目资料各最多 6000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
+          />
+          <p
+            className={`char-count${form.resume.length > IMPORT_LIMIT ? " is-over" : ""}`}
+            aria-live="polite"
           >
-            {importing === "resume" ? "导入中…" : "从文件导入"}
-          </button>
-        </span>
-        <textarea
-          rows={9}
-          value={form.resume}
-          onChange={(event) => patch({ resume: event.target.value })}
-          placeholder="粘贴简历文本，或点右上角「从文件导入」选择 TXT / MD / DOCX / PDF。简历与项目资料各最多 6000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
-        />
-      </label>
-      <label>
-        <span className="field-head">
-          <span>项目资料</span>
-          <button
-            type="button"
-            className="ghost mini-import"
-            onClick={() => void importFile("projects")}
-            disabled={importing !== ""}
+            {form.resume.length} / {IMPORT_LIMIT}
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="field-head">
+            <label className="field-label" htmlFor="profile-projects">
+              项目资料
+            </label>
+            <button
+              type="button"
+              className="ghost mini-import"
+              onClick={() => void importFile("projects")}
+              disabled={importing !== ""}
+            >
+              {importing === "projects" ? "导入中…" : "从文件导入"}
+            </button>
+          </div>
+          <textarea
+            id="profile-projects"
+            className="form-input form-textarea"
+            rows={7}
+            value={form.projects}
+            onChange={(event) => patch({ projects: event.target.value })}
+            placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。也可从 TXT / MD / DOCX / PDF 导入；最多 6000 字，超出会截断并标注。"
+          />
+          <p
+            className={`char-count${form.projects.length > IMPORT_LIMIT ? " is-over" : ""}`}
+            aria-live="polite"
           >
-            {importing === "projects" ? "导入中…" : "从文件导入"}
-          </button>
-        </span>
-        <textarea
-          rows={7}
-          value={form.projects}
-          onChange={(event) => patch({ projects: event.target.value })}
-          placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。也可从 TXT / MD / DOCX / PDF 导入；最多 6000 字，超出会截断并标注。"
-        />
-      </label>
-      {status && <p className="status">{status}</p>}
-      <p className="muted small">
-        导入的文件只在本机解析（PDF / Word 文本提取全部离线完成），资料不会上传到
-        除你所选模型接口以外的任何地方。
-      </p>
+            {form.projects.length} / {IMPORT_LIMIT}
+          </p>
+        </div>
+
+        {status && <p className={statusToneClass(deriveStatusTone(status))}>{status}</p>}
+        <p className="muted small">
+          导入的文件只在本机解析（PDF / Word 文本提取全部离线完成），资料不会上传到
+          除你所选模型接口以外的任何地方。
+        </p>
+      </div>
     </section>
   );
 }
