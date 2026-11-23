@@ -67,11 +67,11 @@ fn collect(app_data_dir: &Path) -> String {
         } => {
             let _ = writeln!(
                 out,
-                "  状态：下载中（{} {}，{:.1} / {:.1} MB）",
+                "  状态：下载中（{} {}，{} / {}）",
                 step.label(),
                 resource,
-                completed_bytes as f64 / 1_048_576.0,
-                total_bytes as f64 / 1_048_576.0
+                hint_core::diagnostics::format_mb(completed_bytes),
+                hint_core::diagnostics::format_mb(total_bytes)
             );
         }
         hint_stt::ModelStatus::Unprepared {
@@ -80,9 +80,9 @@ fn collect(app_data_dir: &Path) -> String {
         } => {
             let _ = writeln!(
                 out,
-                "  状态：未就绪（已下载 {:.1} MB / 共 {:.1} MB）",
-                downloaded_bytes as f64 / 1_048_576.0,
-                total_bytes as f64 / 1_048_576.0
+                "  状态：未就绪（已下载 {} / 共 {}）",
+                hint_core::diagnostics::format_mb(downloaded_bytes),
+                hint_core::diagnostics::format_mb(total_bytes)
             );
             if downloaded_bytes == 0 {
                 let _ = writeln!(out, "  [阻塞] 语音模型尚未下载，无法开始面试");
@@ -165,12 +165,12 @@ fn collect(app_data_dir: &Path) -> String {
     let _ = writeln!(
         out,
         "  麦克风：{}",
-        device_label(&settings.mic_device, "系统默认")
+        hint_core::diagnostics::device_label(&settings.mic_device, "系统默认")
     );
     let _ = writeln!(
         out,
         "  系统输出：{}",
-        device_label(&settings.output_device, "系统默认")
+        hint_core::diagnostics::device_label(&settings.output_device, "系统默认")
     );
     let _ = writeln!(out);
 
@@ -296,34 +296,13 @@ fn collect(app_data_dir: &Path) -> String {
     out
 }
 
-/// 配置里的设备 id 转成可读文本（不打印完整端点 ID，避免报告过长）。
-fn device_label(configured: &str, fallback: &str) -> String {
-    if configured.trim().is_empty() {
-        fallback.to_string()
-    } else {
-        "已指定（具体设备可在设置页查看）".to_string()
-    }
-}
-
 /// 从日志尾部取 WARN/ERROR 行。
+///
+/// 筛选与截断规则在 `hint_core::diagnostics::tail_warnings`（那边有单测，
+/// 壳层这边只在 CI 上过 clippy/编译，测不了）。
 fn tail_warnings(path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let lines: Vec<&str> = text.lines().collect();
-    let start = lines.len().saturating_sub(max_lines);
-    let mut picked: Vec<String> = lines[start..]
-        .iter()
-        .filter(|line| line.contains(" WARN ") || line.contains(" ERROR "))
-        .map(|line| {
-            // 去掉时间戳前缀里的过长部分，只留「时间 + 级别 + 内容」。
-            let trimmed = line.trim();
-            trimmed.chars().take(160).collect::<String>()
-        })
-        .collect();
-    // 只保留最后 15 条，够定位问题又不至于淹没结论。
-    if picked.len() > 15 {
-        picked = picked.split_off(picked.len() - 15);
-    }
-    Ok(picked)
+    Ok(hint_core::diagnostics::tail_warnings(&text, max_lines))
 }
 
 /// 尝试把输出挂到调用方控制台。

@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod diagnostics;
 pub mod error;
 pub mod import;
 pub mod llm;
