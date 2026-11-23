@@ -224,9 +224,21 @@ fn build_stream(
                 // 默认设备切换时 CPAL 已自动把流迁移到新设备，无需重建。
                 if error.kind() == cpal::ErrorKind::DeviceChanged {
                     tracing::debug!("麦克风设备已切换，流已自动跟随：{error}");
-                } else {
-                    let _ = stream_errors.send(format!("{error}"));
+                    return;
                 }
+                // WASAPI 的瞬时缓冲欠载/过载（"A buffer underrun or overrun
+                // occurred."）在真机上高频出现且流仍然存活：cpal 在回调里
+                // 报这个错只是提示丢了一小段，不代表设备失效。把它当通道
+                // 失败走「重建流」会造成重连风暴（实测 41 次 underrun 对应
+                // 43 次全量重开流，会话因 5 连失败超 15 秒宽限被整体判死）。
+                // 这里降为 debug：流不死就继续跑，下一帧数据照常到达。
+                if error.kind() == cpal::ErrorKind::Other
+                    && error.to_string().to_ascii_lowercase().contains("buffer underrun or overrun")
+                {
+                    tracing::debug!("麦克风缓冲瞬时欠载（流仍在运行，忽略）：{error}");
+                    return;
+                }
+                let _ = stream_errors.send(format!("{error}"));
             },
             Some(Duration::from_secs(10)),
         )

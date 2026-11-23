@@ -236,13 +236,20 @@ impl ModelManager {
         self.store_progress(None);
         let result = self.prepare_inner(on_progress, cancel);
         if let Err(error) = &result {
-            // 失败原因必须落日志：以前失败时只清进度，日志里没有任何线索。
-            tracing::error!(
-                model = assets::MODEL_ID,
-                reason = ?error.reason(),
-                %error,
-                "语音资产准备失败，进度已重置"
-            );
+            if error.is_cancelled() {
+                // 用户主动取消不是失败：别按 ERROR 级落日志（旧日志会把
+                // 「下载已取消」打成「语音资产准备失败，进度已重置」，
+                // 状态页与日志口径互相矛盾），也别把刚下的 `.part` 记成失败。
+                tracing::info!("语音资产下载已取消，已下载部分保留在 .part 中");
+            } else {
+                // 失败原因必须落日志：以前失败时只清进度，日志里没有任何线索。
+                tracing::error!(
+                    model = assets::MODEL_ID,
+                    reason = ?error.reason(),
+                    %error,
+                    "语音资产准备失败，进度已重置"
+                );
+            }
             // 失败/取消后清掉进度快照，状态退回 `Unprepared`。
             self.store_progress(None);
         }

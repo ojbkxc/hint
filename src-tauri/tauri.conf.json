@@ -35,7 +35,7 @@
         "skipTaskbar": true,
         "shadow": false,
         "focus": false,
-        "visible": false
+        "visible": true
       },
       {
         "label": "capture",
