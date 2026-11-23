@@ -36,7 +36,7 @@ hint 是**本地桌面工具**，不是服务端产品，安全模型按本机�
 - **不采集、不上传音频与简历**。原始音频不落盘：采集 → 分段 → WAV 内存 → 本地 sidecar 推理，全程无文件写入。简历与项目资料、会话记录只存在本机。
 - **数据外发的唯一出口**是你自己在设置页配置的模型接口。除了这个接口，不向任何第三方发送数据。
 - **API Key 存在 Windows 凭据管理器**（`keyring`），不写配置文件、不进日志；界面回显只给掩码。
-- **CSP 当前未启用**：`src-tauri/tauri.conf.json` 里是 `csp: null`。这是已知取舍——应用只加载本地打包资源，模型返回文本经 React 转义后渲染，当前不引入远程脚本或远程样式；代价是如果渲染层出现 XSS 类缺陷，没有 CSP 兜底。后续版本会补最小可用 CSP（只放行自身资源与模型接口所需的连接），补上后会更新本节。
+- **CSP 已启用（最小集）**：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost`。脚本锁死 `self`、无 `unsafe-eval`；样式保留 `unsafe-inline` 是因为电平条宽度、下载进度百分比、浮层不透明度都是运行时内联样式（无法用静态 CSS 表达百分比），这是收窄后的必要面，不是疏漏。
 
 ## 威胁模型
 

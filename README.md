@@ -188,7 +188,7 @@ Base URL 输入框失焦时自动规范化，常见写法都能直接工作：
 ## 已知取舍与限制
 
 - **截图问答未启用（M5）**：只预留了窗口与命令，`Ctrl+Shift+S` 仅提示。
-- **CSP 未启用**：`tauri.conf.json` 中 `csp: null`。当前只加载本地打包资源，文本经 React 转义；后续版本再补最小 CSP。
+- **CSP 已启用（最小集）**：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost`。`'unsafe-inline'` 仅用于 style（电平条宽度、进度百分比、浮层不透明度是运行时内联样式），脚本仍锁死 `self`；只加载本地打包资源，文本经 React 转义。
 - **无自动更新**：需要手动下载新版本安装包覆盖安装。
 - **仅 Windows**：仅支持 Windows 10/11 x64，NSIS 安装包；macOS 的音频采集与权限模型差异过大，不在计划内。
 - **模型不随包分发**：语音模型约 241 MB，首次使用时按需下载，下载源为 huggingface.co / hf-mirror.com。模型存放在 `%LOCALAPPDATA%\hint-models`（不在应用数据目录内），**卸载程序不会删除它**——升级、卸载重装都不需要重新下载 241 MB。从旧版本升级时会自动把已下载的模型搬过去，无需任何操作。
