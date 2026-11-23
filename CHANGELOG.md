@@ -4,6 +4,19 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.14] - 2026-11-24
+
+### 修复
+
+- **复盘页「补录」图例成死 UI（上线以来）**：断线恢复补录的段落只在浮层事件带 `recovered:true`，写库时丢字段——`segments` 表没有该列。V2 迁移（`ALTER TABLE ... ADD COLUMN recovered`，幂等由 `user_version` 保证）；实时/补录两条写库路径分别传 false/true；前端 `normalizeSessionDetail` 补归一化；复盘页输出 `recovered` 类、「补录」标签与左指示条样式。迁移幂等测试改为断言 `MIGRATIONS.len()`，后续加迁移不再跟着改。
+- **启动竞态吞错误态**：`useSessionControl.start` 成功返回只保护 `listening`，后端先发 `error` 事件时被覆盖回 `connecting`（只留文案不留状态）。保护面对齐失败分支。两个把旧行为固化成断言的测试同步改为修复后语义。
+- **复盘列表「时间未知」兜底不可达**：meta 由「模型缺失回落『模型未知』+ 时长」拼接，模型回落使 meta 恒非空。改为时长缺失直接显示「时间未知」。
+
+### 新增
+
+- **CSP 最小集启用**（README/SECURITY 的承诺兑现）：生产 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost`；dev 额外放行 `localhost:1420` 与 ws（Vite HMR）。已核实无可破坏面：无 asset: 协议引用、无 canvas 导出、无前端 fetch、dist 无 eval。
+- **前端测试第二波**（+150 用例，总 216）：AnswerPanel 26、TranscriptPanel 9、useAutoScroll 10、useSessions 20、SessionReview 20、useSessionControl 19、useModelManager 21、statusTone 25；整体覆盖率 16.7%→50.7%，新覆盖文件 95–100%。两条 hook 关键分支完成「改坏必红」变异验证。
+
 ## [1.0.13] - 2026-11-24
 
 ### 修复
@@ -16,9 +29,6 @@
 
 - clippy `-D warnings` 清零：17 处既有写法修复（collapsible_if let-chains 折叠、needless_borrow、question_mark、manual_pattern_char_comparison、manual_is_multiple_of、chunks_exact→as_chunks、type_complexity 提 `DispatchDone` 别名）。
 - cargo-audit 加入 CI 并清零（zip/lopdf 已升级；url/cookie 带理由豁免）。
-
-## [1.0.14-unreleased 以来追加]
-- 前端组件与 hook 测试第二波：AnswerPanel / TranscriptPanel / useSessions / useSessionControl / useModelManager / statusTone / useAutoScroll（覆盖率与用例数见 CI）。
 
 ## [1.0.12] - 2026-11-23
 
