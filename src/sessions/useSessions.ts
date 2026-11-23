@@ -20,11 +20,15 @@ export function useSessions(enabled: boolean) {
   const [notice, setNotice] = useState("");
   // 详情请求序号：快速连点两条会话时，只接受最后一次的结果。
   const detailRequest = useRef(0);
+  // 列表请求序号：切 Tab 与手动刷新可能并发，旧响应不能覆盖新列表。
+  const listRequest = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = ++listRequest.current;
     setLoading(true);
     setError("");
     const result = await safeInvoke<unknown>("list_sessions");
+    if (listRequest.current !== requestId) return;
     if (!result.ok) {
       setSessions([]);
       setError(`读取会话失败：${result.error}`);
@@ -61,7 +65,8 @@ export function useSessions(enabled: boolean) {
     setNotice("");
     const result = await safeInvoke<unknown>("export_session_markdown", { id: selectedId });
     if (!result.ok) {
-      setNotice(`导出失败：${result.error}`);
+      // 后端错误已带「导出失败：」前缀，剥掉避免双重前缀。
+      setNotice(`导出失败：${stripPrefix(result.error, "导出失败：")}`);
       return;
     }
     const markdown = normalizeMarkdown(result.data);
@@ -84,7 +89,8 @@ export function useSessions(enabled: boolean) {
     setNotice("");
     const result = await safeInvoke<unknown>("delete_session", { id: selectedId });
     if (!result.ok) {
-      setNotice(`删除失败：${result.error}`);
+      // 后端错误是「删除会话失败：…」，这里的前缀是「删除失败：」。
+      setNotice(`删除失败：${stripPrefix(result.error, "删除会话失败：")}`);
       return;
     }
     setNotice("会话已删除");
@@ -107,7 +113,7 @@ export function useSessions(enabled: boolean) {
     setNotice("");
     const result = await safeInvoke<unknown>("delete_all_sessions");
     if (!result.ok) {
-      setNotice(`清空失败：${result.error}（若后端尚未提供该命令，请单条删除）`);
+      setNotice(`清空失败：${result.error}`);
       return;
     }
     setNotice(`全部 ${count} 条会话记录已清空`);
@@ -136,4 +142,10 @@ export function useSessions(enabled: boolean) {
 function safeFilename(id: string): string {
   const cleaned = id.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "hint-session";
+}
+
+/** 后端错误里已含同名中文前缀时剥掉，避免「导出失败：导出失败：…」。 */
+function stripPrefix(text: string, prefix: string): string {
+  const stripped = text.startsWith(prefix) ? text.slice(prefix.length) : text;
+  return stripped.trim() || text.trim();
 }

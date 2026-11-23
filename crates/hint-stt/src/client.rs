@@ -186,7 +186,14 @@ impl WorkerClient {
         // 结束，拖慢「结束面试」。这里先拿结果、尽快释放锁，再停止进程。
         // `abort()` 置位后 post_wav 会在下一次轮询中止（无需等待 120s 超时）。
         let outcome = post_wav(running, wav, language, &self.abort);
-        let dead = outcome.is_err().then(|| guard.take()).flatten();
+        // 请求层面的拒绝（WAV 格式不符、语言不支持）说明 worker 本身是健康的：
+        // 顺手丢弃它会让下一段音频重新冷启（加载 239MB 模型约 2.5 秒），
+        // 实时提词会因此明显卡顿。其余失败一律丢弃，下次冷启。
+        let discard = match &outcome {
+            Ok(_) => false,
+            Err(error) => !matches!(error, SttError::InvalidInput { .. }),
+        };
+        let dead = discard.then(|| guard.take()).flatten();
         drop(guard);
         if let Some(mut dead) = dead {
             // 任何失败（含被 abort 打断）都丢弃 worker：状态未知，下次冷启。
@@ -524,6 +531,13 @@ fn post_wav(
                 if response.len() > RESPONSE_LIMIT {
                     return Err(SttError::Worker {
                         message: "worker response exceeded its size limit".into(),
+                    });
+                }
+                // 慢速滴流也要受总超时约束：只在 WouldBlock 分支查截止时间的话，
+                // 每 250ms 只吐一个字节的连接能把持锁状态拖到响应体上限。
+                if Instant::now() >= deadline {
+                    return Err(SttError::Worker {
+                        message: format!("worker did not answer within {INFERENCE_TIMEOUT:?}"),
                     });
                 }
             }

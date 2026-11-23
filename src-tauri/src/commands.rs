@@ -1,7 +1,9 @@
 //! Tauri 命令层。所有命令统一返回 `Result<_, String>`，绝不 panic。
 //!
 //! 规则：async 命令里不长时间持锁；STT / 下载等阻塞 API 一律走
-//! `spawn_blocking`；事件发送失败只记日志。
+//! `spawn_blocking`；读写配置、凭据管理器与 SQLite 的同步命令统一标
+//! `(async)`，由运行时线程执行，避免在 UI 线程上做阻塞 IO 把界面卡住。
+//! 事件发送失败只记日志。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,12 +23,12 @@ pub(crate) const CAPTURE_WINDOW: &str = "capture";
 // 设置与凭证（M0，保持不变）
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     Ok(Settings::load(&state.settings_path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -46,12 +48,12 @@ pub fn save_settings(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_api_key(provider: String, key: String) -> Result<(), String> {
     secret::save(&provider, &key).map_err(|error| format!("写入 Windows 凭据失败：{error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn has_api_key(provider: String) -> Result<bool, String> {
     Ok(secret::has(&provider))
 }
@@ -83,11 +85,11 @@ pub async fn test_llm(
     // 设置页未保存时可以用当前表单直接测试；不传则沿用已保存配置。
     let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
     let provider = settings.provider.as_str().to_string();
-    // 表单里刚输入、还没点「保存」的 Key 也能直接用于测试。
+    // 表单里刚输入、还没点「保存全部配置」的 Key 也能直接用于测试。
     let key = resolve_api_key(
         api_key,
         &provider,
-        "当前接口还没有保存 API Key：请在上方输入框粘贴 Key 后点「保存」，\
+        "当前接口还没有保存 API Key：请在上方输入框粘贴 Key 后点「保存全部配置」，\
          或直接点「测试连接」自动保存并测试",
     )?;
     let system = settings.system_prompt();
@@ -185,7 +187,7 @@ fn format_time(ms: i64) -> String {
 }
 
 /// 会话列表：拍平成前端 `SessionSummary` 的形状。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     let store = lock(&state.store);
     let summaries = store
@@ -209,7 +211,7 @@ pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
 }
 
 /// 会话详情：通道名映射为前端约定的 `me` / `interviewer`。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, String> {
     let session_id = parse_id(&id)?;
     let store = lock(&state.store);
@@ -253,7 +255,7 @@ pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, S
     }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let session_id = parse_id(&id)?;
     let store = lock(&state.store);
@@ -262,7 +264,7 @@ pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result
         .map_err(|error| format!("导出失败：{error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result<usize, String> {
     // 启动中的会话记录已经落库，但 state.session 仍为空；此时清空会把
     // 正在启动的会话一起删掉，后续写入全部失败。
@@ -275,7 +277,7 @@ pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result
         .map_err(|error| format!("清空会话记录失败：{error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_session(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -353,7 +355,7 @@ pub async fn regenerate_answer(app: AppHandle) -> Result<(), String> {
 }
 
 /// 打开日志目录，便于用户把 `hint.log` 发给支持。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
     let dir = &state.log_dir;
     if !dir.is_dir() {
@@ -396,7 +398,7 @@ pub async fn list_audio_devices() -> Result<Value, String> {
 // 语音模型下载
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn model_status(state: State<'_, AppState>) -> Result<Value, String> {
     let status = state.model.status();
     serde_json::to_value(status).map_err(|error| format!("序列化模型状态失败：{error}"))

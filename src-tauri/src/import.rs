@@ -12,6 +12,9 @@ use hint_core::import::{clean_extracted, decode_text, docx_text};
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
 /// 返回给前端的文本上限（提示词本身只取前 6000 字符）。
 const MAX_CHARS: usize = 200_000;
+/// `word/document.xml` 解压后的上限：20 MB 的压缩包可以膨胀到数 GB，
+/// 必须先限量再读，否则解压炸弹会把内存吃满。
+const MAX_DOCX_XML_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn document_text(path: &str) -> Result<String, String> {
     let path_buf = Path::new(path);
@@ -68,13 +71,23 @@ fn read_docx(path: &Path) -> Result<String, String> {
     let file = std::fs::File::open(path).map_err(|error| format!("打开 DOCX 失败：{error}"))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|error| format!("解析 DOCX 失败（文件可能已损坏）：{error}"))?;
-    let mut entry = archive
+    let entry = archive
         .by_name("word/document.xml")
         .map_err(|_| "DOCX 里缺少 word/document.xml（文件可能已损坏）".to_string())?;
-    let mut xml = String::new();
+    // 多读 1 字节只用于判断是否超限，正常文件读不满这个上限。
+    let mut bytes = Vec::new();
     entry
-        .read_to_string(&mut xml)
+        .take(MAX_DOCX_XML_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("读取 DOCX 内容失败：{error}"))?;
+    if bytes.len() as u64 > MAX_DOCX_XML_BYTES {
+        return Err(format!(
+            "DOCX 内容过大（解压后超过 {} MB）：请在 Word 中另存为 TXT 后再导入",
+            MAX_DOCX_XML_BYTES / 1_048_576
+        ));
+    }
+    let xml = String::from_utf8(bytes)
+        .map_err(|_| "DOCX 内容不是合法 UTF-8（文件可能已损坏）".to_string())?;
     Ok(docx_text(&xml))
 }
 

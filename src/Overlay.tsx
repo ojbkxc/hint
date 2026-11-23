@@ -16,6 +16,7 @@ export default function Overlay() {
     transcript,
     answer,
     answerHistory,
+    answeredTotal,
     levels,
     speech,
     status,
@@ -79,6 +80,19 @@ export default function Overlay() {
     if (error) setLocalError(`隐藏浮层失败：${error}`);
   }, [hideOverlay]);
 
+  // 回调必须稳定：AnswerPanel / TranscriptPanel 是 memo 组件，
+  // 每次电平事件都换新函数会让 memo 完全失效。
+  const handleRegenerate = useCallback(async (): Promise<void> => {
+    setLocalError("");
+    const error = await regenerate();
+    if (error) setLocalError(`重新生成失败：${error}`);
+  }, [regenerate]);
+
+  const handleClear = useCallback(() => {
+    setLocalError("");
+    clearAnswer();
+  }, [clearAnswer]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape" || event.repeat) return;
@@ -88,12 +102,6 @@ export default function Overlay() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleHide]);
-
-  async function handleRegenerate() {
-    setLocalError("");
-    const error = await regenerate();
-    if (error) setLocalError(`重新生成失败：${error}`);
-  }
 
   return (
     <div className="overlay-root">
@@ -119,11 +127,9 @@ export default function Overlay() {
       <AnswerPanel
         answer={answer}
         history={answerHistory}
+        answeredTotal={answeredTotal}
         onRegenerate={handleRegenerate}
-        onClear={() => {
-          setLocalError("");
-          clearAnswer();
-        }}
+        onClear={handleClear}
         onDismissError={dismissAnswerError}
       />
 
@@ -139,6 +145,8 @@ export default function Overlay() {
         <button
           key={toast.key}
           type="button"
+          role={toast.level === "error" ? "alert" : "status"}
+          aria-live={toast.level === "error" ? "assertive" : "polite"}
           className={`overlay-toast toast-${toast.level}`}
           onClick={dismissToast}
           title={`${toast.message}（点击关闭）`}

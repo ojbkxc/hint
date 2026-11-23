@@ -24,6 +24,11 @@ export function useSettingsForm() {
   const [models, setModels] = useState<string[]>([]);
   // 模型列表请求序号：切换协议/Base URL 后，旧请求的响应必须丢弃。
   const modelsRequest = useRef(0);
+  // 当前协议的最新值。保存/测试要等后端几十秒，回来时表单可能已经切到
+  // 别的协议；用它可以判断「这次结果还能不能写回 UI」。渲染期赋值保证
+  // 同一个事件循环里拿到的就是最新值（effect 会被推迟到下一个任务）。
+  const providerRef = useRef<Settings["provider"]>(form.provider);
+  providerRef.current = form.provider;
 
   useEffect(() => {
     let disposed = false;
@@ -84,20 +89,23 @@ export function useSettingsForm() {
     setBusy(true);
     setAction("save");
     setStatus("");
+    // 本次保存针对的协议；期间切协议后不能再把 Key/状态写到新协议头上。
+    const providerAtStart = form.provider;
     try {
       // 表单里填了 Key 就随「保存全部配置」一并保存，避免用户以为还要
       // 单独点一个 Key 保存按钮（该按钮已移除）。
       const pendingKey = apiKey.trim();
       if (pendingKey) {
         const savedKey = await safeInvoke("save_api_key", {
-          provider: form.provider,
+          provider: providerAtStart,
           key: pendingKey,
         });
         if (!savedKey.ok) {
           setStatus(`保存 API Key 失败：${savedKey.error}`);
           return false;
         }
-        setApiKey("");
+        // 期间切了协议：输入框里现在可能是新协议刚粘的 Key，不能清。
+        if (providerRef.current === providerAtStart) setApiKey("");
       }
       const settings: Settings = {
         ...form,
@@ -109,7 +117,13 @@ export function useSettingsForm() {
         setStatus(`保存失败：${result.error}`);
         return false;
       }
-      const present = await hasKeyFor(form.provider);
+      if (providerRef.current !== providerAtStart) {
+        setStatus(
+          `已按「${providerLabel(providerAtStart)}」保存配置；期间切换了协议，当前协议尚未保存，请再点一次「保存全部配置」。`,
+        );
+        return true;
+      }
+      const present = await hasKeyFor(providerAtStart);
       setStatus(
         present
           ? "配置已保存"
@@ -174,6 +188,7 @@ export function useSettingsForm() {
     setBusy(true);
     setAction("test");
     setStatus("");
+    const providerAtStart = form.provider;
     try {
       // 把当前表单一起发过去：改了 baseUrl/model 不保存也能直接测。
       // 表单里刚输入、尚未保存的 Key 也直接带上，不需要先点「保存」。
@@ -198,15 +213,23 @@ export function useSettingsForm() {
       const data = result.data as { text?: string; model?: string } | null;
       const text = typeof data?.text === "string" ? data.text : "";
       const model = typeof data?.model === "string" ? data.model : form.model;
+      // 测试期间切了协议：这份结果属于旧协议，不能把 Key 状态写到新协议上，
+      // 也不能清掉用户为新协议刚粘的 Key。
+      if (providerRef.current !== providerAtStart) {
+        setStatus(
+          `连接成功，模型：${model}（测试用的是「${providerLabel(providerAtStart)}」，期间已切换协议，未自动保存 Key）`,
+        );
+        return { text, model };
+      }
       // 测试成功且表单里有 Key：顺手保存，减少「测通了但没存」的第二次操作。
       if (pendingKey) {
         const savedKey = await safeInvoke("save_api_key", {
-          provider: form.provider,
+          provider: providerAtStart,
           key: pendingKey,
         });
         if (savedKey.ok) {
           setApiKey("");
-          await hasKeyFor(form.provider);
+          await hasKeyFor(providerAtStart);
           setStatus(`连接成功，模型：${model}；API Key 已保存`);
           return { text, model };
         }
@@ -250,4 +273,16 @@ export function useSettingsForm() {
     models,
     loadDevices,
   };
+}
+
+/** 协议中文短名；只在提示文案里用，与设置页下拉的写法保持一致。 */
+function providerLabel(provider: Settings["provider"]): string {
+  switch (provider) {
+    case "anthropic":
+      return "Anthropic Messages";
+    case "gemini":
+      return "Gemini generateContent";
+    default:
+      return "OpenAI 兼容";
+  }
 }

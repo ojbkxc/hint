@@ -23,10 +23,17 @@ export type AnswerState = {
   error: string;
   /** 是否可以点「重试」恢复（false 时通常是配置问题）。 */
   retryable: boolean;
+  /**
+   * 用户在流式过程中点了「清空」：本轮剩余增量与最终全文都不再上屏，
+   * 直到下一轮 reset 帧。否则答案会从半句处重新长出来。
+   */
+  muted: boolean;
 };
 
 /** 本场已归档的问答，用于浮层历史回看。 */
 export type AnswerHistoryEntry = {
+  /** 归档序号（从 1 起单调递增），用作渲染 key，不受数组截断影响。 */
+  id: number;
   question: string;
   text: string;
   model: string;
@@ -63,6 +70,9 @@ export type SessionState =
   | "error";
 
 export const MAX_TRANSCRIPT_LINES = 6;
+
+/** 浮层保留的历史问答条数上限（「本场已答 N 题」用独立计数器，不受此上限影响）。 */
+export const MAX_ANSWER_HISTORY = 10;
 
 /** 与 integrator 对齐的事件契约。 */
 export const HINT_EVENTS = {

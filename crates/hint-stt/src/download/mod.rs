@@ -188,7 +188,10 @@ impl ModelManager {
     fn downloaded_bytes(&self, manifest: &manifest::Manifest) -> u64 {
         let mut total = 0;
         for file in assets::ALL_FILES {
-            if manifest::find_record(manifest, file.target).is_some() {
+            // 判据必须与 `prepare_inner` 一致（记录 + 摘要 + 大小）：只用
+            // `find_record` 会把摘要对不上的旧文件算成「已下载」，进度条
+            // 显示接近 100% 却仍要整份重下。
+            if manifest::is_installed(&self.layout, manifest, file) {
                 if let Ok(meta) = fs::metadata(self.layout.file_path(file.target)) {
                     total += meta.len().min(file.bytes);
                     continue;
@@ -226,7 +229,7 @@ impl ModelManager {
             .is_err()
         {
             return Err(SttError::Config {
-                message: "a download is already running".into(),
+                message: "语音模型下载已在进行中，请等当前任务结束或先取消".into(),
             });
         }
         let guard = DownloadingGuard(&self.downloading);
@@ -609,6 +612,11 @@ fn transfer<F>(
 where
     F: Fn(u64, Option<u64>, &str),
 {
+    // 建连/发请求前先响应取消：连接超时最长 15 秒，用户点「取消」后
+    // 不该还要再等一次握手。
+    if cancel.load(Ordering::Relaxed) {
+        return Err(cancelled());
+    }
     let mut offset = part_len(part)?;
     if offset > file.bytes {
         remove_quietly(part);
@@ -649,12 +657,16 @@ where
     let mut resumed = false;
     match status {
         206 => {
-            // 校验 Content-Range 与清单一致。
+            // 校验 Content-Range：起点必须正是续传点，终点不能越过文件尾。
+            // 早期要求 `end == bytes - 1`，于是「只回一段区间」的 CDN/代理
+            // （代理常把大文件切成若干段）会让 239MB 的进度被整份删掉重下；
+            // 区间偏短其实只是本次读不满，读完按网络中断重试即可继续续传。
             let content_range = response.header("content-range").map(str::to_string);
             let consistent = parse_content_range(content_range.as_deref()).is_some_and(|range| {
                 offset > 0
                     && range.start == offset
-                    && range.end == file.bytes - 1
+                    && range.end >= range.start
+                    && range.end < file.bytes
                     && range.total.is_none_or(|total| total == file.bytes)
             });
             if !consistent {

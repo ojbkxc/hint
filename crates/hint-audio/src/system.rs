@@ -78,7 +78,16 @@ pub(crate) fn run(
                 );
                 let started = Instant::now();
                 match session.run(&rt) {
-                    Ok(()) => break,
+                    Ok(SessionEnd::Stopped) => break,
+                    Ok(SessionEnd::Migrated) => {
+                        // 用户换了默认输出设备：走「警告」而不是「错误」，
+                        // 也不计入连续失败——跟着端点迁移是正常路径，
+                        // 插拔几次耳机就把引擎判死是错的。
+                        rt.warning("系统默认输出设备已变更，正在切换到新的输出设备继续采集");
+                        failures = 0;
+                        first_failure_at = None;
+                        degraded_hinted = false;
+                    }
                     Err(message) => {
                         rt.error(format!("系统声采集中断：{message}"));
                         // 运行足够久说明设备本身没问题，重新计数从 1 开始。
@@ -197,9 +206,20 @@ struct LoopbackSession {
     default_at_open: Option<String>,
 }
 
+/// 会话正常结束的原因。
+///
+/// 用户切换系统默认输出设备是**正常路径**：必须和「会话失效」区分开，
+/// 否则一次插拔耳机就会被记成一次通道失败（并弹一条「采集中断」）。
+enum SessionEnd {
+    /// 收到停止请求。
+    Stopped,
+    /// 系统默认输出设备变了，需要按新端点重建会话。
+    Migrated,
+}
+
 impl LoopbackSession {
-    /// 读取循环；`Ok(())` 表示收到停止请求，`Err` 表示会话失效需重建。
-    fn run(&mut self, rt: &Runtime) -> std::result::Result<(), String> {
+    /// 读取循环；`Ok` 表示正常结束，`Err` 表示会话失效需重建。
+    fn run(&mut self, rt: &Runtime) -> std::result::Result<SessionEnd, String> {
         let mut pipeline = ChannelPipeline::new(
             Channel::Interviewer,
             self.rate,
@@ -233,7 +253,7 @@ impl LoopbackSession {
                 }
                 // 默认输出设备被用户切换时，主动迁移到新端点。
                 if self.follow_default && default_render_id_changed(&self.device) {
-                    return Err("系统默认输出设备已变更，正在迁移采集端点".to_string());
+                    return Ok(SessionEnd::Migrated);
                 }
                 // 切换默认设备后，旧 loopback 端点常常仍然「存活」但只回静音；
                 // 若显式指定了设备或回退到了通信设备（不跟随默认），这里检测到
@@ -297,7 +317,7 @@ impl LoopbackSession {
             }
         }
 
-        Ok(())
+        Ok(SessionEnd::Stopped)
     }
 
     /// 读空当前所有音频包；返回是否读到非空数据。
@@ -615,9 +635,11 @@ fn init_with_attempt(
     let (_default_period, min_period) = client
         .get_device_period()
         .map_err(|e| format!("获取设备周期失败：{e}"))?;
-    // 事件驱动共享模式要求 buffer 时长不小于最小周期。部分 USB/蓝牙设备
-    // 会报出异常大的周期，clamp 到 1 秒以内，避免申请超大缓冲。
-    let buffer_duration = min_period.clamp(10_000, 10_000_000);
+    // 事件驱动共享模式只要求 buffer 不小于最小周期；但贴着最小值申请等于
+    // 零余量：采集线程晚一两个调度周期（蓝牙/USB 抖动、系统忙）WASAPI 就会
+    // 覆盖未读的包，表现为「偶发漏字」而不是报错。取 min_period 与 200ms 的
+    // 较大者，异常大的上报周期仍封顶 1 秒。
+    let buffer_duration = min_period.max(2_000_000).clamp(10_000, 10_000_000);
 
     let (format, channels, sample, autoconvert) = match attempt {
         FormatAttempt::MonoFloat => (

@@ -143,6 +143,40 @@ fn worker_message(message: &str) -> String {
     message.to_string()
 }
 
+/// 请求层面的英文校验错误 → 用户可读的中文。
+///
+/// 这些文案来自 `wav.rs` / `client.rs` / worker 的 400 响应；以前直接
+/// 走 `Display`，界面会出现「语音识别失败，稍后自动重试：invalid input:
+/// audio must be mono」这种半句英文。
+fn invalid_input_message(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("shorter than") && lower.contains("wav header") {
+        return "录音太短，还没有一个完整的 WAV 头".to_string();
+    }
+    if lower.contains("must be mono") {
+        return "录音必须是单声道".to_string();
+    }
+    if lower.contains("must be 16 khz") {
+        return "录音采样率必须是 16 kHz".to_string();
+    }
+    if lower.contains("must be pcm16") {
+        return "录音必须是 16 位 PCM".to_string();
+    }
+    if lower.contains("not a canonical") || lower.contains("runs past the end") {
+        return "录音不是标准 WAV 文件，或数据长度越界".to_string();
+    }
+    if lower.contains("empty or odd") {
+        return "录音数据为空或不是整帧".to_string();
+    }
+    if lower.contains("second limit") {
+        return "单段录音超过时长上限".to_string();
+    }
+    if lower.contains("unsupported speech language") {
+        return "不支持的识别语言".to_string();
+    }
+    format!("录音或请求格式不被接受（{message}）")
+}
+
 impl SttError {
     /// 构造网络错误并自动脱敏消息。
     pub fn network(reason: FailureReason, message: impl Into<String>, status: Option<u16>) -> Self {
@@ -195,6 +229,9 @@ impl SttError {
                     format!("配置错误：{message}")
                 }
             }
+            // 录音/请求格式问题会直接显示在识别状态栏，必须是中文。
+            SttError::InvalidInput { message } => invalid_input_message(message),
+            SttError::Json { message } => format!("内部数据格式错误（{message}）"),
             other => other.to_string(),
         }
     }
@@ -572,6 +609,25 @@ mod tests {
         };
         assert!(error.is_cancelled());
         assert_eq!(error.user_message(), "下载已取消");
+    }
+
+    #[test]
+    fn invalid_input_messages_are_chinese() {
+        let mono = SttError::InvalidInput {
+            message: "audio must be mono".into(),
+        };
+        assert_eq!(mono.user_message(), "录音必须是单声道");
+        let odd = SttError::InvalidInput {
+            message: "WAV data length is empty or odd".into(),
+        };
+        assert!(odd.user_message().contains("整帧"), "{}", odd.user_message());
+        // 未覆盖的文案保留原文，但带中文前缀，不再出现 "invalid input:"。
+        let other = SttError::InvalidInput {
+            message: "weird case".into(),
+        };
+        let shown = other.user_message();
+        assert!(shown.starts_with("录音或请求格式不被接受"), "{shown}");
+        assert!(!shown.contains("invalid input"), "{shown}");
     }
 
     #[test]

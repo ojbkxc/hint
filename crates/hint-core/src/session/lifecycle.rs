@@ -99,8 +99,11 @@ impl LifecycleQueue {
         // 覆盖排队槽：中间意图不需要真的执行，最后意图才是用户要的结果。
         self.pending = Some(dir);
         if self.in_flight.is_none() {
-            let front = self.pending.take().expect("刚入队，队首必然存在");
-            return LifecycleAction::Run(front);
+            // 上一行刚写入，这里必然取得到；不用 `expect`，非测试代码不留
+            // panic 路径（`panic = "abort"` 下 catch_unwind 也兜不住）。
+            if let Some(front) = self.pending.take() {
+                return LifecycleAction::Run(front);
+            }
         }
         LifecycleAction::Queued
     }

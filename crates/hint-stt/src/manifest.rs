@@ -197,11 +197,13 @@ pub fn find_record<'a>(manifest: &'a Manifest, target: &str) -> Option<&'a Verif
 
 /// `target` 是否已经安装就绪（快路径）。
 pub fn is_installed(layout: &Layout, manifest: &Manifest, file: &RemoteFile) -> bool {
-    matches_record(
-        find_record(manifest, file.target),
-        &layout.file_path(file.target),
-        file.bytes,
-    )
+    let entry = find_record(manifest, file.target);
+    // 记录必须指向清单**当前**期望的摘要：只比大小的快路径会让升级换模型
+    // （或同大小但内容不同的旧文件）被判成已安装，worker 随后加载坏模型。
+    if !entry.is_some_and(|entry| entry.sha256.eq_ignore_ascii_case(file.sha256)) {
+        return false;
+    }
+    matches_record(entry, &layout.file_path(file.target), file.bytes)
 }
 
 /// 三个文件是否全部就绪。
@@ -343,6 +345,40 @@ mod tests {
         // 文件被截断 → 未就绪
         fs::write(&path, vec![0u8; 9]).unwrap();
         assert!(!matches_record(Some(&entry), &path, 10));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn readiness_requires_the_manifest_digest() {
+        let root = temp_root("digest");
+        let layout = Layout::new(&root);
+        layout.ensure_dirs().unwrap();
+        let file = assets::MODEL_FILES[1];
+        let path = layout.file_path(file.target);
+        fs::write(&path, vec![0u8; file.bytes as usize]).unwrap();
+
+        // 大小对得上、但记录里的摘要不是清单当前的摘要（旧版本清单 /
+        // 同大小换过文件）→ 视为未安装，必须重新下载。
+        let stale = Manifest {
+            version: MANIFEST_VERSION,
+            files: vec![VerifiedFile {
+                name: file.target.to_string(),
+                bytes: file.bytes,
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            }],
+        };
+        assert!(!is_installed(&layout, &stale, &file));
+
+        let fresh = Manifest {
+            version: MANIFEST_VERSION,
+            files: vec![VerifiedFile {
+                name: file.target.to_string(),
+                bytes: file.bytes,
+                sha256: file.sha256.to_string(),
+            }],
+        };
+        assert!(is_installed(&layout, &fresh, &file));
         let _ = fs::remove_dir_all(&root);
     }
 

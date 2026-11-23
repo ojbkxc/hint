@@ -271,11 +271,25 @@ fn truncate(text: &str, max_chars: usize) -> String {
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 
 /// 有上限地读取错误响应体：最多读 `ERROR_BODY_LIMIT` 字节，超出部分直接丢弃。
-async fn read_error_body(response: reqwest::Response) -> String {
+///
+/// 服务端回了非 2xx 之后仍可能挂着不发 body；这里与取消标记做 select，
+/// 用户按「重新生成」或结束会话时不必等满 60 秒超时。
+async fn read_error_body(response: reqwest::Response, cancel: Option<&AtomicBool>) -> String {
     let mut stream = response.bytes_stream();
     let mut collected = Vec::new();
     while collected.len() < ERROR_BODY_LIMIT {
-        match stream.next().await {
+        let next = pin!(stream.next());
+        let item = match cancel {
+            Some(cancel) => {
+                let cancelled = pin!(wait_cancel(cancel));
+                match select(next, cancelled).await {
+                    Either::Left((item, _)) => item,
+                    Either::Right(((), _)) => break,
+                }
+            }
+            None => next.await,
+        };
+        match item {
             Some(Ok(chunk)) => collected.extend_from_slice(&chunk),
             _ => break,
         }
@@ -285,16 +299,20 @@ async fn read_error_body(response: reqwest::Response) -> String {
 }
 
 /// 非 2xx 响应统一转成「中文建议 + 状态码 + 原始响应片段」的错误。
+///
+/// `cancel` 只在流式路径上传入：错误体读取同样要能被「重新生成 / 结束会话」
+/// 打断，否则旧请求会一直占着串行的答案 worker。
 async fn ensure_success(
     response: reqwest::Response,
     settings: &Settings,
+    cancel: Option<&AtomicBool>,
 ) -> Result<reqwest::Response> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
     }
     let code = status.as_u16();
-    let raw = read_error_body(response).await;
+    let raw = read_error_body(response, cancel).await;
     let body = if raw.trim().is_empty() {
         "（空响应体）".to_string()
     } else {
@@ -364,7 +382,7 @@ async fn openai_models(
 ) -> Result<Vec<String>> {
     let url = openai_models_url(&settings.base_url);
     let response = client.get(url).bearer_auth(api_key).send().await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
     let value = parse_json_response(&raw)?;
     Ok(models_from_ids(value["data"].as_array()))
@@ -382,7 +400,7 @@ async fn anthropic_models(
         .header("anthropic-version", "2023-06-01")
         .send()
         .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
     let value = parse_json_response(&raw)?;
     Ok(models_from_ids(value["data"].as_array()))
@@ -399,7 +417,7 @@ async fn gemini_models(
         .header("x-goog-api-key", api_key)
         .send()
         .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
     let value = parse_json_response(&raw)?;
     Ok(models_from_gemini(&value))
@@ -458,7 +476,7 @@ async fn openai(
         .json(&body)
         .send()
         .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
 
     let value = parse_json_response(&raw)?;
@@ -484,7 +502,7 @@ async fn anthropic(
         .json(&body)
         .send()
         .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
 
     let value = parse_json_response(&raw)?;
@@ -519,7 +537,7 @@ async fn gemini(
         .json(&body)
         .send()
         .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, None).await?;
     let raw = response.text().await?;
 
     let value = parse_json_response(&raw)?;
@@ -769,7 +787,8 @@ fn retry_decision(
 /// 按当前配置发起一次流式对话。
 ///
 /// 每收到一段非空增量就调用一次 `on_delta`；回调返回后检查 `cancel`，
-/// 已置位（`true`）则立即停止并返回已生成文本。整体超过 60 秒返回超时错误。
+/// 已置位（`true`）则立即停止并返回已生成文本。单次尝试超过 60 秒返回超时
+/// 错误（首字前失败会自动重试一次，整体最长约 2 分钟）。
 /// 首字前遇到可重试错误会自动重试一次（间隔约 1.5 秒）。
 ///
 /// # 参数
@@ -780,6 +799,7 @@ fn retry_decision(
 /// # 返回
 ///
 /// 返回 [`ChatStats`]，其中 `text` 为完整文本，`ttft_ms` 为首个非空增量的耗时。
+/// 未取消却一个字符都没收到时返回错误，而不是把空文本当成功。
 pub async fn stream(
     settings: &Settings,
     api_key: &str,
@@ -825,6 +845,17 @@ pub async fn stream(
 
         match result {
             Ok((text, ttft_ms)) => {
+                // 一个字都没收到却「成功」：前端会把空 text 当成一轮空答案显示，
+                // 用户既看不到内容也看不到原因。最常见的是网关忽略 `stream: true`
+                // 直接回整包 JSON —— `pump_sse` 一行 `data:` 都取不到。
+                // 这里改报可读错误，让用户看到「生成失败」而不是一片空白。
+                if text.trim().is_empty() && !cancel.load(Ordering::Relaxed) {
+                    // 调用方会补上「请到设置页检查…」的动作提示，这里只说原因。
+                    let message = "模型接口没有返回任何文本（流式响应为空）：常见原因是\
+                                   网关忽略了 stream 参数直接回整包 JSON，或者模型名\
+                                   不是对话模型、内容被过滤。";
+                    return Err(CoreError::Api(message.to_string()));
+                }
                 return Ok(ChatStats {
                     text,
                     model: settings.model.clone(),
@@ -933,7 +964,7 @@ async fn openai_stream(
         cancel,
     )
     .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, Some(cancel)).await?;
 
     let mut text = String::new();
     let mut ttft_ms = 0u64;
@@ -1003,7 +1034,7 @@ async fn anthropic_stream(
         cancel,
     )
     .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, Some(cancel)).await?;
 
     let mut text = String::new();
     let mut ttft_ms = 0u64;
@@ -1074,7 +1105,7 @@ async fn gemini_stream(
         cancel,
     )
     .await?;
-    let response = ensure_success(response, settings).await?;
+    let response = ensure_success(response, settings, Some(cancel)).await?;
 
     let mut text = String::new();
     let mut ttft_ms = 0u64;

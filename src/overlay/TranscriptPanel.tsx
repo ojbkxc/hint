@@ -1,10 +1,17 @@
+import { memo } from "react";
 import type { Channel, TranscriptLine } from "./types";
 
 type Props = { lines: TranscriptLine[] };
 
-export default function TranscriptPanel({ lines }: Props) {
+function TranscriptPanel({ lines }: Props) {
   return (
-    <div className="overlay-transcript">
+    <div
+      className="overlay-transcript"
+      // 可聚焦才能用键盘/方向键滚动；role=log 让读屏知道这是追加型文本流。
+      role="log"
+      aria-label="实时转录"
+      tabIndex={0}
+    >
       {lines.length === 0 ? (
         <div className="overlay-empty">麦克风与系统声通道的转录会出现在这里。</div>
       ) : (
@@ -29,3 +36,6 @@ export default function TranscriptPanel({ lines }: Props) {
 function labelOf(channel: Channel): string {
   return channel === "interviewer" ? "面试官" : "我";
 }
+
+/** 电平事件约 30 fps，转录只在新增行时重渲染。 */
+export default memo(TranscriptPanel);

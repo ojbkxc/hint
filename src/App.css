@@ -162,6 +162,14 @@ button:focus-visible,
   outline-offset: var(--focus-ring-offset);
 }
 
+/* 转录面板用 tabIndex 让键盘可以聚焦后滚动；焦点环要向内收，
+   否则会被浮层的 overflow: hidden 裁掉。 */
+.overlay-transcript:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-strong);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+  border-radius: var(--radius-inline);
+}
+
 /* ---------- 设置页布局 ---------- */
 
 .dashboard-root {

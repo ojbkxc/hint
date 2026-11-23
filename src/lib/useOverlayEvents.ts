@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HINT_EVENTS, MAX_TRANSCRIPT_LINES } from "../overlay/types";
+import {
+  HINT_EVENTS,
+  MAX_ANSWER_HISTORY,
+  MAX_TRANSCRIPT_LINES,
+} from "../overlay/types";
 import type {
   AnswerHistoryEntry,
   AnswerState,
@@ -13,13 +17,13 @@ import { isRecord, numberValue, pickText } from "./data";
 import { safeInvoke, safeListen } from "./tauri";
 import { normalizeOpacity, normalizeSettings } from "../settings/types";
 
-const MAX_ANSWER_HISTORY = 10;
-
 type OverlayListenerState = {
   transcript: TranscriptLine[];
   answer: AnswerState;
   /** 本场已回答过的问答（不含当前这一轮），按时间先后追加。 */
   answerHistory: AnswerHistoryEntry[];
+  /** 本场已归档的问答总数；answerHistory 会被截断，计数不能从它推。 */
+  answeredTotal: number;
   levels: LevelsState;
   /** 双通道联合语音状态（谁在说话）。 */
   speech: SpeechState;
@@ -38,12 +42,14 @@ const EMPTY_ANSWER: AnswerState = {
   pending: 0,
   error: "",
   retryable: false,
+  muted: false,
 };
 
 const INITIAL_STATE: OverlayListenerState = {
   transcript: [],
   answer: EMPTY_ANSWER,
   answerHistory: [],
+  answeredTotal: 0,
   levels: { mic: 0, system: 0 },
   speech: { joint: "neither" },
   status: { state: "idle", message: "等待连接" },
@@ -120,14 +126,18 @@ export function useOverlayEvents() {
         if (disposed) return current;
         if (forcedReset) {
           // 新一轮开始：先归档上一轮（只要有问题和内容就归档，
-// 包括被 Ctrl+Shift+A 中途打断的部分答案）。
+          // 包括被 Ctrl+Shift+A 中途打断的部分答案）。
           const previous = current.answer;
           const canArchive =
             previous.question.trim() !== "" && previous.text.trim() !== "";
+          // 序号取「上一条 + 1」，不用自增 ref：setState 更新函数必须保持纯，
+          // 否则 StrictMode 双调用会给出不同的 key。
+          const last = current.answerHistory[current.answerHistory.length - 1];
           const answerHistory = canArchive
             ? [
                 ...current.answerHistory,
                 {
+                  id: (last?.id ?? 0) + 1,
                   question: previous.question,
                   text: previous.text,
                   model: previous.model,
@@ -142,12 +152,25 @@ export function useOverlayEvents() {
           return {
             ...current,
             answerHistory,
+            answeredTotal: canArchive
+              ? current.answeredTotal + 1
+              : current.answeredTotal,
             answer: {
               ...EMPTY_ANSWER,
               text,
               streaming: true,
               question,
               pending: payloadPending ?? 0,
+            },
+          };
+        }
+        // 用户点了「清空」但本轮还在流式：剩余增量不上屏，只更新排队数。
+        if (current.answer.muted) {
+          return {
+            ...current,
+            answer: {
+              ...current.answer,
+              pending: payloadPending ?? current.answer.pending,
             },
           };
         }
@@ -183,7 +206,10 @@ export function useOverlayEvents() {
           return {
             ...current,
             answer: {
-              text: finalText !== "" ? finalText : current.answer.text,
+              // 用户已经清空过这一轮：错误条照样提示，但不要把正文贴回来。
+              text: current.answer.muted
+                ? ""
+                : (finalText !== "" ? finalText : current.answer.text),
               streaming: false,
               done: true,
               model: model || current.answer.model,
@@ -192,6 +218,7 @@ export function useOverlayEvents() {
               pending: current.answer.pending,
               error,
               retryable,
+              muted: current.answer.muted,
             },
           };
         });
@@ -207,7 +234,10 @@ export function useOverlayEvents() {
         return {
           ...current,
           answer: {
-            text: finalText !== "" ? finalText : current.answer.text,
+            // 流式中被「清空」过：最终全文不再上屏，避免答案整段复活。
+            text: current.answer.muted
+              ? ""
+              : (finalText !== "" ? finalText : current.answer.text),
             streaming: false,
             done: true,
             model: model || current.answer.model,
@@ -216,6 +246,7 @@ export function useOverlayEvents() {
             pending: current.answer.pending,
             error: "",
             retryable: false,
+            muted: current.answer.muted,
           },
         };
       });
@@ -270,7 +301,7 @@ export function useOverlayEvents() {
             message: pickText(payload, ["message"]),
           },
           ...(clearTranscript
-            ? { transcript: [], answerHistory: [] }
+            ? { transcript: [], answerHistory: [], answeredTotal: 0 }
             : {}),
           ...(resetAnswer
             ? { answer: { ...EMPTY_ANSWER }, speech: { joint: "neither" } }
@@ -334,7 +365,13 @@ export function useOverlayEvents() {
     setState((current) => ({
       ...current,
       // 「清空」只清浮层显示；后端的待答队列还在，排队数不能被抹成 0。
-      answer: { ...EMPTY_ANSWER, pending: current.answer.pending },
+      answer: {
+        ...EMPTY_ANSWER,
+        pending: current.answer.pending,
+        // 正在流式时清空：本轮剩余增量与最终全文都不再上屏，
+        // 否则下一帧增量会从半句处重新长出来。
+        muted: current.answer.streaming,
+      },
     }));
   }, []);
 

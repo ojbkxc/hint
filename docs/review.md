@@ -388,3 +388,69 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **SSE 单行缓冲上限**：`pump_sse` 的 `buffer` 只按换行切分，异常/恶意端点持续发送无换行数据会让它无限增长。现在处理完完整行后若剩余半行超过 1MB 即停止生成并返回中文错误；正常增量远小于该阈值。
 
 **复查后确认不动的点**：`SessionCard` 在启动中仍禁用「结束面试」（可用热键排队停止，属有意设计）；`ClipOptions.min_speech_ms` 仍为 400ms（补录切段对噪声更保守，实时路径的 250ms 不受影响）；`response.text()` 读取成功响应体仍不设上限（只针对用户自己配置的模型接口，且受 60 秒超时约束）。
+
+## 十九、第六轮复查：对照三个参考项目逐层重读（2026-11-23）
+
+本轮按四条链路分工重读（core / 壳层 / STT+音频 / 前端），并与 pluely、natively-cluely、Freely 的对应实现逐段比对。共修 30 处，其中高 2、中 14、低 14。
+
+### 19.1 音频与 STT（对照 pluely speaker、natively VAD、Freely STT）
+
+- **切换默认输出设备被当成通道失败**：`follow_default` 的迁移分支返回 `Err`，引擎按「采集中断」上报并累加 `failures`；插拔耳机 / 蓝牙闪断 5 次（15 秒宽限）就把系统声通道判死，用户此后听不到面试官。现在引入 `SessionEnd::{Stopped, Migrated}`，迁移走 `warning` 并清零失败计数与降级提示，与「显式指定设备」的提示区分开。
+- **loopback 缓冲零余量**：共享模式 buffer 直接取 `min_period`（常见 10ms），采集线程晚一两个调度周期 WASAPI 就覆盖未读包，症状是「偶发漏字」而不是报错。改为 `min_period.max(200ms)`，仍封顶 1 秒。
+- **就绪快路径只比大小**：`is_installed` 不看记录里的 sha256，升级换模型（或同大小换过文件）被判成已安装，worker 随后加载坏模型。现在要求记录摘要等于清单当前摘要，再走大小快路径，并补单测 `readiness_requires_the_manifest_digest`。
+- **进度条与 `prepare` 判据不一致**：`downloaded_bytes` 只看「有记录」，摘要对不上的旧文件也算已下载，进度条接近 100% 却要整份重下。
+- **206 区间过严**：原先要求 `end == bytes-1`，只回一段区间的 CDN / 代理会让 239MB 的 `.part` 被整份删掉重下；现在接受「起点正是续传点、终点不越界」的短区间。
+- **请求级拒绝连带丢掉健康 worker**：400 / `invalid-input`（WAV 格式不符、语言不支持）也走「丢弃 worker」，下一段音频要重新加载 239MB 模型（约 2.5 秒）。现在只对真正的会话失效丢弃。
+- **英文错误直出状态栏**：`InvalidInput` / `Json` 走 `Display`，界面出现「语音识别失败，稍后自动重试：invalid input: audio must be mono」。新增 7 类中文映射 + 中文兜底前缀。
+- **慢速滴流绕过推理超时**：`post_wav` 只在 `WouldBlock` 分支查总截止时间，每 250ms 吐一个字节的连接能把持锁拖到响应体上限。现在读到数据后也查 120 秒截止。
+- **取消后仍要等握手**：`transfer` 在建连前不查取消，点「取消」还要等最长 15 秒握手超时。
+- **并发下载拒绝文案是英文**：经 `user_message_for` 显示成「配置错误：a download is already running」。
+
+### 19.2 核心逻辑（LLM / 问题判定 / 配置）
+
+- **空流式响应被当成成功**：`stream()` 把 `Ok((text, ttft))` 一律当成功，`pump_sse` 一行 `data:` 都没拿到时返回空 `ChatStats`；前端只在「text 与 model 都空」时才清空，于是浮层停在空白答案且没有任何提示（网关忽略 `stream:true` 直接回整包 JSON 时必现）。现在未取消却一个字都没收到时报可读错误。
+- **错误响应体读取不可取消**：`ensure_success` / `read_error_body` 在非 2xx 后读 body 不查取消，服务端挂着不发 body 会拖满 60 秒尝试超时，串行的答案 worker 期间无法被「重新生成 / 结束会话」打断（与 §15、§16 同类盲区的最后一处）。
+- **长纯符号串被判成问题**：「含问号即问题」在超过 24 字符时跳过寒暄剥离，STT 静音幻觉（「？？？」「……」）会入队一个空问题、浮层空跑一轮流式（§18 只在前端 `regenerate` 层堵住）。
+- **固定搭配误命中问句标志词**：「哪怕需求变了」「无论如何都要上线」「这个改动多少有点风险」都会触发一次无意义自动作答。`CN_NON_QUESTION_FRAGMENTS` 补 7 条搭配并加 6 条陈述句用例。
+- **非测试代码残留 `expect`**：`LifecycleQueue::request` 的 `expect("刚入队，队首必然存在")` 与 §4.1「非测试仅 1 处」不符，`panic = "abort"` 下无法兜底。改为 `if let Some`。
+- **并发保存互踩临时文件**：临时文件名固定为 `json.tmp`，两个 `save_settings`（前端连点 / 托盘同时保存）互相覆盖，先 rename 走的那次让另一次报「文件不存在」并留残骸。现在带进程内序号，且序列化与写盘失败都会清临时文件。
+- **`dropped_ms` 虚报**：断线窗口的丢弃时长按「所有被淘汰帧」累加，没有按 outage 起点过滤（natively 的实现是 `f.startMs + f.durMs > outage.startMs`），字段语义是「窗口内」却算进了窗口外的旧帧。
+
+### 19.3 Tauri 壳层与 CI
+
+- **托盘失败连带吞掉热键**：`setup_after_ready` 用 `?` 把托盘与热键串起来，托盘构建失败会直接返回，四个全局热键永不注册，而且提示被误报成「全局热键注册失败」。现在先注册热键再判托盘，托盘失败单独提示。
+- **异步任务里做阻塞调用**：`answer_one` 在 Tauri 异步任务里直接读 Windows 凭据管理器，域账号漫游或凭据服务卡住会占住 runtime 线程，整条作答链路被拖住。改为 `spawn_blocking`，任务失败并入同一条失败回报路径。
+- **11 个同步命令在 UI 主线程做 IO**：`list_sessions`（每个会话两次子查询）、`export_session_markdown`、`delete_all_sessions`、`has_api_key`、`save_api_key`、`get_settings` / `save_settings`、`open_log_dir`、`model_status` 在 UI 线程跑 SQLite / 凭据 / 配置文件，面试中打开设置或复盘会卡窗口。统一标 `#[tauri::command(async)]`（tauri-macros 2.7 的 `sync_threadpool` 执行上下文），前端签名零变化。
+- **DOCX 解压炸弹**：`read_docx` 用无上限 `read_to_string` 读解压后的 `word/document.xml`，20 MB 的包可膨胀到数 GB。改为 `take(32MB + 1)` + `read_to_end`，超限给中文提示。
+- CI / capabilities / `tauri.conf.json` 逐项核对后无异常（toolchain `stable` 满足 edition 2024、artifact 路径与 workspace target 一致、NSIS 三键在 `NsisConfig` 白名单内、release 有 `contents: write`）。
+
+### 19.4 前端
+
+- **流式中「清空」后答案复活**：清空只清前端文本，后端流还在跑，下一帧增量走 reset 分支从半句处重新长出来，`answer-done` 到达时又贴回全文。新增 `answer.muted`：本轮后续增量与最终全文都不上屏，直到下一轮 reset。
+- **33ms 一次的电平把整棵树重渲染**：`hint://levels` 每秒约 30 帧，浮层所有状态在一个 `useState` 里，长答案文本每次都要 diff 与重算 `text-shadow`。`AnswerPanel` / `TranscriptPanel` 加 `memo`，`Overlay` 内回调改 `useCallback` 稳定引用。
+- **「本场已答 N 题」到 11 就停**：计数用 `history.length`，而 history 被 `slice(-10)` 截断。改为独立 `answeredTotal`。
+- **保存 / 测试期间切协议污染 Key**：回写用的是旧闭包里的 `provider`，「Key 已保存」画到新协议头上，`setApiKey("")` 还会清掉刚粘的新 Key。加 `providerRef` 守卫，并在提示里说明结果属于哪个协议。
+- **会话列表刷新无请求序号**：切 Tab 与手动刷新并发时，先发的旧响应可能覆盖新列表（详情请求早已有序号）。
+- **时间线 key 用 reverse 后的下标**：第 11 条起 `slice(-10)` 让所有 key 位移、整段重挂。改为归档时分配单调 `id`。
+- **错误前缀重复 / 过期提示**：`导出失败：导出失败：…`、`删除失败：删除会话失败：…`；「清空全部」失败时还附「若后端尚未提供该命令」（命令早已存在）。
+- **a11y**：方向键被全局劫持到答案区（转录面板键盘翻不动）、生成中只有 `<i title>`、toast 无 live region。补 `role=log` + `tabIndex` + 向内焦点环、`visually-hidden` 文案、toast 的 `role` / `aria-live`。
+
+### 19.5 本轮验证与待远端确认
+
+本机未跑任何 Rust 编译（仓库约定）。已验证的层：
+
+- 前端类型：`node_modules\.bin\tsc.cmd --noEmit -p tsconfig.json` → 退出码 0，无输出。
+- 前端构建：`npm.cmd run build` → 48 modules，`dist/assets/index-BbawwSVl.css` + `index-9FPeIGs9.js`，退出码 0；连跑两次产物 hash 一致。
+- Rust 语法：14 个改动文件用 `rustfmt 1.11.0-stable --edition 2024 --emit stdout` 逐个解析，全部通过（语法级，不含类型检查）。
+- 浮层行为：`vite dev` + 无头浏览器注入 `hint://*` 伪事件，实测「清空后被清空轮不再上屏」「已答 N 题随归档递增」「转录可聚焦」「320×180 底部不被裁」。
+
+待 CI（windows-latest + MSVC）确认：`cargo check --locked -p hint --bins`、`cargo test --locked -p hint-core -p hint-store -p hint-audio`、`cargo test --locked -p hint-stt`（含两个新单测）。真机需重点验：切换默认输出设备只出现一条警告并继续采集、蓝牙输出连播 10 分钟无漏字、网关忽略 `stream:true` 时的中文错误提示。
+
+### 19.6 考虑过但不改
+
+- worker 请求头 `read_line` 无界（仅 127.0.0.1、爆炸点在 token 校验前，改用 `fill_buf`/`consume` 会牵动读体逻辑）；401/413 未排空请求体可能触发 RST（客户端已预校验长度，概率极低）。
+- `engine` 启动 15 秒是两通道串行等待、最坏 30 秒（合并为单一预算要重写无锁轮询，风险高于收益）。
+- `AudioHandle::stop()` 无超时 `join`（`JoinHandle` 无带超时 join，属整块重构）。
+- OpenAI / Anthropic 补「非 SSE 整包 JSON」兜底（Gemini 已有，需各复制一套正文抽取，本机无法验证）。
+- 答案 worker panic 会让 `worker_running` 永久为真（只有 crate 内 `llm::stream` panic 才触发，Drop 守卫需重新设计）。
+- 5.1 声道下混权重、`wav.rs` 不校验 `audioFormat == 1`、`Settings::load` 读失败回退默认值后可能覆盖用户资料：都需要真机/真实文件调参或改签名，不在本轮夹带。

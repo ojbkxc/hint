@@ -1633,18 +1633,33 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
     );
 
     let provider = settings.provider.as_str().to_string();
-    let key = match secret::get(&provider) {
+    // 凭据管理器读取是阻塞调用：域账号漫游或凭据服务异常时可能卡住数百毫秒到
+    // 数秒，不能占住异步运行时线程，统一丢给阻塞线程池。
+    let key: Result<String, String> =
+        match tauri::async_runtime::spawn_blocking(move || secret::get(&provider)).await {
+            Ok(Ok(key)) => Ok(key),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "读取 API Key 失败");
+                Err(format!(
+                    "读取 API Key 失败：{error}。请到设置页重新保存 Key 后点「重新生成」。"
+                ))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "读取 API Key 任务失败");
+                Err(format!(
+                    "读取 API Key 任务失败：{error}。请重试或重新开始会话。"
+                ))
+            }
+        };
+    let key = match key {
         Ok(key) => key,
-        Err(error) => {
-            tracing::warn!(%error, "读取 API Key 失败");
+        Err(message) => {
             finish_answer(
                 app,
                 shared,
                 &cancel,
                 AnswerOutcome::Failed {
-                    message: format!(
-                        "读取 API Key 失败：{error}。请到设置页重新保存 Key 后点「重新生成」。"
-                    ),
+                    message,
                     partial: String::new(),
                     ttft_ms: None,
                     retryable: false,

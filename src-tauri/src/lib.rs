@@ -236,8 +236,10 @@ pub fn run() {
         .run(move |app, event| match event {
             RunEvent::Ready => {
                 if let Err(error) = setup_after_ready(app) {
-                    tracing::error!(%error, "托盘 / 热键初始化失败");
-                    commands::emit_hotkey_failure(app, &error.to_string());
+                    // 热键注册失败已在 register_shortcuts 里单独提示，
+                    // 走到这里只可能是托盘没建起来，按托盘错误上报。
+                    tracing::error!(%error, "托盘初始化失败");
+                    session::emit_notice(app, "error", format!("托盘初始化失败：{error}"));
                 }
             }
             RunEvent::ExitRequested { .. } => session::shutdown(app),
@@ -251,8 +253,11 @@ pub fn run() {
 /// `RunEvent::Ready` 在主线程上触发，`Menu` / 热键注册这类要求主线程的
 /// API 可以同步完成。
 fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
-    build_tray(app)?;
+    // 托盘与热键互不依赖：托盘构建失败（图标 / 菜单资源异常）不能让热键一起
+    // 被跳过——主窗口关掉后，Ctrl+Shift+Space 是用户唯一能取回浮层的入口。
+    let tray = build_tray(app);
     register_shortcuts(app);
+    tray?;
     if app.get_webview_window("overlay").is_none() {
         tracing::warn!("浮层窗口未创建，请检查 tauri.conf.json");
     }

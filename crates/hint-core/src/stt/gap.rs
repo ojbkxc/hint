@@ -82,14 +82,21 @@ impl SttGapTracker {
             rms,
         };
         let evicted = self.ring.push(frame);
-        if self.outage.is_some() && !evicted.is_empty() {
-            let dropped: u64 = evicted.iter().map(|frame| frame.dur_ms).sum();
-            if let Some(outage) = self.outage.as_mut() {
+        if let Some(outage) = self.outage.as_mut() {
+            // 只统计落在本窗口内的音频：早于 outage 起点的旧帧本来就不在补录
+            // 范围内（参考实现同样按 `end > outage.start` 过滤），算进去会虚报。
+            let outage_start = outage.start_ms;
+            let dropped: u64 = evicted
+                .iter()
+                .filter(|frame| frame.start_ms + frame.dur_ms as i64 > outage_start)
+                .map(|frame| frame.dur_ms)
+                .sum();
+            if dropped > 0 {
                 outage.dropped_ms += dropped;
-            }
-            if !self.drop_warned {
-                self.drop_warned = true;
-                tracing::warn!(dropped, "断线窗口内音频超过环形容量，部分无法补录");
+                if !self.drop_warned {
+                    self.drop_warned = true;
+                    tracing::warn!(dropped, "断线窗口内音频超过环形容量，部分无法补录");
+                }
             }
         }
         if self.quiet_since_ms.is_none() {

@@ -1,18 +1,21 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { AnswerHistoryEntry, AnswerState } from "./types";
 import { useAutoScroll } from "./useAutoScroll";
 
 type Props = {
   answer: AnswerState;
   history: AnswerHistoryEntry[];
+  /** 本场已归档的问答总数（history 会被截断，不能用它的长度代替）。 */
+  answeredTotal: number;
   onRegenerate: () => void;
   onClear: () => void;
   onDismissError: () => void;
 };
 
-export default function AnswerPanel({
+function AnswerPanel({
   answer,
   history,
+  answeredTotal,
   onRegenerate,
   onClear,
   onDismissError,
@@ -25,6 +28,15 @@ export default function AnswerPanel({
       const node = bodyRef.current;
       if (!node) return;
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      // 焦点在转录面板上时把方向键让回去：那块也是可滚动区域，
+      // 全局劫持会让键盘用户永远翻不动转录。
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".overlay-transcript") !== null
+      ) {
+        return;
+      }
       const step = 64;
       const delta = event.key === "ArrowUp" ? -step : step;
       const max = node.scrollHeight - node.clientHeight;
@@ -40,14 +52,19 @@ export default function AnswerPanel({
   }, []);
 
   const hasText = answer.text.trim() !== "";
-  const answeredCount = history.length + (hasText ? 1 : 0);
+  const answeredCount = answeredTotal + (hasText ? 1 : 0);
 
   return (
     <div className="overlay-answer">
       <div className="overlay-answer-toolbar">
         <span className="answer-title">
           答案
-          {answer.streaming && <i className="streaming-dot" title="正在生成" />}
+          {answer.streaming && (
+            <>
+              <i className="streaming-dot" aria-hidden="true" />
+              <span className="visually-hidden">正在生成</span>
+            </>
+          )}
           {answeredCount > 0 && (
             <span className="answer-count">本场已答 {answeredCount} 题</span>
           )}
@@ -105,6 +122,12 @@ export default function AnswerPanel({
             </p>
           ) : answer.streaming ? (
             <p className="placeholder">正在等待模型输出…</p>
+          ) : answer.muted ? (
+            <p className="placeholder">
+              本轮答案已清空，模型后续生成的内容不再显示。
+              <br />
+              需要完整答案时点「重新生成」。
+            </p>
           ) : answer.error !== "" ? (
             <p className="placeholder">本次没有生成内容，可按上方提示处理后重试。</p>
           ) : (
@@ -119,8 +142,8 @@ export default function AnswerPanel({
         {history.length > 0 && (
           <div className="answer-history-timeline">
             <p className="history-caption">更早的回答</p>
-            {[...history].reverse().map((item, index) => (
-              <section className="answer-block past" key={`${item.question}-${index}`}>
+            {[...history].reverse().map((item) => (
+              <section className="answer-block past" key={item.id}>
                 <p className="block-question" title={item.question}>
                   {item.question !== "" ? `问：${item.question}` : "（未记录问题）"}
                 </p>
@@ -135,3 +158,10 @@ export default function AnswerPanel({
     </div>
   );
 }
+
+/**
+ * 电平事件约 30 fps，全量重渲染会把长答案文本一起重算。
+ * props 只在答案/历史/计数变化时改变（回调由 Overlay 用 useCallback 稳定），
+ * memo 让电平跳动只更新 StatusBar。
+ */
+export default memo(AnswerPanel);

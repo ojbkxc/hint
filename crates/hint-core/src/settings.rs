@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::Result;
 
@@ -11,6 +12,9 @@ pub const PROJECTS_CHAR_LIMIT: usize = 6_000;
 
 /// 截断后追加的提示，让模型知道资料不完整。
 const TRUNCATED_SUFFIX: &str = "\n（内容过长已截断）";
+
+/// 保存配置时的临时文件序号：并发保存不会互相覆盖临时文件。
+static TEMP_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 /// 按字符数上限截断；超出时追加「已截断」标注。
 fn limit_chars(text: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
@@ -128,12 +132,22 @@ impl Settings {
     /// Windows 上 `rename` 不能覆盖已存在的目标；杀毒软件或索引器短暂占用
     /// 时还会失败。这里先重试，仍失败则退回「复制覆盖」——原实现是「先删
     /// 旧文件再 rename」，一旦第二次 rename 失败，用户配置会整个丢失。
+    ///
+    /// 临时文件名带进程内序号：两个保存请求并发时（前端连点保存 / 托盘与
+    /// 设置页同时保存）不会互相覆盖临时文件，也不会因为第一个请求已经
+    /// rename 走而让第二个报「文件不存在」。
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, serde_json::to_string_pretty(self)?)?;
+        let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let temp = path.with_extension(format!("json.tmp{seq}"));
+        let json = serde_json::to_string_pretty(self)?;
+        if let Err(error) = std::fs::write(&temp, json) {
+            // 写盘失败（磁盘满 / 权限）时清掉半截临时文件：名字带序号，不会被复用。
+            let _ = std::fs::remove_file(&temp);
+            return Err(error.into());
+        }
         let mut last_error = None;
         for _ in 0..3 {
             match std::fs::rename(&temp, path) {
@@ -145,14 +159,16 @@ impl Settings {
             }
         }
         // 复制会直接覆盖已存在目标；失败时旧文件仍在（不会先被删掉）。
-        match std::fs::copy(&temp, path) {
-            Ok(_) => {
-                let _ = std::fs::remove_file(&temp);
-                Ok(())
+        let copied = std::fs::copy(&temp, path).map(|_| ());
+        // 无论成败都不留临时文件：失败时旧配置完好，成功时已复制过去。
+        let _ = std::fs::remove_file(&temp);
+        match copied {
+            Ok(()) => Ok(()),
+            Err(copy_error) => {
+                tracing::warn!(%copy_error, "复制覆盖配置失败");
+                // 以最后一条 rename 错误为准：占用/权限才是根因，复制只是兜底。
+                Err(crate::error::CoreError::Io(last_error.unwrap_or(copy_error)))
             }
-            Err(copy_error) => Err(crate::error::CoreError::Io(
-                last_error.unwrap_or(copy_error),
-            )),
         }
     }
 
