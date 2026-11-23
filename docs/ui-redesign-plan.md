@@ -377,7 +377,7 @@ Tab：    .tab-bar .tab .tab.active .tabpanel
 **所用类名**：`.dashboard-root`、`.dashboard-header`、`.subtitle`、`.hint-badge`、`.dashboard-banner`、`.banner-info`、`.banner-error`、`.tab-bar`、`.tab`、`.tab.active`、`.tabpanel`、`.dashboard-grid`、`.skeleton`、`.visually-hidden`、`.muted`。
 
 **保留 / 不变**
-- 保留：默认 Tab=`settings`、切换逻辑、`aria-selected` 逻辑、banner 自动消失时长（error 10s / info 6s）与点击关闭、快捷键徽标文案「Ctrl+Shift+Space 显示浮层」。
+- 保留：默认 Tab=`settings`、切换逻辑、`aria-selected` 逻辑、banner 自动消失时长（error 10s / info 6s）与点击关闭、快捷键徽标文案「Ctrl+Shift+H 显示浮层」。
 - 不变：所有 hook 调用与数据流、`hint://notice` 订阅逻辑、`open_log_dir` 行为。
 
 ### 4.2 ModelCard（`src/settings/ModelCard.tsx`）
