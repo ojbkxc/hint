@@ -46,7 +46,7 @@ pub fn read_pcm16_mono_16k(bytes: &[u8]) -> Result<PcmAudio> {
         return Err(invalid("audio must be PCM16"));
     }
     let data_bytes = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as usize;
-    if data_bytes == 0 || data_bytes % 2 != 0 {
+    if data_bytes == 0 || !data_bytes.is_multiple_of(2) {
         return Err(invalid("WAV data length is empty or odd"));
     }
     if data_bytes > bytes.len() - HEADER_BYTES {
@@ -57,7 +57,10 @@ pub fn read_pcm16_mono_16k(bytes: &[u8]) -> Result<PcmAudio> {
         return Err(invalid("audio is longer than the 120 second limit"));
     }
     let mut samples = Vec::with_capacity(sample_count);
-    for chunk in bytes[HEADER_BYTES..HEADER_BYTES + data_bytes].chunks_exact(2) {
+    for chunk in bytes[HEADER_BYTES..HEADER_BYTES + data_bytes]
+        .as_chunks::<2>()
+        .0
+    {
         let value = i16::from_le_bytes([chunk[0], chunk[1]]);
         samples.push(value as f32 / 32_768.0);
     }

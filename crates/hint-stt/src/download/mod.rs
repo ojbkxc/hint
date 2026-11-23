@@ -487,7 +487,7 @@ where
             if cancel.load(Ordering::Relaxed) {
                 return Err(cancelled());
             }
-            match transfer(&part, &destination, file, &url, &source, &progress, cancel) {
+            match transfer(&part, &destination, file, &url, source, &progress, cancel) {
                 Ok(true) => {
                     let record = manifest::VerifiedFile {
                         name: file.target.to_string(),
@@ -502,7 +502,7 @@ where
                 // 立刻从零重来一次，不计入重试次数。
                 Ok(false) => {
                     tracing::warn!(resource = file.name, source = %source, "restarting download from zero");
-                    match transfer(&part, &destination, file, &url, &source, &progress, cancel) {
+                    match transfer(&part, &destination, file, &url, source, &progress, cancel) {
                         Ok(true) => {
                             let record = manifest::VerifiedFile {
                                 name: file.target.to_string(),
@@ -793,9 +793,7 @@ where
         Ok(())
     })();
     drop(handle);
-    if let Err(error) = result {
-        return Err(error);
-    }
+    result?;
 
     // 校验：哈希覆盖网络字节，已完成全部字节。
     let digest = hasher.finalize();

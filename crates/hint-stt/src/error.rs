@@ -343,9 +343,7 @@ impl UrlParts {
             return None;
         }
         // authority 到第一个 `/`、`?`、`#` 为止。
-        let authority_end = rest
-            .find(|c: char| matches!(c, '/' | '?' | '#'))
-            .unwrap_or(rest.len());
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
         let authority = &rest[..authority_end];
         if authority.is_empty() {
             return None;
@@ -359,9 +357,7 @@ impl UrlParts {
             return None;
         }
         let after = &rest[authority_end..];
-        let path_end = after
-            .find(|c: char| matches!(c, '?' | '#'))
-            .unwrap_or(after.len());
+        let path_end = after.find(['?', '#']).unwrap_or(after.len());
         let path = &after[..path_end];
         Some(UrlParts {
             scheme: scheme.to_ascii_lowercase(),
