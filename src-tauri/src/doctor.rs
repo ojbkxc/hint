@@ -70,8 +70,8 @@ fn collect(app_data_dir: &Path) -> String {
                 "  状态：下载中（{} {}，{:.1} / {:.1} MB）",
                 step.label(),
                 resource,
-                *completed_bytes as f64 / 1_048_576.0,
-                *total_bytes as f64 / 1_048_576.0
+                completed_bytes as f64 / 1_048_576.0,
+                total_bytes as f64 / 1_048_576.0
             );
         }
         hint_stt::ModelStatus::Unprepared {
@@ -81,10 +81,10 @@ fn collect(app_data_dir: &Path) -> String {
             let _ = writeln!(
                 out,
                 "  状态：未就绪（已下载 {:.1} MB / 共 {:.1} MB）",
-                *downloaded_bytes as f64 / 1_048_576.0,
-                *total_bytes as f64 / 1_048_576.0
+                downloaded_bytes as f64 / 1_048_576.0,
+                total_bytes as f64 / 1_048_576.0
             );
-            if *downloaded_bytes == 0 {
+            if downloaded_bytes == 0 {
                 let _ = writeln!(out, "  [阻塞] 语音模型尚未下载，无法开始面试");
                 blocking += 1;
             } else {
