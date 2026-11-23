@@ -30,11 +30,15 @@ pub fn tail_warnings(text: &str, max_lines: usize) -> Vec<String> {
 
 /// 判定一行是否 WARN / ERROR 级别。
 ///
-/// tracing 的默认格式是 `2026-11-23T19:35:44.075415Z  WARN 内容`，
-/// 级别两侧各有一个空格；用带空格的形式匹配可以避免把正文里出现
-/// 「WARN」字样的 INFO 行也算进来。
+/// tracing 的默认格式是 `<timestamp>  <LEVEL> <message>`，时间戳本身不含空格，
+/// 所以**第二个空白分隔的 token 就是级别**。不能用 `line.contains(" WARN ")`
+/// 这类子串判断：`INFO WARN 出现在正文里` 这种「正文以 WARN 开头」的 INFO 行
+/// 会被误命中（单测 `tail_warnings_picks_only_real_level_lines` 抓到过）。
 pub fn is_warn_or_error(line: &str) -> bool {
-    line.contains(" WARN ") || line.contains(" ERROR ")
+    let mut tokens = line.split_whitespace();
+    // 第一个是时间戳；第二个才是级别。
+    let _timestamp = tokens.next();
+    matches!(tokens.next(), Some("WARN") | Some("ERROR"))
 }
 
 /// 配置里的设备 id → 报告里的可读文本。
