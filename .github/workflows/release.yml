@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.17）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.18）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,13 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.0.17 更新
+            ## 1.0.18 更新
+
+            - **新增 `hint.exe --doctor` 自助诊断**：不启动界面，一次性体检并输出报告——版本、数据目录、语音模型是否就绪（含是否需要重新下载、旧目录是否残留）、协议与 API Key 是否已保存、Base URL 与模型名是否填写、会话数据库结构版本与完整性、可用的麦克风与系统输出设备、最近日志的 WARN/ERROR。有阻塞项逐条标 `[阻塞]` 并在末尾汇总。
+            - 报告同时写入 `%APPDATA%\com.ojbkxc.hint\doctor-report.txt`（打包版无控制台也能拿到），反馈问题时连同 `hint.log` 一起附上即可。全程只读：不下载模型、不改配置、不写会话。
+            - 为此把模型根路径规则拆成纯函数：诊断复用同一规则但不触发迁移副作用。
+
+            ## 1.0.17 更新（历史）
 
             - 前端测试最后一块补完（`main.tsx` 窗口分发，7 例），总数 473、全部组件与入口覆盖；`recovered`（补录标记）补上 Rust 侧写读往返单测——此前该列在 Rust 侧零覆盖，V1 老行缺省回落 false 也有断言守住。
             - 文档与实际门禁对齐：SECURITY.md 增「依赖与供应链」四道门（audit / deny / clippy+fmt / 前端三件套），CONTRIBUTING.md 与 README.md 的本地检查清单补上 lint、test、fmt --check、clippy --all-targets、cargo deny。
@@ -177,7 +183,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.17_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.18_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 
