@@ -4,6 +4,19 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.17] - 2026-11-24
+
+### 工程
+
+- **测试覆盖补完最后一块**：`src/main.tsx` 窗口分发 7 例（`?window=overlay|capture` 参数优先、`getCurrentWindow().label` 回落、异常与未知 label 回落 Dashboard、StrictMode 只挂载一次）。总计 473 用例、24 个测试文件，全部组件与入口均有覆盖。
+- **`recovered` 列 Rust 侧补测**：实测此前 `add_segment` 全部单测都传 `recovered=false`，该列在 Rust 侧零往返覆盖。新增 test 覆盖实时 false / 补录 true / 补录+回声两标记独立 / 绕开 `add_segment` 直插模拟 V1 老行验证 `DEFAULT 0` 回落。
+- 文档与门禁对齐：SECURITY.md 增「依赖与供应链」章节（audit / deny / clippy+fmt / 前端三件套四道门），CONTRIBUTING.md 与 README.md 的本地检查清单补齐 lint、test、fmt --check、clippy --all-targets、cargo deny。
+- `main.tsx` 兜底注释与行为对齐（回落 `"main"` → Dashboard）。
+
+### 验证说明
+
+`recovered` 列的**端到端**证据（真实断网触发补录、段落以 `recovered=1` 落库）仍未取得——库层写读、列约束、代码层分流三方面已分别验证，但缺一次真机断网会话。已在 CHANGELOG 与 release 说明中如实标注，不宣称端到端通过。
+
 ## [1.0.16] - 2026-11-24
 
 ### 新增

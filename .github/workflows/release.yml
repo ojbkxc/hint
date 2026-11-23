@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.16）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.17）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,12 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.0.16 更新
+            ## 1.0.17 更新
+
+            - 前端测试最后一块补完（`main.tsx` 窗口分发，7 例），总数 473、全部组件与入口覆盖；`recovered`（补录标记）补上 Rust 侧写读往返单测——此前该列在 Rust 侧零覆盖，V1 老行缺省回落 false 也有断言守住。
+            - 文档与实际门禁对齐：SECURITY.md 增「依赖与供应链」四道门（audit / deny / clippy+fmt / 前端三件套），CONTRIBUTING.md 与 README.md 的本地检查清单补上 lint、test、fmt --check、clippy --all-targets、cargo deny。
+
+            ## 1.0.16 更新（历史）
 
             - 供应链三级门禁：cargo-deny 上线（许可证白名单拒绝 GPL/AGPL 系列——守住「只借鉴 pluely 思路」的合规边界；依赖源锁定 crates.io 防替换；bans 重复版本监控），与既有 cargo-audit、clippy、rustfmt 共构成完整依赖质量门。
             - 截图选区组件三处健壮性：宿主缺 Pointer Capture API 时不再抛错打死选区；释放前能力检测；松开坐标改以 pointerup 为准（快速拖拽时此前会得到偏小的选区——真缺陷）。
@@ -172,7 +177,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.16_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.17_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 
