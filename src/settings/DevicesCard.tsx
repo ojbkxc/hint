@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AudioDevice, Settings } from "./types";
 
 type Props = {
@@ -24,20 +24,21 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
   const outputMissing =
     form.outputDevice !== "" && !outputs.some((d) => d.id === form.outputDevice);
 
-  async function refresh() {
+  // 稳定引用：effect 与按钮共用，避免 exhaustive-deps 缺 refresh 的 stale 闭包。
+  const refresh = useCallback(async () => {
     setLoading(true);
     const result = await loadDevices();
     setInputs(result.inputs);
     setOutputs(result.outputs);
     setError(result.error ? `读取设备失败：${result.error}` : "");
     setLoading(false);
-  }
+  }, [loadDevices]);
 
   useEffect(() => {
     if (!loaded || attempted.current) return;
     attempted.current = true;
     void refresh();
-  }, [loaded]);
+  }, [loaded, refresh]);
 
   return (
     <section className="settings-block">
