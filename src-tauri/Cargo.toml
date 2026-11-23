@@ -1,6 +1,6 @@
 [package]
 name = "hint"
-version = "1.0.14"
+version = "1.0.15"
 description = "hint · 面试实时提词器"
 authors = ["ojbkxc"]
 edition = "2024"

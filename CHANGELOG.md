@@ -4,6 +4,14 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.15] - 2026-11-24
+
+### 工程
+
+- **前端测试第三波**（+167 用例，总 383 全绿）：useSettingsForm 36（save/testConnection/loadModels 全路径，含 providerRef 协议守卫与请求序号双守卫、非 Tauri 降级分支）、ModelCard 25、ModelDownloadCard 15、ProfileCard 14、BehaviorCard 8、DevicesCard 11、SessionCard 15、StatusBar 14、Overlay 29（memo 渲染稳定性、Esc/重新生成/notice toast 全分支）。总覆盖率 16.7%→**80.4%**（settings 96.4%、overlay 96.9%、sessions 95.8%）。providerRef 与序号两处守卫完成「改坏必红」变异验证。
+- 消除最后一个 lint warning：`DevicesCard` 的 `refresh` 提 `useCallback` 补 `exhaustive-deps` 依赖。ESLint 现在 0 error 0 warning。
+- 1.0.12 卸载保护真机端到端验收通过：卸载（含程序目录）/重装后无重新下载 241 MB；`%LOCALAPPDATA%\hint-models` 原子迁移；数据库 `user_version=2` 与 `recovered` 列自动应用。
+
 ## [1.0.14] - 2026-11-24
 
 ### 修复
