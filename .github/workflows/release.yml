@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.18）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.19）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,12 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.0.18 更新
+            ## 1.0.19 更新
+
+            - `--doctor` 的报告逻辑变得可测并修掉一个真缺陷：日志级别判定原先用 `" WARN "` 子串匹配，正文以 WARN 开头的 INFO 行会被误算成告警。现在按 tracing 的字段格式精确解析级别（时间戳后第二个 token）。
+            - 把 `--doctor` 的纯逻辑（日志尾部筛选、设备标签、字节格式化）下沉到 `hint-core::diagnostics`——壳层的 `cargo test -p hint` 因 sherpa 静态库不可用，放那里等于没人守。新增 6 个单测进 CI 门禁（含正文误命中、窗口裁剪、160 字截断、15 条上限、空输入）。
+
+            ## 1.0.18 更新（历史）
 
             - **新增 `hint.exe --doctor` 自助诊断**：不启动界面，一次性体检并输出报告——版本、数据目录、语音模型是否就绪（含是否需要重新下载、旧目录是否残留）、协议与 API Key 是否已保存、Base URL 与模型名是否填写、会话数据库结构版本与完整性、可用的麦克风与系统输出设备、最近日志的 WARN/ERROR。有阻塞项逐条标 `[阻塞]` 并在末尾汇总。
             - 报告同时写入 `%APPDATA%\com.ojbkxc.hint\doctor-report.txt`（打包版无控制台也能拿到），反馈问题时连同 `hint.log` 一起附上即可。全程只读：不下载模型、不改配置、不写会话。
@@ -183,7 +188,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.18_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.19_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 

@@ -4,6 +4,17 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.19] - 2026-11-24
+
+### 修复
+
+- **`--doctor` 的日志级别误判**：原先用 `line.contains(" WARN ")` 判断级别，正文以 WARN 开头的 INFO 行（如 `INFO WARN 出现在正文里`）会被算成告警。改为按 tracing 的字段格式解析——时间戳不含空格，第二个空白分隔 token 就是级别，精确匹配 `WARN` / `ERROR`。已用真机 `hint.log`（27 行）验算：命中 5 条真告警，INFO 行不再误报。
+
+### 工程
+
+- `--doctor` 的纯逻辑下沉到 `hint-core::diagnostics`：`tail_warnings`（窗口裁剪 + 15 条上限 + 160 字截断）、`is_warn_or_error`、`device_label`（只报「默认/已指定」，不回显 wasapi 端点 ID）、`format_mb`。壳层 `doctor.rs` 只保留 IO 包装。
+- 6 个新单测进 CI 门禁（`cargo test -p hint-core`）——此前这些逻辑长在 `src-tauri` 里，而 `cargo test -p hint` 因 `sherpa-onnx-sys` 静态库链不上 harness 而不可用，等于没有测试守护。这次正是新单测抓出了上面的级别误判。
+
 ## [1.0.18] - 2026-11-24
 
 ### 新增
