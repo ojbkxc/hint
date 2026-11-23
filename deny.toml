@@ -1,0 +1,51 @@
+# cargo-deny 配置：许可证白名单 + 重复版本容忍 + 安全漏洞交给 cargo-audit（CI 已有）。
+# 运行：cargo deny --workspace check licenses bans sources
+
+[graph]
+# 与 Cargo.lock 一致；targets 只检查桌面目标。
+targets = [
+  { triple = "x86_64-pc-windows-msvc" },
+]
+all-features = false
+
+[licenses]
+# 项目为 MIT；传递依赖只允许宽松许可证（GPL/AGPL 系一律拒绝——
+# pluely 参考项目是 GPL-3.0，仅借鉴思路不复用代码，仓库要守住这条线）。
+version = 2
+# ring 例外见 [licenses.exceptions]；ring 本体是 ISC+OpenSSL 双许可，
+# OpenSSL 部分 tauri 生态普遍放行。
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+  "0BSD",
+  "MPL-2.0",
+  "CDLA-Permissive-2.0",
+]
+# 说明例外：括号里的包逐个声明理由。
+exceptions = [
+  # ring 的 OpenSSL 风格许可证：tauri 生态传递依赖，未被链接进二进制的部分不影响分发。
+  { allow = ["OpenSSL"], crate = "ring" },
+  # libbz2-rs-sys（zip → sherpa-onnx-sys 链路）：bzip2 1.0.6 是类 BSD 的宽松许可，
+  # SPDX id "bzip2-1.0.6"，rust 生态标准做法是显式放行。
+  { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
+]
+
+[bans]
+# 不全量去重（zip 双版本已被收敛，其余重复多来自 tauri 生态的不同小版本）。
+multiple-versions = "warn"
+deny = []
+skip = []
+
+[sources]
+# 只允许 crates.io，防止依赖被替换为任意 git/本地源。
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

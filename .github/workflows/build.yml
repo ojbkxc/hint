@@ -80,6 +80,10 @@ jobs:
           # 升级 tauri 大版本才能带动，跟进修踪（见 docs/review.md）。
           cargo audit --file Cargo.lock --ignore RUSTSEC-2026-0592 --ignore RUSTSEC-2026-0594
 
+      - name: 许可证与依赖源检查（cargo-deny）
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny --workspace check licenses bans sources
   build:
     name: 构建 Windows 安装包
     runs-on: windows-latest

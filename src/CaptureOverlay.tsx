@@ -35,7 +35,14 @@ export default function CaptureOverlay() {
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Pointer capture 在个别宿主（旧 WebView2 / 触控板驱动）上可能缺失：
+    // 捕获只是优化（保证移出窗口也能收到 move/up），缺了不影响拖拽本身，
+    // 绝不能让它抛错把选区功能整个打死。
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 忽略：宿主不支持时按无捕获继续。
+    }
     dragging.current = true;
     setNotice("");
     setStart({ x: event.clientX, y: event.clientY });
@@ -50,10 +57,20 @@ export default function CaptureOverlay() {
   async function finishSelection(event: React.PointerEvent<HTMLDivElement>) {
     if (!dragging.current) return;
     dragging.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function" &&
+      event.currentTarget.hasPointerCapture(event.pointerId) &&
+      typeof event.currentTarget.releasePointerCapture === "function"
+    ) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // 同上：释放失败不影响选区结果。
+      }
     }
-    const area = start && current ? normalizeRect(start, current) : null;
+    // 以 pointerup 的坐标为准：快速拖拽时最后一次 move 可能早于 up，
+    // 用 state 里的 current 会得到偏小的矩形。up 坐标必然是最新的。
+    const area = start ? normalizeRect(start, { x: event.clientX, y: event.clientY }) : null;
     setStart(null);
     setCurrent(null);
     if (!area || area.width < MIN_SIZE || area.height < MIN_SIZE) {

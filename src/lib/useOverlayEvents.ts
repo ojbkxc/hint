@@ -262,7 +262,10 @@ export function useOverlayEvents() {
     // 双通道联合语音状态：谁在说话（面试官 / 我 / 同时 / 无）。
     register(HINT_EVENTS.speechEdge, (payload) => {
       if (!isRecord(payload)) return;
-      const joint = payload.joint;
+      // 大小写容错：后端枚举一旦变为 "BOTH" 这类大写形态，
+      // 直接静默丢弃会让联合状态永久停在旧值。
+      const joint =
+        typeof payload.joint === "string" ? payload.joint.toLowerCase() : "";
       if (
         joint === "neither" ||
         joint === "interviewer" ||
