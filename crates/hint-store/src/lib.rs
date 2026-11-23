@@ -383,7 +383,10 @@ impl Store {
     ///
     /// `start_ms` / `end_ms` 为相对会话开始的毫秒偏移；`is_echo` 由
     /// `hint-core` 的 `is_echo` 判定后传入，回声段也应落库（便于复盘），
-    /// 但不参与提示词上下文。
+    /// 但不参与提示词上下文。`recovered` 标记断线恢复后的补录段落。
+    /// 参数是对 SQLite 列的一一映射，聚合成 struct 反而让调用点更啰嗦，
+    /// 豁免 too_many_arguments。
+    #[allow(clippy::too_many_arguments)]
     pub fn add_segment(
         &self,
         session_id: i64,
@@ -767,7 +770,7 @@ mod tests {
             .create_session("anthropic", "m2", None)
             .expect("会话二");
         store
-            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false, false)
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false)
             .expect("段落");
         store
             .add_answer(first, None, "答", "m1", AnswerMetrics::default())
@@ -861,10 +864,10 @@ mod tests {
     fn segments_order_by_start_ms_not_insert_order() {
         let (store, session) = store_with_session();
         store
-            .add_segment(session, CHANNEL_SYSTEM, 500, 900, "后", false, false, false)
+            .add_segment(session, CHANNEL_SYSTEM, 500, 900, "后", false, false)
             .expect("段落一");
         store
-            .add_segment(session, CHANNEL_SYSTEM, 100, 400, "先", false, false, false)
+            .add_segment(session, CHANNEL_SYSTEM, 100, 400, "先", false, false)
             .expect("段落二");
         let segments = store.segments_of(session).expect("段落列表");
         assert_eq!(segments[0].text, "先");
@@ -875,7 +878,7 @@ mod tests {
     fn delete_session_cascades_segments_and_answers() {
         let (store, session) = store_with_session();
         let q = store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false, false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false)
             .expect("段落");
         store
             .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
@@ -922,7 +925,7 @@ mod tests {
             )
             .expect("改时间");
         store
-            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧段落", false, false, false)
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧段落", false, false)
             .expect("旧段落");
 
         let deleted = store.cleanup_older_than_days(30).expect("清理");
@@ -947,7 +950,7 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         let old = store.create_session("p", "m", None).expect("旧会话");
         let q = store
-            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧问题", false, false, false)
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧问题", false, false)
             .expect("旧段落");
         store
             .add_answer(old, Some(q), "旧答案", "m", AnswerMetrics::default())
@@ -980,7 +983,7 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         let session = store.create_session("p", "m", None).expect("会话");
         let q = store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false, false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false)
             .expect("段落");
         store
             .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
@@ -1077,7 +1080,7 @@ mod tests {
             )
             .expect("改时间");
         store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "零秒", false, false, false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "零秒", false, false)
             .expect("段落零");
         store
             .add_segment(
@@ -1227,10 +1230,10 @@ mod tests {
         let first = store.create_session("p", "m", None).expect("会话一");
         let second = store.create_session("p", "m", None).expect("会话二");
         store
-            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false, false)
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false)
             .expect("段落一");
         store
-            .add_segment(second, CHANNEL_SYSTEM, 0, 100, "二", false, false, false)
+            .add_segment(second, CHANNEL_SYSTEM, 0, 100, "二", false, false)
             .expect("段落二");
 
         let detail = store.session_detail(first).expect("详情");
@@ -1270,16 +1273,7 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         assert!(
             store
-                .add_segment(
-                    12345,
-                    CHANNEL_SYSTEM,
-                    0,
-                    100,
-                    "无主段落",
-                    false,
-                    false,
-                    false
-                )
+                .add_segment(12345, CHANNEL_SYSTEM, 0, 100, "无主段落", false, false)
                 .is_err()
         );
     }
