@@ -4,6 +4,19 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.16] - 2026-11-24
+
+### 新增
+
+- **cargo-deny 三级门禁**：`deny.toml` 许可证白名单（拒绝 GPL/AGPL，守住「仅借鉴 pluely 思路」边界）、bans 重复版本 warn、sources 锁 crates.io。本机预编译二进制预演三关全过（`libbz2-rs-sys` 的 `bzip2-1.0.6` 显式例外，类 BSD）。
+- 前端测试第四波 +83（总 466）：Dashboard 59（rail 导航全分支、六类状态徽标 table 驱动、fake timers banner 6s/10s 失活、tab 切换、保存/日志目录/测试连接流转）、CaptureOverlay 24（四方向 normalizeRect、8px 边界、Esc/pointerCancel、监听清理）。两处变异验证（hidden 反转 4 红、min→max 6 红）。全组件测试覆盖完成。
+
+### 修复
+
+- **截图选区三处**（测试轮发现）：`setPointerCapture` 无 try（宿主缺 API 时选区整个打死）；`releasePointerCapture` 前缺能力检测；`finishSelection` 用 state 的 `current` 而非 pointerup 坐标——快速拖拽时最后一次 move 可能早于 up，产生偏小选区（真缺陷）。
+- `speechEdge` 枚举大小写容错（后端若变 `"BOTH"` 不再被静默丢弃）。
+- 仓库 license 元数据：src-tauri 补 `license = "MIT"`（三个 crate 已有）。
+
 ## [1.0.15] - 2026-11-24
 
 ### 工程
