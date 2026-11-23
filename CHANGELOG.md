@@ -4,6 +4,18 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.20] - 2026-11-24
+
+### 修复
+
+- **`--doctor` 的控制台输出从未生效**：真机跑 1.0.19 才发现 `hint.exe --doctor` 在 cmd 与 PowerShell 下 stdout 恒为空，只有报告文件能拿到。根因是程序为 Windows GUI 子系统，进程启动时没有控制台、stdout/stderr 句柄无效；原先只调了 `AttachConsole(ATTACH_PARENT_PROCESS)`，控制台附加上了但 Rust 的 `std::io::stdout()` 仍指向无效句柄。现在补上 `CreateFileW("CONOUT$")` + `SetStdHandle` 重绑输出与错误流。**实测 stdout 从 0 行变为 45 行**（cmd）。
+- 报告冗余：「模型根目录」与「安装位置」在就绪态是同一路径，删掉前者。
+- 旧模型目录提示细化：仍有数据时报体积并说明「确认新位置可用后再删」；只剩空壳（迁移成功的正常残留）则直接说「可安全删除」。真机上此前只给一句含糊的「若非残留可手动删除」。
+
+### 说明
+
+- PowerShell 直接调用 `hint.exe --doctor` 仍看不到输出——那是 PowerShell 不等待 GUI 进程、且对这类进程的管道捕获行为不同所致，不是程序缺陷。README 已写明 PowerShell 下改读 `doctor-report.txt`。
+
 ## [1.0.19] - 2026-11-24
 
 ### 修复
