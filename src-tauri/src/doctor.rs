@@ -53,7 +53,7 @@ fn collect(app_data_dir: &Path) -> String {
     let model_root = model_root_for_report(app_data_dir);
     let manager = hint_stt::ModelManager::new(model_root.clone());
     let _ = writeln!(out, "【语音模型】");
-    let _ = writeln!(out, "  模型根目录：{}", manager.model_dir().display());
+    // 状态里已经带了安装目录，不再单独打一行免得两份路径看着像不一致。
     match manager.status() {
         hint_stt::ModelStatus::Ready { model_dir } => {
             let _ = writeln!(out, "  状态：已就绪");
@@ -93,13 +93,30 @@ fn collect(app_data_dir: &Path) -> String {
         }
     }
     // 旧位置残留（升级后未迁移或迁移失败）单独提示。
+    // 区分「空壳目录」（迁移成功后的残留，删了无损失）与「仍有模型」（迁移
+    // 没跑或失败，里面可能还有 241 MB），两种情况该说的话不一样。
     let legacy = app_data_dir.join("voice");
     if legacy.is_dir() && legacy != model_root {
-        let _ = writeln!(
-            out,
-            "  提示：旧模型目录仍存在（{}），若非本次升级迁移残留可手动删除",
-            legacy.display()
-        );
+        let legacy_model_dir = legacy.join(hint_stt::assets::DIR_NAME);
+        let leftover_bytes = if legacy_model_dir.is_dir() {
+            dir_size(&legacy_model_dir)
+        } else {
+            0
+        };
+        if leftover_bytes > 0 {
+            let _ = writeln!(
+                out,
+                "  提示：旧模型目录仍有数据（{}，{}），当前使用的是新位置；确认新位置可用后可删除旧目录",
+                legacy.display(),
+                hint_core::diagnostics::format_mb(leftover_bytes)
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "  提示：旧模型目录只剩空壳（{}），可安全删除",
+                legacy.display()
+            );
+        }
     }
     let _ = writeln!(out);
 
@@ -296,6 +313,27 @@ fn collect(app_data_dir: &Path) -> String {
     out
 }
 
+/// 目录下所有文件的字节总数（不跟随符号链接，读不到就按 0 算）。
+///
+/// 只用于报告里「旧目录还剩多少」这一句，精度不重要、绝不能因为权限问题中断诊断。
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_file() {
+            total = total.saturating_add(metadata.len());
+        } else if metadata.is_dir() {
+            total = total.saturating_add(dir_size(&entry.path()));
+        }
+    }
+    total
+}
+
 /// 从日志尾部取 WARN/ERROR 行。
 ///
 /// 筛选与截断规则在 `hint_core::diagnostics::tail_warnings`（那边有单测，
@@ -307,19 +345,78 @@ fn tail_warnings(path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
 
 /// 尝试把输出挂到调用方控制台。
 ///
-/// release 构建带 `windows_subsystem = "windows"`，默认没有控制台，
-/// `println!` 会静默丢失。从 cmd / PowerShell 运行时父进程是有控制台的，
-/// `AttachConsole(ATTACH_PARENT_PROCESS)` 就能把输出接管过去。
-/// 失败不算错误：报告文件仍会写盘。
+/// release 构建带 `windows_subsystem = "windows"`，**进程启动时没有控制台**，
+/// 进程的 stdout/stderr 句柄是无效的（指向 NUL 或干脆为 NULL）。这时只调
+/// `AttachConsole(ATTACH_PARENT_PROCESS)` 是不够的——控制台附加上了，但
+/// CRITICAL 的是：Rust 的 `std::io::stdout()` 仍然指向那个无效句柄，
+/// `print!` 继续静默丢弃。实测（1.0.19 真机，cmd 与 PowerShell 都试过）
+/// 输出恒为空，报告文件能写。所以必须再 `CreateFileW("CONOUT$")` 拿到
+/// 新控制台的句柄并用 `SetStdHandle` 重新绑定。
+///
+/// 失败不算错误：报告文件仍会写盘，用户至少有文件可看。
 #[cfg(windows)]
 fn attach_parent_console() -> bool {
     const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
+    const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const OPEN_EXISTING: u32 = 3;
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn AttachConsole(dwProcessId: u32) -> i32;
+        fn CreateFileW(
+            lpFileName: *const u16,
+            dwDesiredAccess: u32,
+            dwShareMode: u32,
+            lpSecurityAttributes: *mut core::ffi::c_void,
+            dwCreationDisposition: u32,
+            dwFlagsAndAttributes: u32,
+            hTemplateFile: *mut core::ffi::c_void,
+        ) -> *mut core::ffi::c_void;
+        fn SetStdHandle(nStdHandle: u32, hHandle: *mut core::ffi::c_void) -> i32;
+        fn GetStdHandle(nStdHandle: u32) -> *mut core::ffi::c_void;
     }
-    // SAFETY: 只调用无副作用的控制台附加 API，不需要释放资源。
-    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 }
+
+    // SAFETY: 全部是 Win32 控制台句柄操作；句柄由系统释放（进程退出时），
+    // 这里不要手动 CloseHandle——之后 stdout 还要用它写数据。
+    unsafe {
+        // 已经是控制台进程（比如从 cmd 直接跑 debug 版）就别重复附加。
+        let already = !GetStdHandle(STD_OUTPUT_HANDLE).is_null();
+        if !already {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+        // "CONOUT$" 的 UTF-16 字面量（含结尾 NUL）。
+        let conout: [u16; 8] = [
+            b'C' as u16,
+            b'O' as u16,
+            b'N' as u16,
+            b'O' as u16,
+            b'U' as u16,
+            b'T' as u16,
+            b'$' as u16,
+            0,
+        ];
+        let handle = CreateFileW(
+            conout.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            core::ptr::null_mut(),
+            OPEN_EXISTING,
+            0,
+            core::ptr::null_mut(),
+        );
+        // INVALID_HANDLE_VALUE 是 -1。
+        if handle.is_null() || handle as isize == -1 {
+            return false;
+        }
+        // 两个流都要绑：诊断报告走 stdout，失败提示走 stderr。
+        let ok_out = SetStdHandle(STD_OUTPUT_HANDLE, handle) != 0;
+        let ok_err = SetStdHandle(STD_ERROR_HANDLE, handle) != 0;
+        ok_out && ok_err
+    }
 }
 
 #[cfg(not(windows))]
