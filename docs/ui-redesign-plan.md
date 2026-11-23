@@ -320,7 +320,37 @@ Tab：    .tab-bar .tab .tab.active .tabpanel
          .review-transcript .review-answers .review-answer .session-items .session-item
          .session-title .session-meta .legend .legend-item .legend-swatch
 共享：   .line .who .what .echo-tag                               （见 §7）
+深化轮： .segment-bar .segment(.active) .preset(.active) .input-wrap .input-toggle
+         .test-result(.is-ok/.is-error) .test-result-head .test-result-meta
+         .field-group .field-group-title .loading-dot             （见 §3.15）
 ```
+
+### 3.15 深度优化轮新增类名（模型接口卡片深化）
+
+> 本轮聚焦「模型接口」卡片深度优化；下列类名为本轮新增，全部走既有 token，不引入硬编码。
+> 行为约束不变：协议分段控件替代原生 `select` 时，值（`Provider`）与 `onPatch` 语义完全一致；
+> API Key 显隐只切换输入框 `type`，Key 内容不进任何日志 / DOM 属性；测试结果卡只在 tsx 层派生耗时与成败。
+
+| 类名 | 状态 | 说明 / 关键样式 |
+| --- | --- | --- |
+| `.field-group` | **新增** | 卡内信息分组容器：`flex column` + `gap:var(--space-3)`；相邻分组间 `--separator` 分隔线 + `padding-top` |
+| `.field-group-title` | **新增** | 分组小标题：`--font-sm` / 600 / `--text-muted` / `letter-spacing:0.5px` |
+| `.segment-bar` | **新增** | 分段切换容器：`flex` 等分、`gap:var(--space-1)`；配 `role="group"` + `aria-labelledby` |
+| `.segment` | **新增** | 分段按钮：`flex:1`、`--control-h` 高、`--radius-control`、`--surface-input` 底、`--font-sm`；hover 不浮起 |
+| `.segment.active` | **新增** | 选中态：`--accent-soft` 底 + `--accent-border` 描边 + `--accent` 字 + 600 字重；配 `aria-pressed` |
+| `.preset` | **新增** | 预设芯片按钮（`.preset-row` 内）：`--control-h-sm`、`--radius-pill`、`--font-sm`；替代原 `.ghost` 用法 |
+| `.preset.active` | **新增** | 表单与某预设完全一致时的高亮：`--accent-soft` / `--accent-border` / `--accent` |
+| `.input-wrap` | **新增** | 输入框 + 右侧内嵌按钮包装：`position:relative`；内部 `.form-input` 右侧加 padding 避让按钮 |
+| `.input-toggle` | **新增** | 内嵌切换按钮（API Key 显隐眼睛）：绝对定位右侧、`--control-h-icon` 方寸、透明底、hover `--bg-hover` |
+| `.test-result` | **新增** | 测试连接结果卡：`--radius-control`、`--bg-hover` 底；`role="status"` + `aria-live` |
+| `.test-result.is-ok` | **新增** | 成功语义：`--success-soft` 底 + `--success-border` |
+| `.test-result.is-error` | **新增** | 失败语义：`--danger-soft` 底 + `--danger-border` |
+| `.test-result-head` | **新增** | 结果卡头部：语义徽章 + 耗时/模型摘要，左右分布、可换行 |
+| `.test-result-meta` | **新增** | 摘要文字：`--font-sm`、`--text-muted`、`tabular-nums` |
+| `.loading-dot` | **新增** | 按钮内行内加载圆点：6px、`currentColor`、复用 `pulse` 动画 |
+
+> 说明：`.answer-box` 在结果卡内单独铺白底（`.test-result .answer-box`），让语义色只做外框，
+> 返回正文仍保持高对比可读；`button.ghost.m5` 本轮改为虚线胶囊，弱化「M5 预留」入口。
 
 ---
 
@@ -376,12 +406,12 @@ Tab：    .tab-bar .tab .tab.active .tabpanel
    }
    ```
    ModelCard / 保存卡片 / ProfileCard / ModelDownloadCard / SessionReview 统一引用它，按 tone 渲染 `.error-text` / `.status-warning` / `.status` / `.status-info`。**hook 一行不改。**
-2. 测试结果：`<pre aria-label="测试连接返回内容" className="answer-box">`，并在其上加 `.visually-hidden` 说明；`.answer-box` 走 token（`--radius-inline`、内嵌底、`--font-sm`）。
+2. 测试结果：结果卡（`.test-result` + 语义徽章 + 耗时/模型摘要）+ 内嵌 `<pre aria-label="测试连接返回内容" className="answer-box">`，并保留 `.visually-hidden` 说明；`.answer-box` 走 token（`--radius-inline`、内嵌底、`--font-sm`）。
 3. 辅助文案统一 `.muted.small`；卡片结构改 `.card` + `.card-head`（标题「模型接口」）+ `.card-body`。
-4. 预设按钮 `.ghost`；「刷新模型」`.secondary`；「测试连接」默认按钮（基础样式）；输入控件 `.form-input`。
+4. 预设按钮 `.preset`（当前预设高亮 `.active`）；「刷新模型」`.secondary`（加载态带 `.loading-dot`）；「测试连接」默认按钮（基础样式）；输入控件 `.form-input`；协议选择改 `.segment-bar` 分段控件；API Key 加 `.input-wrap` + `.input-toggle` 显隐；卡内用 `.field-group` 分「常用预设 / 接口凭据 / 预留」三组。
 5. 按钮焦点环由 §5 全局规则提供。
 
-**所用类名**：`.card`、`.card-head`、`.card-body`、`.preset-row`、`.ghost`、`.secondary`、`.form-input`、`.inline-row`、`.action-row`、`.answer-box`、`.status`、`.status-info`、`.status-warning`、`.error-text`、`.muted`、`.small`、`.visually-hidden`、`.screenshot-row`、`.m5`、`.tag-m5`。
+**所用类名**：`.card`、`.card-head`、`.card-body`、`.field-group`、`.field-group-title`、`.preset-row`、`.preset`、`.segment-bar`、`.segment`、`.form-input`、`.input-wrap`、`.input-toggle`、`.inline-row`、`.action-row`、`.test-result`、`.test-result-head`、`.test-result-meta`、`.answer-box`、`.badge`、`.badge-success`、`.badge-danger`、`.badge-neutral`、`.loading-dot`、`.status`、`.status-info`、`.status-warning`、`.error-text`、`.muted`、`.small`、`.visually-hidden`、`.screenshot-row`、`.m5`、`.tag-m5`。
 
 **保留 / 不变**
 - 保留：PRESETS 点击 `patch`、Base URL `onBlur` 自动识别协议并规范化、刷新模型、测试连接、截图问答提示展开与全部文案语义、`keySaved` 占位文案。

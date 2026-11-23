@@ -471,6 +471,41 @@ textarea:focus,
   box-shadow: 0 0 0 var(--focus-ring-halo) var(--danger-soft);
 }
 
+/* 带右侧内嵌按钮的输入框（如 API Key 显隐）。 */
+.input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-wrap .form-input {
+  width: 100%;
+  padding-right: calc(var(--space-3) + var(--control-h-icon) + var(--space-1));
+}
+
+button.input-toggle {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--control-h-icon);
+  height: var(--control-h-icon);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-inline);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+}
+
+button.input-toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+  box-shadow: none;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+}
+
 /* ---------- 按钮 ---------- */
 
 button {
@@ -589,6 +624,22 @@ button.m5 {
   color: var(--text-muted);
 }
 
+/* 截图问答 M5 预留：虚线圈标 + 暗字，弱化为「占位/未启用」观感。 */
+button.ghost.m5 {
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: none;
+}
+
+button.ghost.m5:hover:not(:disabled) {
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  transform: none;
+  box-shadow: none;
+}
+
 button.ghost.mini-import {
   padding: 0 var(--space-2);
   font-size: var(--font-sm);
@@ -648,6 +699,32 @@ button.segment.active {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+
+/* 预设芯片：紧凑可点的胶囊按钮，当前表单与预设完全一致时高亮。 */
+button.preset {
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-pill);
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-control);
+}
+
+button.preset:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  transform: none;
+  box-shadow: none;
+}
+
+button.preset.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .action-row {
@@ -936,6 +1013,16 @@ button.segment.active {
   }
 }
 
+/* 按钮内行内加载小圆点：颜色继承按钮文字，复用 pulse 动画。 */
+.loading-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
 /* ---------- 确认弹层（定义样式，本次不接入 window.confirm） ---------- */
 
 .confirm-overlay {
@@ -1070,6 +1157,48 @@ button.segment.active {
   font-family: inherit;
   font-size: var(--font-sm);
   overflow-wrap: anywhere;
+}
+
+/* ---------- 测试连接结果卡 ---------- */
+
+.test-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--separator);
+  background: var(--bg-hover);
+}
+
+.test-result.is-ok {
+  background: var(--success-soft);
+  border-color: var(--success-border);
+}
+
+.test-result.is-error {
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+}
+
+.test-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.test-result-meta {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.test-result .answer-box {
+  margin: 0;
+  background: var(--surface);
+  border-color: var(--separator);
 }
 
 /* ---------- 会话复盘 ---------- */
