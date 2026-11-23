@@ -4,6 +4,7 @@
 //! [`commands`]（前端 invoke 入口）里。
 
 mod commands;
+mod doctor;
 mod import;
 mod logging;
 mod session;
@@ -135,28 +136,33 @@ impl AppState {
 /// 兼容：启动时若发现旧 `<app_data_dir>/voice/sensevoice` 且新位置不存在，
 /// 整体搬过去（纯 `rename`，失败则继续用旧目录，不阻塞启动）。
 fn model_root(data_dir: &std::path::Path) -> std::path::PathBuf {
+    let legacy = data_dir.join("voice");
+    let Some(new_root) = model_root_path(data_dir) else {
+        tracing::warn!("无法定位 LOCALAPPDATA，语音模型继续存放在应用数据目录");
+        return legacy;
+    };
+    if let Ok(Some(migrated)) = migrate_legacy_voice_dir(&legacy, &new_root) {
+        tracing::info!(from = %legacy.display(), to = %migrated.display(), "已迁移旧语音模型目录");
+    }
+    new_root
+}
+
+/// 纯函数版模型根：只算路径，不迁移、不落盘。
+///
+/// 主程序用 [`model_root`]（带迁移），`--doctor` 用这个——诊断是只读的，
+/// 不能在收集信息时顺手搬 241 MB。返回 `None` 表示环境变量都拿不到，
+/// 调用方应回退到 `<data_dir>/voice`。
+pub(crate) fn model_root_path(_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     // Windows 下 %LOCALAPPDATA% 即 Tauri app_local_data_dir 的来源；
-    // 拿不到时回退 %APPDATA% 的父目录（Roaming 的上级即 Local），
-    // 两者都失败则继续使用旧位置（行为退化为历史版本）。
-    let local_app_data = std::env::var_os("LOCALAPPDATA")
+    // 拿不到时回退 %APPDATA% 的父目录（Roaming 的上级即 Local）。
+    std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("APPDATA")
                 .map(std::path::PathBuf::from)
                 .and_then(|roaming| roaming.parent().map(|parent| parent.to_path_buf()))
-        });
-    let new_root = match local_app_data {
-        Some(base) => base.join("hint-models"),
-        None => {
-            tracing::warn!("无法定位 LOCALAPPDATA，语音模型继续存放在应用数据目录");
-            return data_dir.join("voice");
-        }
-    };
-    let legacy = data_dir.join("voice");
-    if let Ok(Some(migrated)) = migrate_legacy_voice_dir(&legacy, &new_root) {
-        tracing::info!(from = %legacy.display(), to = %migrated.display(), "已迁移旧语音模型目录");
-    }
-    new_root
+        })
+        .map(|base| base.join("hint-models"))
 }
 
 /// 旧 `voice` 下的模型搬进新根；返回 `Ok(Some(新模型目录))` 表示发生了搬移。
@@ -231,6 +237,20 @@ pub(crate) fn set_session_running(app: &tauri::AppHandle, running: bool) {
             TRAY_TOOLTIP_IDLE
         }));
     }
+}
+
+/// `--doctor` 的诊断入口：不启动窗口、不改配置，只收集环境事实。
+///
+/// 需要在**任何 Tauri 初始化之前**调用——诊断要能在「界面打不开」
+/// 的场景下跑通，所以不能依赖 AppState。
+pub fn doctor_entry() -> i32 {
+    // 数据目录用与 tauri::path().app_data_dir() 相同的规则自行推导：
+    // %APPDATA%\<identifier>。推导失败时退回当前目录下的 hint-data。
+    let app_data_dir = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .map(|base| base.join("com.ojbkxc.hint"))
+        .unwrap_or_else(|| std::path::PathBuf::from("hint-data"));
+    doctor::run(&app_data_dir)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

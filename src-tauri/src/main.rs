@@ -14,5 +14,11 @@ fn main() {
         });
     }
 
+    // `--doctor`：不启动界面，只收集诊断信息。同样必须在 Tauri 初始化前，
+    // 因为它要能在「界面打不开」时还能跑通。
+    if std::env::args().any(|argument| argument == "--doctor") {
+        std::process::exit(hint_lib::doctor_entry());
+    }
+
     hint_lib::run()
 }
