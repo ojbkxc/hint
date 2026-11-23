@@ -572,12 +572,12 @@ fn merged_history(request: &ChatRequest) -> Vec<(TurnRole, String)> {
         if turn.text.trim().is_empty() {
             continue;
         }
-        if let Some((role, text)) = merged.last_mut() {
-            if *role == turn.role {
-                text.push('\n');
-                text.push_str(&turn.text);
-                continue;
-            }
+        if let Some((role, text)) = merged.last_mut()
+            && *role == turn.role
+        {
+            text.push('\n');
+            text.push_str(&turn.text);
+            continue;
         }
         merged.push((turn.role, turn.text.clone()));
     }
@@ -675,12 +675,10 @@ fn anthropic_body(settings: &Settings, request: &ChatRequest, stream: bool) -> V
     } else {
         let mut parts: Vec<Value> = Vec::with_capacity(request.images.len() + 1);
         // 同上：避免在当前问题前出现连续两条 user 消息。
-        if messages.last().and_then(|message| message["role"].as_str()) == Some("user") {
-            if let Some(previous) = messages.pop() {
-                if let Some(text) = previous["content"].as_str() {
-                    parts.push(json!({ "type": "text", "text": text }));
-                }
-            }
+        if let Some(previous) = messages.pop()
+            && let Some(text) = previous["content"].as_str()
+        {
+            parts.push(json!({ "type": "text", "text": text }));
         }
         parts.push(json!({ "type": "text", "text": request.user }));
         for image in &request.images {
@@ -735,14 +733,12 @@ fn gemini_body(request: &ChatRequest) -> Value {
 
     // 历史末尾是 user 时并入其 parts，保持 user/model 交替。
     let mut remaining_parts = Some(user_parts);
-    if let Some(last) = contents.last_mut() {
-        if last["role"].as_str() == Some("user") {
-            if let Some(existing) = last["parts"].as_array_mut() {
-                if let Some(parts) = remaining_parts.take() {
-                    existing.extend(parts);
-                }
-            }
-        }
+    if let Some(last) = contents.last_mut()
+        && last["role"].as_str() == Some("user")
+        && let Some(existing) = last["parts"].as_array_mut()
+        && let Some(parts) = remaining_parts.take()
+    {
+        existing.extend(parts);
     }
     if let Some(parts) = remaining_parts {
         contents.push(json!({ "role": "user", "parts": parts }));
@@ -1335,7 +1331,7 @@ fn emit_delta(
 ///
 /// 该函数只解析单行，不做多行 data 拼接（本模块用到的协议均为单行 JSON）。
 pub fn parse_sse_data(line: &str) -> Option<&str> {
-    let line = line.trim_end_matches(|c: char| c == '\r' || c == '\n');
+    let line = line.trim_end_matches(['\r', '\n']);
     if line.is_empty() || line.starts_with(':') {
         return None;
     }
