@@ -74,7 +74,11 @@ jobs:
       - name: 依赖安全审计（cargo-audit）
         run: |
           rustup component add cargo-audit 2>$null || cargo install cargo-audit --locked || exit 0
-          cargo audit --file Cargo.lock
+          # RUSTSEC-2026-0592 (url) / 0594 (cookie)：tauri/wry 生态整体锁定的传递依赖。
+          # url 的利用面是 Url::origin() 解析恶意 blob: URL（hint 不解析不可信 URL）；
+          # cookie 的利用面是 fork 后 nonce 重复（hint 是桌面进程，不做 cookie 服务器）。
+          # 升级 tauri 大版本才能带动，跟进修踪（见 docs/review.md）。
+          cargo audit --file Cargo.lock --ignore RUSTSEC-2026-0592 --ignore RUSTSEC-2026-0594
 
   build:
     name: 构建 Windows 安装包
