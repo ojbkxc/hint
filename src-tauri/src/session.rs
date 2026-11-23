@@ -1484,6 +1484,8 @@ fn run_recovery(
                         clip.end_ms,
                         &text,
                         is_echo,
+                        // 补录的段落：复盘页标「补录」图例的真实数据来源。
+                        true,
                     ) {
                         tracing::warn!(%error, "补录写段落失败");
                     }
@@ -1547,6 +1549,7 @@ fn handle_transcript(
                         end_ms,
                         text,
                         false,
+                        false,
                     )
                     .map_err(|error| tracing::warn!(%error, "写面试官段落失败"))
                     .ok()
@@ -1579,6 +1582,7 @@ fn handle_transcript(
                     end_ms,
                     text,
                     is_echo,
+                    false,
                 ) {
                     tracing::warn!(%error, "写麦克风段落失败");
                 }

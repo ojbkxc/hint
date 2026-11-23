@@ -112,7 +112,9 @@ export function useSessionControl(): SessionControl {
     if (Number.isFinite(id) && id > 0) setSessionId(id);
     setNotice("会话已启动");
     setStatus((current) =>
-      current.state === "listening"
+      // 启动期间后端已发 listening 或 error（命令与事件竞态）时以先到为准；
+      // 只保护 listening 会把 error 态覆盖回 connecting，错误提示被吞。
+      current.state === "listening" || current.state === "error"
         ? current
         : { state: "connecting", message: "正在启动语音引擎（首次加载较慢，请稍候）…" },
     );

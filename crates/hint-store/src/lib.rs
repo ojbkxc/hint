@@ -21,6 +21,7 @@
 //!     2_400,
 //!     "你能说说这个项目的难点吗？",
 //!     false,
+//!     false,
 //! )?;
 //! store.add_answer(
 //!     session,
@@ -96,7 +97,13 @@ CREATE TABLE IF NOT EXISTS profiles (
 "#;
 
 /// 按顺序执行的迁移脚本，下标即目标版本。
-const MIGRATIONS: &[&str] = &[SCHEMA_V1];
+///
+/// V2：segments 补 `recovered` 列——断线补录的段落在 V1 只落库文本，
+/// 复盘页「补录」图例永远无数据。`ALTER TABLE ... ADD COLUMN` 幂等
+/// 由 user_version 保证（只会执行一次）。
+const SCHEMA_V2: &str = "ALTER TABLE segments ADD COLUMN recovered INTEGER NOT NULL DEFAULT 0;";
+
+const MIGRATIONS: &[&str] = &[SCHEMA_V1, SCHEMA_V2];
 
 /// 存储层错误。
 #[derive(Debug, Error)]
@@ -147,6 +154,8 @@ pub struct Segment {
     pub end_ms: i64,
     pub text: String,
     pub is_echo: bool,
+    /// 断线恢复后补录的段落（前端复盘页标「补录」）。
+    pub recovered: bool,
 }
 
 impl Segment {
@@ -383,11 +392,20 @@ impl Store {
         end_ms: i64,
         text: &str,
         is_echo: bool,
+        recovered: bool,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO segments (session_id, channel, start_ms, end_ms, text, is_echo)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![session_id, channel, start_ms, end_ms, text, is_echo as i64],
+            "INSERT INTO segments (session_id, channel, start_ms, end_ms, text, is_echo, recovered)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![
+                session_id,
+                channel,
+                start_ms,
+                end_ms,
+                text,
+                is_echo as i64,
+                recovered as i64
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -426,7 +444,7 @@ impl Store {
     /// 会话的全部段落，按 `start_ms` 升序。
     pub fn segments_of(&self, session_id: i64) -> Result<Vec<Segment>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, channel, start_ms, end_ms, text, is_echo
+            "SELECT id, session_id, channel, start_ms, end_ms, text, is_echo, recovered
              FROM segments WHERE session_id = ?1 ORDER BY start_ms, id",
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
@@ -438,6 +456,7 @@ impl Store {
                 end_ms: row.get(4)?,
                 text: row.get(5)?,
                 is_echo: row.get::<_, i64>(6)? != 0,
+                recovered: row.get::<_, i64>(7)? != 0,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -748,7 +767,7 @@ mod tests {
             .create_session("anthropic", "m2", None)
             .expect("会话二");
         store
-            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false)
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false, false)
             .expect("段落");
         store
             .add_answer(first, None, "答", "m1", AnswerMetrics::default())
@@ -779,10 +798,19 @@ mod tests {
                 2_300,
                 "你能说说这个项目的难点吗？",
                 false,
+                false,
             )
             .expect("提问段落");
         let echo = store
-            .add_segment(session, CHANNEL_MIC, 2_400, 3_100, "你能说说这个项目", true)
+            .add_segment(
+                session,
+                CHANNEL_MIC,
+                2_400,
+                3_100,
+                "你能说说这个项目",
+                true,
+                false,
+            )
             .expect("回声段落");
         let a = store
             .add_segment(
@@ -791,6 +819,7 @@ mod tests {
                 3_200,
                 9_000,
                 "我主要负责自动化测试。",
+                false,
                 false,
             )
             .expect("回答段落");
@@ -832,10 +861,10 @@ mod tests {
     fn segments_order_by_start_ms_not_insert_order() {
         let (store, session) = store_with_session();
         store
-            .add_segment(session, CHANNEL_SYSTEM, 500, 900, "后", false)
+            .add_segment(session, CHANNEL_SYSTEM, 500, 900, "后", false, false, false)
             .expect("段落一");
         store
-            .add_segment(session, CHANNEL_SYSTEM, 100, 400, "先", false)
+            .add_segment(session, CHANNEL_SYSTEM, 100, 400, "先", false, false, false)
             .expect("段落二");
         let segments = store.segments_of(session).expect("段落列表");
         assert_eq!(segments[0].text, "先");
@@ -846,7 +875,7 @@ mod tests {
     fn delete_session_cascades_segments_and_answers() {
         let (store, session) = store_with_session();
         let q = store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false, false)
             .expect("段落");
         store
             .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
@@ -893,7 +922,7 @@ mod tests {
             )
             .expect("改时间");
         store
-            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧段落", false)
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧段落", false, false, false)
             .expect("旧段落");
 
         let deleted = store.cleanup_older_than_days(30).expect("清理");
@@ -918,7 +947,7 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         let old = store.create_session("p", "m", None).expect("旧会话");
         let q = store
-            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧问题", false)
+            .add_segment(old, CHANNEL_SYSTEM, 0, 100, "旧问题", false, false, false)
             .expect("旧段落");
         store
             .add_answer(old, Some(q), "旧答案", "m", AnswerMetrics::default())
@@ -951,7 +980,7 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         let session = store.create_session("p", "m", None).expect("会话");
         let q = store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "问题", false, false, false)
             .expect("段落");
         store
             .add_answer(session, Some(q), "答案", "m", AnswerMetrics::default())
@@ -999,7 +1028,15 @@ mod tests {
     fn markdown_export_keeps_every_regenerated_answer() {
         let (store, session) = store_with_session();
         let q = store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "介绍一下自己", false)
+            .add_segment(
+                session,
+                CHANNEL_SYSTEM,
+                0,
+                100,
+                "介绍一下自己",
+                false,
+                false,
+            )
             .expect("提问");
         // 同一提问被「重新生成」两次，三条答案都应导出。
         store
@@ -1040,10 +1077,18 @@ mod tests {
             )
             .expect("改时间");
         store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "零秒", false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "零秒", false, false, false)
             .expect("段落零");
         store
-            .add_segment(session, CHANNEL_SYSTEM, 65_000, 66_000, "一分零五秒", false)
+            .add_segment(
+                session,
+                CHANNEL_SYSTEM,
+                65_000,
+                66_000,
+                "一分零五秒",
+                false,
+                false,
+            )
             .expect("段落一");
 
         let markdown = store.export_markdown(session).expect("导出");
@@ -1105,10 +1150,19 @@ mod tests {
                 2_300,
                 "你能说说这个项目的难点吗？",
                 false,
+                false,
             )
             .expect("提问");
         store
-            .add_segment(session, CHANNEL_MIC, 2_400, 3_000, "你能说说这个项目", true)
+            .add_segment(
+                session,
+                CHANNEL_MIC,
+                2_400,
+                3_000,
+                "你能说说这个项目",
+                true,
+                false,
+            )
             .expect("回声");
         store
             .add_answer(
@@ -1143,7 +1197,7 @@ mod tests {
     fn markdown_export_places_orphan_answers_last() {
         let (store, session) = store_with_session();
         store
-            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "介绍下自己", false)
+            .add_segment(session, CHANNEL_SYSTEM, 0, 100, "介绍下自己", false, false)
             .expect("段落");
         store
             .add_answer(session, None, "我是张三。", "m", AnswerMetrics::default())
@@ -1173,10 +1227,10 @@ mod tests {
         let first = store.create_session("p", "m", None).expect("会话一");
         let second = store.create_session("p", "m", None).expect("会话二");
         store
-            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false)
+            .add_segment(first, CHANNEL_SYSTEM, 0, 100, "一", false, false, false)
             .expect("段落一");
         store
-            .add_segment(second, CHANNEL_SYSTEM, 0, 100, "二", false)
+            .add_segment(second, CHANNEL_SYSTEM, 0, 100, "二", false, false, false)
             .expect("段落二");
 
         let detail = store.session_detail(first).expect("详情");
@@ -1196,7 +1250,7 @@ mod tests {
             let store = Store::open(&path).expect("打开文件库");
             let session = store.create_session("openai", "m", None).expect("创建会话");
             store
-                .add_segment(session, CHANNEL_SYSTEM, 0, 100, "持久化段落", false)
+                .add_segment(session, CHANNEL_SYSTEM, 0, 100, "持久化段落", false, false)
                 .expect("段落");
             session
         };
@@ -1216,7 +1270,16 @@ mod tests {
         let store = Store::open_in_memory().expect("打开内存库");
         assert!(
             store
-                .add_segment(12345, CHANNEL_SYSTEM, 0, 100, "无主段落", false)
+                .add_segment(
+                    12345,
+                    CHANNEL_SYSTEM,
+                    0,
+                    100,
+                    "无主段落",
+                    false,
+                    false,
+                    false
+                )
                 .is_err()
         );
     }

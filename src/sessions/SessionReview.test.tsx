@@ -116,7 +116,7 @@ describe("SessionReview —— 左侧列表分支", () => {
     expect(screen.getByText("会话 c")).toBeInTheDocument();
   });
 
-  it("列表项 meta 显示模型与时长，模型缺失时回落「模型未知」", () => {
+  it("列表项 meta：模型缺失回落「模型未知」，时长缺失显示「时间未知」", () => {
     renderReview({
       sessions: [
         makeSummary({ id: "a", model: "paraformer" }),
@@ -129,9 +129,8 @@ describe("SessionReview —— 左侧列表分支", () => {
       ],
     });
     expect(screen.getByText("paraformer · 2 分 30 秒")).toBeInTheDocument();
-    // 模型回落成「模型未知」后 meta 永不为空，源码里的「时间未知」兜底走不到
-    expect(screen.getByText("模型未知")).toBeInTheDocument();
-    expect(screen.queryByText("时间未知")).not.toBeInTheDocument();
+    // 修复后：时长缺失显示「时间未知」而非空段（旧实现该兜底永远走不到）
+    expect(screen.getByText("模型未知 · 时间未知")).toBeInTheDocument();
   });
 
   it("选中项带 active 类与 aria-current，点击另一项回调 onOpen", async () => {
@@ -252,9 +251,9 @@ describe("SessionReview —— 详情正文", () => {
       selectedId: "s1",
       detail: makeDetail({
         segments: [
-          { id: "seg1", channel: "interviewer", text: "自我介绍", isEcho: false, startMs: 0 },
-          { id: "seg2", channel: "me", text: "我来自……", isEcho: false, startMs: 1000 },
-          { id: "seg3", channel: "me", text: "（重复）", isEcho: true, startMs: 2000 },
+          { id: "seg1", channel: "interviewer", text: "自我介绍", isEcho: false, recovered: false, startMs: 0 },
+          { id: "seg2", channel: "me", text: "我来自……", isEcho: false, recovered: true, startMs: 1000 },
+          { id: "seg3", channel: "me", text: "（重复）", isEcho: true, recovered: false, startMs: 2000 },
         ],
       }),
     });
@@ -265,6 +264,9 @@ describe("SessionReview —— 详情正文", () => {
     expect(within(rows[0] as HTMLElement).getByText("面试官")).toBeInTheDocument();
     expect(rows[1]).toHaveClass("me");
     expect(within(rows[1] as HTMLElement).getByText("我")).toBeInTheDocument();
+    // 补录行带 recovered 类与「补录」标签（此前图例存在但数据链路断掉，永无此类行）。
+    expect(rows[1]).toHaveClass("recovered");
+    expect(within(rows[1] as HTMLElement).getByText("补录")).toBeInTheDocument();
     expect(rows[2]).toHaveClass("echo");
     expect(within(rows[2] as HTMLElement).getByText("回声")).toBeInTheDocument();
     // 有转录时不再提示空转录

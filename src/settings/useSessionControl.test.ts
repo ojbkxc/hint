@@ -232,7 +232,7 @@ describe("useSessionControl —— start", () => {
     expect(result.current.sessionId).toBeNull();
   });
 
-  it("命令成功返回时会按代码现状把 error 状态改回 connecting（已知副作用，见报告）", async () => {
+  it("命令成功返回时保留先到的 error 态（修复：不再被 connecting 覆盖）", async () => {
     const pending = deferred<unknown>();
     backend.state.handler = () => pending.promise;
     const { result } = await mount();
@@ -247,8 +247,8 @@ describe("useSessionControl —— start", () => {
       pending.resolve(1);
     });
     await flush();
-    // 成功分支只保护 listening，error 会被覆盖成 connecting（只保留 error 文案）
-    expect(result.current.state).toBe("connecting");
+    // 修复后：成功分支同样保护先到的 error 态，不再覆盖回 connecting。
+    expect(result.current.state).toBe("error");
     expect(result.current.error).toBe("后端先报错");
   });
 

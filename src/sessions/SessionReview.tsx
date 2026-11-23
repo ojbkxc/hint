@@ -87,9 +87,9 @@ export default function SessionReview(props: Props) {
             <ul className="session-items">
               {sessions.map((session) => {
                 const title = session.note || session.startedAt || `会话 ${session.id}`;
-                const meta = [session.model || "模型未知", durationText(session)]
-                  .filter((part) => part !== "")
-                  .join(" · ");
+                // meta 恒非空（模型缺失时已回落「模型未知」）；「时间未知」
+                // 兜的其实是时长缺失——列表里没有时间列，时长才是第二段。
+                const meta = [session.model || "模型未知", durationText(session) || "时间未知"].join(" · ");
                 const active = session.id === selectedId;
                 return (
                   <li key={session.id}>
@@ -223,12 +223,13 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
             {detail.segments.map((segment) => (
               <div
                 key={segment.id}
-                className={`line ${segment.channel === "interviewer" ? "interviewer" : "me"}${segment.isEcho ? " echo" : ""}`}
+                className={`line ${segment.channel === "interviewer" ? "interviewer" : "me"}${segment.isEcho ? " echo" : ""}${segment.recovered ? " recovered" : ""}`}
               >
                 <span className="who">{segment.channel === "interviewer" ? "面试官" : "我"}</span>
                 <span className="what">
                   {segment.text}
                   {segment.isEcho && <em className="echo-tag">回声</em>}
+                  {segment.recovered && <em className="recovered-tag">补录</em>}
                 </span>
               </div>
             ))}

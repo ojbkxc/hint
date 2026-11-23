@@ -13,6 +13,8 @@ export type SessionSegment = {
   channel: "interviewer" | "me";
   text: string;
   isEcho: boolean;
+  /** 断线恢复后补录的段落（复盘页标「补录」）。 */
+  recovered: boolean;
   startMs: number | null;
 };
 
@@ -75,6 +77,7 @@ export function normalizeSessionDetail(raw: unknown, id: string): SessionDetail 
       channel: record.channel === "me" ? ("me" as const) : ("interviewer" as const),
       text: pickText(record, ["text"]),
       isEcho: record.isEcho === true || record.is_echo === true,
+      recovered: record.recovered === true,
       startMs: pickNumber(record, ["startMs", "start_ms", "start"]),
     };
   });

@@ -1533,6 +1533,12 @@ button.preset.active {
   border-radius: 4px;
 }
 
+/* 补录行：断线恢复后补写的段落，整行左侧给细指示条与回声行区分。 */
+.line.recovered .what {
+  padding-left: 6px;
+  border-left: 2px solid var(--accent-border);
+}
+
 .overlay-answer {
   flex: 1;
   min-height: 0;
