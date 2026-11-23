@@ -733,7 +733,9 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("读取版本");
-        assert_eq!(version, 1);
+        // 版本数必须等于迁移脚本个数（V2 加列后不再硬编码 1，
+        // 以后加 V3 只改 MIGRATIONS 常量）。
+        assert_eq!(version as usize, MIGRATIONS.len());
     }
 
     #[test]
