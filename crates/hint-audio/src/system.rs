@@ -258,16 +258,15 @@ impl LoopbackSession {
                 // 切换默认设备后，旧 loopback 端点常常仍然「存活」但只回静音；
                 // 若显式指定了设备或回退到了通信设备（不跟随默认），这里检测到
                 // 默认端点变化却无法自动迁移，必须明确告知用户怎么恢复。
-                if !self.follow_default {
-                    if let Some(opened) = self.default_at_open.as_deref()
-                        && current_default_render_id().is_some_and(|now| now != opened)
-                    {
-                        self.default_at_open = None; // 只提醒一次
-                        rt.warning(
-                            "系统默认输出设备已变更，当前会话仍在采集旧设备，可能听不到面试官；\
-                             请结束会话，在设置中重新选择输出设备并重新开始",
-                        );
-                    }
+                if !self.follow_default
+                    && let Some(opened) = self.default_at_open.as_deref()
+                    && current_default_render_id().is_some_and(|now| now != opened)
+                {
+                    self.default_at_open = None; // 只提醒一次
+                    rt.warning(
+                        "系统默认输出设备已变更，当前会话仍在采集旧设备，可能听不到面试官；\
+                         请结束会话，在设置中重新选择输出设备并重新开始",
+                    );
                 }
             }
 

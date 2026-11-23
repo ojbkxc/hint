@@ -119,12 +119,12 @@ impl AudioConfig {
                 self.chunk_samples
             )));
         }
-        if let Some(threshold) = self.noise_gate_threshold {
-            if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
-                return Err(AudioError::InvalidConfig(format!(
-                    "noise_gate_threshold={threshold} 超出 0.0..=1.0"
-                )));
-            }
+        if let Some(threshold) = self.noise_gate_threshold
+            && (!threshold.is_finite() || !(0.0..=1.0).contains(&threshold))
+        {
+            return Err(AudioError::InvalidConfig(format!(
+                "noise_gate_threshold={threshold} 超出 0.0..=1.0"
+            )));
         }
         Ok(())
     }

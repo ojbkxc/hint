@@ -927,11 +927,11 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
     emit_status(app, "listening", "面试进行中");
     // 开始面试时自动显示浮层：面试一开始用户就该看到转录与电平，
     // 不必先摸热键。用户手动隐藏过浮层时不强行弹出（尊重显式操作）。
-    if let Some(window) = app.get_webview_window("overlay") {
-        if !window.is_visible().unwrap_or(false) {
-            let _ = window.show();
-            let _ = window.set_focusable(true);
-        }
+    if let Some(window) = app.get_webview_window("overlay")
+        && !window.is_visible().unwrap_or(false)
+    {
+        let _ = window.show();
+        let _ = window.set_focusable(true);
     }
     tracing::info!(session_id, "session started");
     Ok(session_id)

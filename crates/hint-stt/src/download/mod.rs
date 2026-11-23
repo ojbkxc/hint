@@ -191,11 +191,11 @@ impl ModelManager {
             // 判据必须与 `prepare_inner` 一致（记录 + 摘要 + 大小）：只用
             // `find_record` 会把摘要对不上的旧文件算成「已下载」，进度条
             // 显示接近 100% 却仍要整份重下。
-            if manifest::is_installed(&self.layout, manifest, file) {
-                if let Ok(meta) = fs::metadata(self.layout.file_path(file.target)) {
-                    total += meta.len().min(file.bytes);
-                    continue;
-                }
+            if manifest::is_installed(&self.layout, manifest, file)
+                && let Ok(meta) = fs::metadata(self.layout.file_path(file.target))
+            {
+                total += meta.len().min(file.bytes);
+                continue;
             }
             if let Ok(meta) = fs::metadata(self.layout.part_path(file)) {
                 total += meta.len().min(file.bytes);
@@ -283,29 +283,29 @@ impl ModelManager {
                 .unwrap_or(0);
             needed += file.bytes.saturating_sub(have);
         }
-        if needed > 0 {
-            if let Some(free) = free_bytes(&self.layout.base) {
-                // 首次安装按清单总量 + 余量预检，语义上就是「约 300MB」；
-                // 已有 `.part` 的续传只预留剩余字节 + 64MB 暂存。
-                let budget = if needed >= assets::TOTAL_BYTES {
-                    assets::REQUIRED_DISK_BYTES
-                } else {
-                    needed + 64 * 1024 * 1024
-                };
-                if free < budget {
-                    tracing::warn!(
-                        free_bytes = free,
-                        needed_bytes = budget,
-                        "可用磁盘空间不足，取消下载"
-                    );
-                    // 数字直接写进中文消息：续传时需求远小于首次的约 300MB，
-                    // 固定文案会误导用户。
-                    return Err(SttError::storage(format!(
-                        "磁盘空间不足：当前可用约 {} MB，本次还需要约 {} MB",
-                        free / 1024 / 1024,
-                        budget / 1024 / 1024
-                    )));
-                }
+        if needed > 0
+            && let Some(free) = free_bytes(&self.layout.base)
+        {
+            // 首次安装按清单总量 + 余量预检，语义上就是「约 300MB」；
+            // 已有 `.part` 的续传只预留剩余字节 + 64MB 暂存。
+            let budget = if needed >= assets::TOTAL_BYTES {
+                assets::REQUIRED_DISK_BYTES
+            } else {
+                needed + 64 * 1024 * 1024
+            };
+            if free < budget {
+                tracing::warn!(
+                    free_bytes = free,
+                    needed_bytes = budget,
+                    "可用磁盘空间不足，取消下载"
+                );
+                // 数字直接写进中文消息：续传时需求远小于首次的约 300MB，
+                // 固定文案会误导用户。
+                return Err(SttError::storage(format!(
+                    "磁盘空间不足：当前可用约 {} MB，本次还需要约 {} MB",
+                    free / 1024 / 1024,
+                    budget / 1024 / 1024
+                )));
             }
         }
         // 已完成文件累加到整体进度里。
@@ -687,15 +687,15 @@ where
             resumed = true;
         }
         200 => {
-            if let Some(length) = response.header("content-length") {
-                if length.parse::<u64>().ok() != Some(file.bytes) {
-                    return Err(SttError::Integrity {
-                        message: format!(
-                            "server reported {length} bytes for {}, expected {}",
-                            file.name, file.bytes
-                        ),
-                    });
-                }
+            if let Some(length) = response.header("content-length")
+                && length.parse::<u64>().ok() != Some(file.bytes)
+            {
+                return Err(SttError::Integrity {
+                    message: format!(
+                        "server reported {length} bytes for {}, expected {}",
+                        file.name, file.bytes
+                    ),
+                });
             }
             // 服务器不支持 Range：顺序覆盖已有 .part。
             offset = 0;
