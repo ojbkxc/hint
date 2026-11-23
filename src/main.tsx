@@ -13,7 +13,8 @@ function currentLabel(): string {
   try {
     return getCurrentWindow().label;
   } catch {
-    // 纯浏览器预览时没有 Tauri 窗口，按设置页渲染。
+    // 纯浏览器预览时没有 Tauri 窗口；未知 label 也走这条回落。
+    // 落到 "main" 即渲染设置页（Dashboard）——不是"按设置页渲染"之外的窗口。
     return "main";
   }
 }

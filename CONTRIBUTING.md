@@ -25,17 +25,26 @@ npm run tauri build
 
 ```bash
 npx tsc --noEmit
+npm run lint
+npm run test
 npm run build
+cargo fmt --all -- --check
+cargo clippy -p hint-core -p hint-store -p hint-audio --all-targets -- -D warnings
 cargo test -p hint-core -p hint-store -p hint-audio
 cargo test -p hint-stt --no-default-features
+cargo deny --workspace check licenses bans sources
 ```
+
+`cargo deny` 需要先 `cargo install cargo-deny --locked`（或从 GitHub Release 下预编译二进制）。它会挡住 GPL/AGPL 依赖——参考项目 pluely 是 GPL-3.0，本项目只借鉴思路、不复用其代码，这条线不能破。
 
 Rust 侧的完整检查与测试以 `build.yml`（windows-latest + MSVC）为准。`cargo test -p hint` 在本地与 CI 都因 `sherpa-onnx-sys` 静态库无法链接 test harness 而不可用，所以壳层里能测的逻辑请下沉到 `hint-core`。
 
 ## 代码约定
 
-- Rust：提交前跑 `cargo fmt`，并过一遍 `cargo clippy`（不要留下新告警）。
-- 前端：`npx tsc --noEmit` 必须干净；类型错误不要用 `any` 或 `@ts-ignore` 压掉。
+- Rust：提交前跑 `cargo fmt --all -- --check`，并过 `cargo clippy -D warnings`（CI 是硬门禁，别留新告警）。
+- 前端：`npx tsc --noEmit` 必须干净；类型错误不要用 `any` 或 `@ts-ignore` 压掉。ESLint 现在是 0 error 0 warning，保持。
+- 改前端逻辑请同时补 Vitest 用例：仓库现在是 23 个测试文件、466 个用例，总覆盖率约 87%，别让新代码裸奔。
+- 依赖：新增 crate 前先想清楚许可证（`cargo deny` 会拦 GPL/AGPL），且必须来自 crates.io。
 - 缩进与换行按 `.editorconfig`：Rust 4 空格、前端 2 空格，统一 LF 入库（`.gitattributes` 已把源码与文本类文件锁定为 LF，`*.ps1` / `*.bat` / `*.cmd` 保持 CRLF）。
 - Markdown 行尾双空格用于换行，`.editorconfig` 对 `[*.md]` 特意关掉了 `trim_trailing_whitespace`，别手动删。
 - 前端 `.tsx` / `.json` 用编辑器的精确替换（局部 patch）来改，不要整文件重写——这些文件里有大量手工对齐的 JSX 与中文文案，整写会把无关行一起搅进 diff，review 时看不出你真正改了什么。

@@ -266,10 +266,17 @@ npm run tauri build
 
 ```bash
 npx tsc --noEmit
+npm run lint
+npm run test          # Vitest，466 个用例
 npm run build
+cargo fmt --all -- --check
+cargo clippy -p hint-core -p hint-store -p hint-audio --all-targets -- -D warnings
 cargo test -p hint-core -p hint-store -p hint-audio
 cargo test -p hint-stt --no-default-features
+cargo deny --workspace check licenses bans sources
 ```
+
+CI 在 `windows-latest` 上按上表逐项把关（外加 `cargo audit`、`cargo clippy -p hint-stt -p hint --bins` 与 Tauri 集成编译），全绿才算通过。
 
 Rust 侧的完整检查与测试以 GitHub Actions 的 `build.yml`（windows-latest + MSVC）为准；
 `cargo test -p hint` 在本地与 CI 都因 sherpa-onnx-sys 静态库无法链接 test harness 而不可用，

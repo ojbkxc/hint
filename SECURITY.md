@@ -38,6 +38,15 @@ hint 是**本地桌面工具**，不是服务端产品，安全模型按本机�
 - **API Key 存在 Windows 凭据管理器**（`keyring`），不写配置文件、不进日志；界面回显只给掩码。
 - **CSP 已启用（最小集）**：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost`。脚本锁死 `self`、无 `unsafe-eval`；样式保留 `unsafe-inline` 是因为电平条宽度、下载进度百分比、浮层不透明度都是运行时内联样式（无法用静态 CSS 表达百分比），这是收窄后的必要面，不是疏漏。
 
+## 依赖与供应链
+
+CI 上有四道依赖质量门：
+
+- `cargo audit`（RustSec 漏洞库）：已知漏洞清零；`url` / `cookie` 两条为 tauri/wry 生态锁定、本应用利用面不存在的条目带理由豁免，升级 tauri 大版本时跟进修订。
+- `cargo deny`（三个维度）：`licenses` 白名单只放行 MIT / Apache-2.0 / BSD / ISC / MPL-2.0 等宽松许可证，**拒绝 GPL / AGPL 系列**（参考项目 pluely 是 GPL-3.0，本项目只借鉴思路、不复用其代码）；`bans` 监控重复版本；`sources` 只允许 crates.io，防止依赖被替换成任意 git 或本地源。
+- `cargo clippy -D warnings` 与 `cargo fmt --check`：静态质量门。
+- 前端：`tsc --noEmit`、ESLint（0 warning）、Vitest。
+
 ## 威胁模型
 
 按「本机其他进程」和「你自己配置的模型接口」两个面来评估：

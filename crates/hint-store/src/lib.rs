@@ -862,6 +862,50 @@ mod tests {
         assert_eq!(answer.token_out, Some(96));
     }
 
+    /// `recovered` 必须真的落库并读回：补录路径写 true、实时路径写 false，
+    /// 复盘页「补录」标记全靠这一列（V2 迁移前该列不存在，标记是死 UI）。
+    #[test]
+    fn recovered_flag_roundtrips_and_defaults_to_zero() {
+        let (store, session) = store_with_session();
+        // 实时路径：false
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 0, 500, "实时行", false, false)
+            .expect("实时段落");
+        // 补录路径：true
+        store
+            .add_segment(session, CHANNEL_SYSTEM, 600, 900, "补录行", false, true)
+            .expect("补录段落");
+        // 补录且回声：两个标记独立
+        store
+            .add_segment(session, CHANNEL_MIC, 1_000, 1_200, "补录回声", true, true)
+            .expect("补录回声");
+
+        let segments = store.segments_of(session).expect("段落列表");
+        assert_eq!(segments.len(), 3);
+        assert!(!segments[0].recovered, "实时行不应被标补录");
+        assert!(segments[1].recovered, "补录行必须读回 true");
+        assert!(
+            segments[2].recovered && segments[2].is_echo,
+            "两个标记互不影响"
+        );
+
+        // 迁移列有 DEFAULT 0：绕开 add_segment 直接插，模拟 V1 时代写下的老行。
+        store
+            .conn
+            .execute(
+                "INSERT INTO segments (session_id, channel, start_ms, end_ms, text, is_echo)
+                 VALUES (?1, ?2, 0, 1, 'V1 老行', 0)",
+                params![session, CHANNEL_SYSTEM],
+            )
+            .expect("插入 V1 风格行");
+        let old = store.segments_of(session).expect("段落列表");
+        let legacy = old
+            .iter()
+            .find(|segment| segment.text == "V1 老行")
+            .expect("应能读回 V1 风格行");
+        assert!(!legacy.recovered, "缺省列必须回落 false 而不是报错");
+    }
+
     #[test]
     fn segments_order_by_start_ms_not_insert_order() {
         let (store, session) = store_with_session();
