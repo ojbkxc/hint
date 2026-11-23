@@ -42,6 +42,10 @@ pub struct SttGapTracker {
     live_finals: Vec<(i64, String)>,
     drop_warned: bool,
     outage_seq: u64,
+    /// 是否已经产出过至少一次识别结果。用于区分「冷启动期」与「热路径」：
+    /// worker 冷启最长 60s，首个结果到达前的看门狗门槛应放宽，否则会把
+    /// 正常冷启误判为 stall 并反复回收引擎。
+    has_transcript: bool,
 }
 
 impl SttGapTracker {
@@ -56,6 +60,7 @@ impl SttGapTracker {
             live_finals: Vec::new(),
             drop_warned: false,
             outage_seq: 0,
+            has_transcript: false,
         }
     }
 
@@ -148,6 +153,8 @@ impl SttGapTracker {
         self.speech_ms_since_quiet = 0;
         self.consecutive_stalls = 0;
         self.drop_warned = false;
+        // 收到结果即说明 worker 已就绪：此后看门狗恢复常规门槛。
+        self.has_transcript = true;
         // 空结果（纯噪声段）说明 worker 活着、可以关闭 outage，但不值得记入
         // 去重用的 live 文本池。
         if !text.trim().is_empty() {
@@ -178,6 +185,11 @@ impl SttGapTracker {
         &self.ring
     }
 
+    /// 是否已产出过识别结果（区分冷启动期与热路径的看门狗门槛）。
+    pub fn has_transcript(&self) -> bool {
+        self.has_transcript
+    }
+
     pub fn reset(&mut self) {
         self.ring.clear();
         self.outage = None;
@@ -186,6 +198,7 @@ impl SttGapTracker {
         self.consecutive_stalls = 0;
         self.live_finals.clear();
         self.drop_warned = false;
+        self.has_transcript = false;
     }
 }
 
@@ -257,5 +270,16 @@ mod tests {
         assert!(t.ring().oldest_start_ms().is_none());
         // reset 后 outage 已清，on_transcript 不再返回 outage。
         assert!(t.on_transcript("x", 2_000).is_none());
+    }
+
+    #[test]
+    fn has_transcript_tracks_first_result_and_resets() {
+        let mut t = tracker();
+        assert!(!t.has_transcript());
+        // 空结果也说明 worker 活着，应置位。
+        t.on_transcript("", 1_000);
+        assert!(t.has_transcript());
+        t.reset();
+        assert!(!t.has_transcript());
     }
 }

@@ -11,6 +11,10 @@ use thiserror::Error;
 pub enum FailureReason {
     /// 连接中断、连接被重置等可重试的网络问题。
     Network,
+    /// 连接层失败（TCP/TLS 握手阶段即失败，如被墙、路由不通）。
+    /// 与 [`Network`](FailureReason::Network) 分开：它不是「连上了但传输出错」，
+    /// 在**同一源**上重试几乎必然还是同样的失败，应立刻换到下一个下载源。
+    Connect,
     /// DNS 解析失败。
     Dns,
     /// 超时（连接、读、无数据判死）。
@@ -31,6 +35,10 @@ pub enum FailureReason {
 
 impl FailureReason {
     /// 同一源上值得重试（结果可能不同）的分类。
+    ///
+    /// 注意 [`Connect`](FailureReason::Connect) **不在此列**：连接层失败在同一
+    /// 源上重试几乎必然复现（被墙、路由不通），每多试一次就要再白等一个连接
+    /// 超时。把它排除后，下载器会立即换源，而不是 6 次 × 超时地死磕。
     pub fn is_transient(self) -> bool {
         matches!(self, FailureReason::Network | FailureReason::Timeout)
     }
@@ -39,6 +47,10 @@ impl FailureReason {
     ///
     /// `Integrity` 按清单文档 §5 视为终态：239MB 模型换了源也多半是同一个坏文件，
     /// 立即失败交给用户重试，比默默换源更可诊断。
+    ///
+    /// 注意 [`Connect`](FailureReason::Connect) **也不在此列**：它既不是「同源可
+    /// 重试」也不是「换源无意义」，而是「换源可能有用」。若误把它并进 `is_terminal`，
+    /// 下载器会直接中止整个下载，而不是切换镜像源——这是最需要避免的陷阱。
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
@@ -53,6 +65,7 @@ impl FailureReason {
     pub fn user_message(self) -> &'static str {
         match self {
             FailureReason::Network => "网络连接中断。已下载部分会保留，恢复网络后继续。",
+            FailureReason::Connect => "无法连接到下载服务器。请检查网络或代理设置；已下载部分会保留，稍后重试即可。",
             FailureReason::Dns => "无法解析下载地址。请检查网络或 DNS 设置。",
             FailureReason::Timeout => "下载超时。已下载部分会保留，请重试。",
             FailureReason::Certificate => "证书校验失败。可能存在代理劫持或系统时间错误。",
@@ -434,11 +447,12 @@ pub fn classify_transport(transport: &ureq::Transport) -> FailureReason {
     use ureq::ErrorKind as K;
     match transport.kind() {
         K::Dns => FailureReason::Dns,
-        K::ConnectionFailed
-        | K::TooManyRedirects
-        | K::Io
-        | K::ProxyConnect
-        | K::ProxyUnauthorized => {
+        // 连接层失败（TCP/TLS 握手阶段就失败，典型如被墙、路由不通）：直接归
+        // `Connect`，不再走文本分类。以前这里落到文本分类，"Connect error" 不含
+        // "connection" 子串 → Unknown → 兜底 Network，于是被当作可重试，在同一
+        // 源上死磕 6 次 × 15s 超时。归为 Connect 后下载器立即换源。
+        K::ConnectionFailed => FailureReason::Connect,
+        K::TooManyRedirects | K::Io | K::ProxyConnect | K::ProxyUnauthorized => {
             // Io 的底层原因可能是 TLS、DNS 或普通网络中断，看文本再细分。
             match transport.message() {
                 Some(message) => match classify_io_message(message) {
@@ -646,5 +660,10 @@ mod tests {
         assert!(!FailureReason::Http.is_transient());
         assert!(FailureReason::Storage.is_terminal());
         assert!(FailureReason::Integrity.is_terminal() || !FailureReason::Integrity.is_transient());
+        // 连接层失败：既不可在同源上重试（避免 6×超时死磕），也不是终态
+        // （否则会中止整个下载而不是换源）。
+        assert!(!FailureReason::Connect.is_transient());
+        assert!(!FailureReason::Connect.is_terminal());
+        assert!(FailureReason::Connect.user_message().contains("连接"));
     }
 }

@@ -431,6 +431,10 @@ fn cancelled() -> SttError {
 /// 未启用 `proxy-from-env`，`AgentBuilder` 不会自动读取 `HTTP(S)_PROXY`；
 /// 只启用 `native-tls` feature 时，`ureq` 不会自动选择 TLS 后端，必须显式注入
 /// 系统 TLS 连接器（Windows 上是 schannel，无需 C 工具链）。
+///
+/// 连接超时设为 8 秒：连接层失败会立即换源（见 `FailureReason::Connect`），
+/// 每次 doomed 的连接尝试不必再干等 15 秒；8 秒足够覆盖正常握手，也避免
+/// 被墙时每个源白等太久。
 fn agent() -> Result<ureq::Agent> {
     let tls = ureq::native_tls::TlsConnector::new().map_err(|error| {
         SttError::network(
@@ -441,7 +445,7 @@ fn agent() -> Result<ureq::Agent> {
     })?;
     Ok(ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(tls))
-        .timeout_connect(Duration::from_secs(15))
+        .timeout_connect(Duration::from_secs(8))
         .timeout_read(DEFAULT_IDLE_TIMEOUT)
         .redirects(10)
         .build())

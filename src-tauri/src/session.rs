@@ -74,6 +74,9 @@ const RING_CAP_MS: u64 = 120_000;
 const ERROR_PREROLL_MS: u64 = 3_000;
 /// 看门狗：无识别结果的时长门槛。
 const STALL_MS: u64 = 15_000;
+/// 看门狗：首个识别结果到达前的门槛。worker 冷启要加载约 240MB 模型，
+/// 最长可达 60s，用 15s 会把正常冷启误判为 stall 并反复回收引擎。
+const STALL_FIRST_MS: u64 = 90_000;
 /// 看门狗：判 stall 所需的最低语音输入。
 const STALL_SPEECH_MS: u64 = 4_000;
 /// stall 退避上限。
@@ -768,13 +771,19 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
                     Channel::Interviewer => &mut recovery.interviewer,
                     Channel::Me => &mut recovery.me,
                 };
+                // 首个结果到达前用更宽的门槛，避免冷启动被误判为停滞。
+                let stall_ms = if tracker.has_transcript() {
+                    STALL_MS
+                } else {
+                    STALL_FIRST_MS
+                };
                 tracker.on_audio(
                     &chunk.samples,
                     start_ms,
                     dur_ms,
                     rms,
                     SPEECH_RMS,
-                    STALL_MS,
+                    stall_ms,
                     STALL_SPEECH_MS,
                     MAX_STALL_BACKOFF_MS,
                 )

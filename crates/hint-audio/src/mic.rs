@@ -232,8 +232,17 @@ fn build_stream(
                 // 失败走「重建流」会造成重连风暴（实测 41 次 underrun 对应
                 // 43 次全量重开流，会话因 5 连失败超 15 秒宽限被整体判死）。
                 // 这里降为 debug：流不死就继续跑，下一帧数据照常到达。
-                if error.kind() == cpal::ErrorKind::Other
-                    && error.to_string().to_ascii_lowercase().contains("buffer underrun or overrun")
+                // WASAPI 实际以 `ErrorKind::Xrun` 上报（cpal 0.18 wasapi/stream.rs
+                // 在 GetBuffer 带 DATA_DISCONTINUITY 标志时 `ErrorKind::Xrun.into()`），
+                // 部分后端则退化为 `Other` + 文本。两种都要识别，否则判定条件落空、
+                // 欠载继续被当成通道失败而重建流。
+                let kind = error.kind();
+                let xrun_text = error
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("buffer underrun or overrun");
+                if kind == cpal::ErrorKind::Xrun
+                    || (kind == cpal::ErrorKind::Other && xrun_text)
                 {
                     tracing::debug!("麦克风缓冲瞬时欠载（流仍在运行，忽略）：{error}");
                     return;
