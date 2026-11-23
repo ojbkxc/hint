@@ -65,16 +65,12 @@ export default function ProfileCard({ form, patch }: Props) {
   }
 
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>资料注入</h2>
-      </div>
-      <div className="card-body">
+    <section className="settings-block">
+      <div className="field-group">
+        <p className="field-group-title">简历</p>
         <div className="field">
           <div className="field-head">
-            <label className="field-label" htmlFor="profile-resume">
-              简历
-            </label>
+            <span className="field-label">面试官会围绕这里提问</span>
             <button
               type="button"
               className="ghost mini-import"
@@ -87,9 +83,10 @@ export default function ProfileCard({ form, patch }: Props) {
           <textarea
             id="profile-resume"
             className="form-input form-textarea"
-            rows={9}
+            rows={8}
             value={form.resume}
             onChange={(event) => patch({ resume: event.target.value })}
+            aria-label="简历"
             placeholder="粘贴简历文本，或点右上角「从文件导入」选择 TXT / MD / DOCX / PDF。简历与项目资料各最多 6000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
           />
           <p
@@ -99,12 +96,13 @@ export default function ProfileCard({ form, patch }: Props) {
             {form.resume.length} / {IMPORT_LIMIT}
           </p>
         </div>
+      </div>
 
+      <div className="field-group">
+        <p className="field-group-title">项目资料</p>
         <div className="field">
           <div className="field-head">
-            <label className="field-label" htmlFor="profile-projects">
-              项目资料
-            </label>
+            <span className="field-label">背景、技术栈、你负责的部分与量化结果</span>
             <button
               type="button"
               className="ghost mini-import"
@@ -120,6 +118,7 @@ export default function ProfileCard({ form, patch }: Props) {
             rows={7}
             value={form.projects}
             onChange={(event) => patch({ projects: event.target.value })}
+            aria-label="项目资料"
             placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。也可从 TXT / MD / DOCX / PDF 导入；最多 6000 字，超出会截断并标注。"
           />
           <p

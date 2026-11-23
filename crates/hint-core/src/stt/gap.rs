@@ -161,8 +161,7 @@ impl SttGapTracker {
             self.live_finals.push((now_ms, text.to_string()));
         }
         // 只保留最近 120 秒的 live final，避免无限增长。
-        self.live_finals
-            .retain(|(ms, _)| now_ms - ms <= 120_000);
+        self.live_finals.retain(|(ms, _)| now_ms - ms <= 120_000);
         match self.outage.take() {
             Some(mut outage) => {
                 outage.recovered_at_ms = Some(now_ms);

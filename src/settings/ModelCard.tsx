@@ -130,216 +130,230 @@ export default function ModelCard(props: Props) {
   }
 
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>模型接口</h2>
+    <section className="settings-block">
+      <div className="field-group">
+        <p className="field-group-title">当前生效</p>
+        {/* 技术值集中一行：等宽 + tabular-nums，改完立刻能核对，不用在输入框之间来回看。 */}
+        <div className="settings-kv">
+          <span className="settings-kv-key">协议</span>
+          <span className="settings-kv-val">{activeProtocol?.label ?? form.provider}</span>
+          <span className="settings-kv-key">Base URL</span>
+          <span className="settings-kv-val settings-mono">{form.baseUrl || "未填写"}</span>
+          <span className="settings-kv-key">模型名</span>
+          <span className="settings-kv-val settings-mono">{form.model || "未填写"}</span>
+          <span className="settings-kv-key">API Key</span>
+          <span className="settings-kv-val">
+            <span className={`badge ${keySaved ? "badge-success" : "badge-neutral"}`}>
+              {keySaved ? "已保存" : "未保存"}
+            </span>
+          </span>
+        </div>
       </div>
-      <div className="card-body">
-        <div className="field-group">
-          <p className="field-group-title">常用预设</p>
-          <div className="preset-row" role="group" aria-label="常用预设">
-            {PRESETS.map((preset) => (
+
+      <div className="field-group">
+        <p className="field-group-title">常用预设</p>
+        <div className="preset-row" role="group" aria-label="常用预设">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              className={`preset${activePreset === preset ? " active" : ""}`}
+              aria-pressed={activePreset === preset}
+              title={`一键填充：${preset.baseUrl} / ${preset.model}`}
+              onClick={() =>
+                props.onPatch({
+                  provider: preset.provider,
+                  baseUrl: preset.baseUrl,
+                  model: preset.model,
+                })
+              }
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">
+          预设模型名会随厂商更新，可在下方直接修改。
+        </p>
+      </div>
+
+      <div className="field-group">
+        <p className="field-group-title">接口凭据</p>
+
+        <div className="field">
+          <span className="field-label" id="model-provider-label">
+            接口协议
+          </span>
+          <div
+            className="segment-bar"
+            role="group"
+            aria-labelledby="model-provider-label"
+          >
+            {PROTOCOL_OPTIONS.map((option) => (
               <button
-                key={preset.label}
+                key={option.value}
                 type="button"
-                className={`preset${activePreset === preset ? " active" : ""}`}
-                aria-pressed={activePreset === preset}
-                title={`一键填充：${preset.baseUrl} / ${preset.model}`}
-                onClick={() =>
-                  props.onPatch({
-                    provider: preset.provider,
-                    baseUrl: preset.baseUrl,
-                    model: preset.model,
-                  })
-                }
+                className={`segment${form.provider === option.value ? " active" : ""}`}
+                aria-pressed={form.provider === option.value}
+                onClick={() => props.onPatch({ provider: option.value })}
               >
-                {preset.label}
+                {option.label}
               </button>
             ))}
           </div>
+          {activeProtocol && <p className="muted small">{activeProtocol.description}</p>}
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="model-base-url">
+            Base URL
+          </label>
+          <input
+            id="model-base-url"
+            className="form-input settings-mono"
+            value={form.baseUrl}
+            onChange={(event) => props.onPatch({ baseUrl: event.target.value })}
+            onBlur={() => {
+              // 先按域名识别协议，再用识别到的协议规范化 URL：
+              // 这样粘贴 Anthropic / Gemini / 常见 OpenAI 兼容域名时，
+              // 协议会自动切过去，版本段也按对应协议补全。
+              const detected = detectProvider(form.baseUrl);
+              const provider = detected ?? form.provider;
+              const baseUrl = normalizeBaseUrl(form.baseUrl, provider);
+              if (baseUrl === form.baseUrl && provider === form.provider) return;
+              props.onPatch({
+                baseUrl,
+                ...(provider !== form.provider ? { provider } : {}),
+              });
+            }}
+            placeholder="https://api.deepseek.com/v1（只填域名也行）"
+            spellCheck={false}
+          />
           <p className="muted small">
-            预设模型名会随厂商更新，可在下方直接修改。
+            只填域名也行，会自动补全：OpenAI 兼容补 /v1，Anthropic 和 Gemini
+            自动补版本段；误贴完整端点（含 /chat/completions 等）也会自动清理。
+            粘贴 Anthropic / Gemini 官方域名时会自动切换协议。
           </p>
         </div>
 
-        <div className="field-group">
-          <p className="field-group-title">接口凭据</p>
-
-          <div className="field">
-            <span className="field-label" id="model-provider-label">
-              接口协议
-            </span>
-            <div
-              className="segment-bar"
-              role="group"
-              aria-labelledby="model-provider-label"
-            >
-              {PROTOCOL_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`segment${form.provider === option.value ? " active" : ""}`}
-                  aria-pressed={form.provider === option.value}
-                  onClick={() => props.onPatch({ provider: option.value })}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            {activeProtocol && <p className="muted small">{activeProtocol.description}</p>}
-          </div>
-
-          <div className="field">
-            <label className="field-label" htmlFor="model-base-url">
-              Base URL
+        <div className="field">
+          <div className="field-head">
+            <label className="field-label" htmlFor="model-name">
+              模型名
             </label>
+            <span className="muted small" aria-live="polite">
+              {models.length > 0
+                ? `已拉取 ${models.length} 个可选模型`
+                : "未拉取列表，可手动填写"}
+            </span>
+          </div>
+          <div className="inline-row">
             <input
-              id="model-base-url"
-              className="form-input"
-              value={form.baseUrl}
-              onChange={(event) => props.onPatch({ baseUrl: event.target.value })}
-              onBlur={() => {
-                // 先按域名识别协议，再用识别到的协议规范化 URL：
-                // 这样粘贴 Anthropic / Gemini / 常见 OpenAI 兼容域名时，
-                // 协议会自动切过去，版本段也按对应协议补全。
-                const detected = detectProvider(form.baseUrl);
-                const provider = detected ?? form.provider;
-                const baseUrl = normalizeBaseUrl(form.baseUrl, provider);
-                if (baseUrl === form.baseUrl && provider === form.provider) return;
-                props.onPatch({
-                  baseUrl,
-                  ...(provider !== form.provider ? { provider } : {}),
-                });
-              }}
-              placeholder="https://api.deepseek.com/v1（只填域名也行）"
+              id="model-name"
+              className="form-input settings-mono"
+              list="model-options"
+              value={form.model}
+              onChange={(event) => props.onPatch({ model: event.target.value })}
+              placeholder="点「刷新模型」从接口拉取"
               spellCheck={false}
             />
-            <p className="muted small">
-              只填域名也行，会自动补全：OpenAI 兼容补 /v1，Anthropic 和 Gemini
-              自动补版本段；误贴完整端点（含 /chat/completions 等）也会自动清理。
-              粘贴 Anthropic / Gemini 官方域名时会自动切换协议。
-            </p>
-          </div>
-
-          <div className="field">
-            <div className="field-head">
-              <label className="field-label" htmlFor="model-name">
-                模型名
-              </label>
-              <span className="muted small" aria-live="polite">
-                {models.length > 0
-                  ? `已拉取 ${models.length} 个可选模型`
-                  : "未拉取列表，可手动填写"}
-              </span>
-            </div>
-            <div className="inline-row">
-              <input
-                id="model-name"
-                className="form-input"
-                list="model-options"
-                value={form.model}
-                onChange={(event) => props.onPatch({ model: event.target.value })}
-                placeholder="点「刷新模型」从接口拉取"
-                spellCheck={false}
-              />
-              <datalist id="model-options">
-                {models.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => void props.onLoadModels()}
-                disabled={busy}
-              >
-                {action === "models" ? (
-                  <>
-                    <span className="loading-dot" aria-hidden="true" />
-                    拉取中…
-                  </>
-                ) : (
-                  "刷新模型"
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div className="field">
-            <div className="field-head">
-              <label className="field-label" htmlFor="model-api-key">
-                API Key
-              </label>
-              <span className={`badge ${keySaved ? "badge-success" : "badge-neutral"}`}>
-                {keySaved ? "已保存" : "未保存"}
-              </span>
-            </div>
-            <div className="input-wrap">
-              <input
-                id="model-api-key"
-                className="form-input"
-                type={keyVisible ? "text" : "password"}
-                value={apiKey}
-                onChange={(event) => props.onApiKey(event.target.value)}
-                placeholder={keySaved ? "已保存，留空则不修改" : "粘贴 API Key"}
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className="input-toggle"
-                onClick={() => setKeyVisible((visible) => !visible)}
-                aria-label={keyVisible ? "隐藏 API Key" : "显示 API Key"}
-                aria-pressed={keyVisible}
-                title={keyVisible ? "隐藏 API Key" : "显示 API Key"}
-              >
-                {keyVisible ? <EyeOffIcon /> : <EyeOpenIcon />}
-              </button>
-            </div>
-            <p className="muted small">
-              填好后点页面底部「保存全部配置」一并保存；点「测试连接」会自动保存。
-            </p>
-          </div>
-
-          <div className="action-row">
-            <button type="button" onClick={() => void runTest()} disabled={busy}>
-              {action === "test" ? (
+            <datalist id="model-options">
+              {models.map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void props.onLoadModels()}
+              disabled={busy}
+            >
+              {action === "models" ? (
                 <>
                   <span className="loading-dot" aria-hidden="true" />
-                  测试中…
+                  拉取中…
                 </>
               ) : (
-                "测试连接"
+                "刷新模型"
               )}
             </button>
           </div>
-
-          {testResult && (
-            <div
-              className={`test-result${testResult.ok ? " is-ok" : " is-error"}`}
-              role="status"
-              aria-live="polite"
-            >
-              <div className="test-result-head">
-                <span className={`badge ${testResult.ok ? "badge-success" : "badge-danger"}`}>
-                  {testResult.ok ? "连接成功" : "连接失败"}
-                </span>
-                <span className="test-result-meta">
-                  {`耗时 ${formatElapsed(testResult.elapsedMs)}`}
-                  {testResult.model ? ` · 模型 ${testResult.model}` : ""}
-                </span>
-              </div>
-              {answer && (
-                <>
-                  <span className="visually-hidden">测试连接返回内容</span>
-                  <pre aria-label="测试连接返回内容" className="answer-box">
-                    {answer}
-                  </pre>
-                </>
-              )}
-            </div>
-          )}
-          {status && <p className={statusToneClass(deriveStatusTone(status))}>{status}</p>}
         </div>
+
+        <div className="field">
+          <div className="field-head">
+            <label className="field-label" htmlFor="model-api-key">
+              API Key
+            </label>
+          </div>
+          <div className="input-wrap">
+            <input
+              id="model-api-key"
+              className="form-input"
+              type={keyVisible ? "text" : "password"}
+              value={apiKey}
+              onChange={(event) => props.onApiKey(event.target.value)}
+              placeholder={keySaved ? "已保存，留空则不修改" : "粘贴 API Key"}
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="input-toggle"
+              onClick={() => setKeyVisible((visible) => !visible)}
+              aria-label={keyVisible ? "隐藏 API Key" : "显示 API Key"}
+              aria-pressed={keyVisible}
+              title={keyVisible ? "隐藏 API Key" : "显示 API Key"}
+            >
+              {keyVisible ? <EyeOffIcon /> : <EyeOpenIcon />}
+            </button>
+          </div>
+          <p className="muted small">
+            填好后点面板底部固定栏的「保存全部配置」一并保存；点「测试连接」会自动保存。
+          </p>
+        </div>
+      </div>
+
+      <div className="field-group">
+        <p className="field-group-title">连接测试</p>
+        <div className="action-row">
+          <button type="button" onClick={() => void runTest()} disabled={busy}>
+            {action === "test" ? (
+              <>
+                <span className="loading-dot" aria-hidden="true" />
+                测试中…
+              </>
+            ) : (
+              "测试连接"
+            )}
+          </button>
+        </div>
+
+        {testResult && (
+          <div
+            className={`test-result${testResult.ok ? " is-ok" : " is-error"}`}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="test-result-head">
+              <span className={`badge ${testResult.ok ? "badge-success" : "badge-danger"}`}>
+                {testResult.ok ? "连接成功" : "连接失败"}
+              </span>
+              <span className="test-result-meta">
+                {`耗时 ${formatElapsed(testResult.elapsedMs)}`}
+                {testResult.model ? ` · 模型 ${testResult.model}` : ""}
+              </span>
+            </div>
+            {answer && (
+              <>
+                <span className="visually-hidden">测试连接返回内容</span>
+                <pre aria-label="测试连接返回内容" className="answer-box">
+                  {answer}
+                </pre>
+              </>
+            )}
+          </div>
+        )}
+        {status && <p className={statusToneClass(deriveStatusTone(status))}>{status}</p>}
 
         <div className="screenshot-row">
           <button

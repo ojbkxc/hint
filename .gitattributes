@@ -1,0 +1,27 @@
+# hint 是 Windows 桌面仓库，但开发环境（Git for Windows）默认 core.autocrlf=true，
+# 会把入库的 LF 换成本地 CRLF，于是每次 `git add` 都刷 "LF will be replaced by CRLF"，
+# 同一份文件在不同机器上 diff 也因行尾不同而噪声满屏。
+# 对策：源码与文本类文件一律以 LF 入库并在工作区保持 LF；只有 Windows 上必须 CRLF
+# 才不出问题的脚本（PowerShell / 批处理）保留 CRLF；二进制文件禁止行尾转换。
+* text=auto eol=lf
+
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.woff2 binary
+*.onnx  binary

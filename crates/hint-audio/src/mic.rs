@@ -241,9 +241,7 @@ fn build_stream(
                     .to_string()
                     .to_ascii_lowercase()
                     .contains("buffer underrun or overrun");
-                if kind == cpal::ErrorKind::Xrun
-                    || (kind == cpal::ErrorKind::Other && xrun_text)
-                {
+                if kind == cpal::ErrorKind::Xrun || (kind == cpal::ErrorKind::Other && xrun_text) {
                     tracing::debug!("麦克风缓冲瞬时欠载（流仍在运行，忽略）：{error}");
                     return;
                 }

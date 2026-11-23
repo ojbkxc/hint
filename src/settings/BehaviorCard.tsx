@@ -13,11 +13,10 @@ type Props = {
 export default function BehaviorCard({ form, patch }: Props) {
   const opacityPercent = Math.round(normalizeOpacity(form.overlayOpacity) * 100);
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>回答行为</h2>
-      </div>
-      <div className="card-body">
+    <section className="settings-block">
+      <div className="field-group">
+        <p className="field-group-title">答案</p>
+
         <div className="field">
           <label className="field-label" htmlFor="behavior-style">
             答案风格
@@ -62,11 +61,10 @@ export default function BehaviorCard({ form, patch }: Props) {
             才会生成。只有被识别为问题的话才会被记住，判断有遗漏时请直接用浮层的「重新生成」。
           </p>
         )}
-        <p className="muted small">
-          热键：Ctrl+Shift+H 显示浮层 · Ctrl+Shift+A 重新生成（手动模式下即「生成答案」）
-          · Ctrl+Shift+S 截图（M5） · Ctrl+Shift+R 开始/结束面试 · Esc 隐藏浮层。
-        </p>
+      </div>
 
+      <div className="field-group">
+        <p className="field-group-title">浮层</p>
         <div className="field">
           <label className="field-label" htmlFor="behavior-opacity">
             浮层不透明度
@@ -90,6 +88,25 @@ export default function BehaviorCard({ form, patch }: Props) {
         <p className="muted small">
           浮层背景不透明度。视频面试时可调低以便看清画面；文字始终清晰。
           仅影响浮层，不改变窗口是否可见。修改后记得点「保存全部配置」。
+        </p>
+      </div>
+
+      <div className="field-group">
+        <p className="field-group-title">热键</p>
+        <div className="settings-kv">
+          <span className="settings-kv-key">显示浮层</span>
+          <span className="settings-kv-val settings-mono">Ctrl+Shift+H</span>
+          <span className="settings-kv-key">重新生成</span>
+          <span className="settings-kv-val settings-mono">Ctrl+Shift+A</span>
+          <span className="settings-kv-key">开始 / 结束</span>
+          <span className="settings-kv-val settings-mono">Ctrl+Shift+R</span>
+          <span className="settings-kv-key">截图（M5）</span>
+          <span className="settings-kv-val settings-mono">Ctrl+Shift+S</span>
+          <span className="settings-kv-key">隐藏浮层</span>
+          <span className="settings-kv-val settings-mono">Esc</span>
+        </div>
+        <p className="muted small">
+          手动模式下 Ctrl+Shift+A 即「生成答案」。
         </p>
       </div>
     </section>

@@ -3,4 +3,4 @@ pub mod joint_state;
 pub mod noise_gate;
 
 pub use joint_state::{JointChannel, JointSpeechState, JointSpeechTracker, JointSpeechTransition};
-pub use noise_gate::{apply_noise_gate, audio_metrics, SpeechEdgeDetector, SPEECH_RMS};
+pub use noise_gate::{SPEECH_RMS, SpeechEdgeDetector, apply_noise_gate, audio_metrics};

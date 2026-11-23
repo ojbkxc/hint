@@ -65,7 +65,9 @@ impl FailureReason {
     pub fn user_message(self) -> &'static str {
         match self {
             FailureReason::Network => "网络连接中断。已下载部分会保留，恢复网络后继续。",
-            FailureReason::Connect => "无法连接到下载服务器。请检查网络或代理设置；已下载部分会保留，稍后重试即可。",
+            FailureReason::Connect => {
+                "无法连接到下载服务器。请检查网络或代理设置；已下载部分会保留，稍后重试即可。"
+            }
             FailureReason::Dns => "无法解析下载地址。请检查网络或 DNS 设置。",
             FailureReason::Timeout => "下载超时。已下载部分会保留，请重试。",
             FailureReason::Certificate => "证书校验失败。可能存在代理劫持或系统时间错误。",
@@ -580,7 +582,10 @@ mod tests {
         let error = SttError::Engine {
             message: "本地语音模型加载失败，模型文件可能已损坏".into(),
         };
-        assert_eq!(error.user_message(), "本地语音模型加载失败，模型文件可能已损坏");
+        assert_eq!(
+            error.user_message(),
+            "本地语音模型加载失败，模型文件可能已损坏"
+        );
     }
 
     #[test]
@@ -634,7 +639,11 @@ mod tests {
         let odd = SttError::InvalidInput {
             message: "WAV data length is empty or odd".into(),
         };
-        assert!(odd.user_message().contains("整帧"), "{}", odd.user_message());
+        assert!(
+            odd.user_message().contains("整帧"),
+            "{}",
+            odd.user_message()
+        );
         // 未覆盖的文案保留原文，但带中文前缀，不再出现 "invalid input:"。
         let other = SttError::InvalidInput {
             message: "weird case".into(),

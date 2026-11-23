@@ -1,0 +1,11 @@
+# 锁 channel = "stable" 而不是钉具体版本号：CI 的 build.yml / release.yml 用的是
+# dtolnay/rust-toolchain@stable，本地也用 stable 才能和 CI 跑在同一档工具链上，
+# 不会出现「本地能编、CI 报错」或反过来的漂移。
+#
+# 不钉死版本号的代价是 stable 会随时间前进；这里能接受，因为 Cargo.toml 是
+# edition = "2024"，要求 Rust 1.85+，而 stable 永远满足这一下限。若将来某个
+# stable 版本引入回归，再临时钉到具体版本并在此注明原因。
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc"]

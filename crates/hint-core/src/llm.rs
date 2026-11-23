@@ -160,8 +160,7 @@ fn openai_models_url(base_url: &str) -> String {
 fn has_version_suffix(root: &str) -> bool {
     let last = root.rsplit('/').next().unwrap_or("");
     let mut chars = last.chars();
-    matches!(chars.next(), Some('v' | 'V'))
-        && chars.next().is_some_and(|c| c.is_ascii_digit())
+    matches!(chars.next(), Some('v' | 'V')) && chars.next().is_some_and(|c| c.is_ascii_digit())
 }
 
 /// Anthropic 的 Messages 端点。
@@ -435,12 +434,14 @@ fn models_from_gemini(value: &Value) -> Vec<String> {
         .map(|models| {
             models
                 .iter()
-                .filter(|model| match model["supportedGenerationMethods"].as_array() {
-                    Some(methods) => methods
-                        .iter()
-                        .any(|method| method.as_str() == Some("generateContent")),
-                    None => true,
-                })
+                .filter(
+                    |model| match model["supportedGenerationMethods"].as_array() {
+                        Some(methods) => methods
+                            .iter()
+                            .any(|method| method.as_str() == Some("generateContent")),
+                        None => true,
+                    },
+                )
                 .filter_map(|model| model["name"].as_str())
                 .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
                 .filter(|name| !name.trim().is_empty())
@@ -959,11 +960,8 @@ async fn openai_stream(
 
     let url = openai_chat_url(&settings.base_url);
     let body = openai_body(settings, request, true);
-    let response = send_cancellable(
-        client.post(url).bearer_auth(api_key).json(&body),
-        cancel,
-    )
-    .await?;
+    let response =
+        send_cancellable(client.post(url).bearer_auth(api_key).json(&body), cancel).await?;
     let response = ensure_success(response, settings, Some(cancel)).await?;
 
     let mut text = String::new();

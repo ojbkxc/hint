@@ -99,6 +99,24 @@
   --font-lg: 16px;
   --font-xl: 20px;
   --font-stat: 28px;
+  /* 技术值（Base URL / 模型名 / 字节数）等宽字体，与 .model-path 同一族 */
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  /* 只读技术值字号（来源：AIGX .mm-mono / .mm-price / .mm-meta 的 11.5px） */
+  --font-code: 11.5px;
+
+  /* ---- 主窗口设置页双栏（来源：AIGX frontend/src/App.css 的 :root）----
+   * AIGX 命名 --surface-2 对应 hint 的「区块层」背景（AIGX --surface-bg 也
+   * 指它），hint 原本只有 --surface / --bg-hover 两档，缺中间这层，故新增。
+   * AIGX 的 --surface-3 / --table-header-bg / --border-color / --text-1..3 /
+   * --control-border 在 hint 里已有等价物（--surface / --border /
+   * --text / --text-secondary / --text-muted），不重复造。 */
+  --surface-2: #fafafa;
+
+  /* 双栏尺寸：AIGX .mm-layout / .mm-rail 的实测值 */
+  --rail-w: 218px;
+  --rail-gap: 14px;
+  --radius-rail: 10px;
+  --radius-rail-item: 7px;
 
   /* 控件高度 */
   --control-h: 40px;
@@ -1668,12 +1686,18 @@ button.mini.ghost {
   overflow-x: hidden;
   font-size: 15px;
   line-height: 1.75;
-  /* 半透明白底压在视频画面上：深色正文 + 白色光晕保证任意画面下可读。 */
+  /* 正文必须是实色：浮层不透明度只作用于背景，答案文字任何情况下不发灰。
+     光晕只服务于叠视频画面的可读性，正文不靠它。 */
   color: #14161a;
-  text-shadow:
-    0 0 4px rgba(255, 255, 255, 1),
-    0 0 9px rgba(255, 255, 255, 0.92),
-    0 1px 2px rgba(255, 255, 255, 0.95);
+}
+
+/* 模型返回的答案正文：显式实色 + 强制不透明，防止任何继承链把它淡掉。
+   text-shadow 也必须清空——根节点那圈白色光晕会往深色笔画里渗，
+   视觉上就是「字发灰 / 半透明」，这正是用户反馈的问题。 */
+.answer-text {
+  color: #14161a;
+  opacity: 1;
+  text-shadow: none;
 }
 
 /* 当前答案块至少保留 3–4 行可见，历史在下方滚动查看。 */
@@ -1954,6 +1978,365 @@ button.mini.ghost {
   background: transparent;
 }
 
+/* ---------- 主窗口设置页：左 rail + 右 panel 双栏 ----------
+ *
+ * 版式语言移植自 AIGX frontend/src/pages/ModelManage.css（.mm-layout /
+ * .mm-rail / .mm-panel / .mm-titlebar / .mm-seg / .mm-mono），数值见各处注释。
+ * 只作用于 .settings-* 子树，不触碰 .overlay-* 与复盘页既有规则。
+ */
+
+.settings-shell {
+  display: grid;
+  /* AIGX .mm-layout: 218px minmax(0, 1fr); gap 14px; align-items start */
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  gap: var(--rail-gap);
+  align-items: start;
+  min-width: 0;
+}
+
+/* 左栏：分组导航（AIGX .mm-rail，含 sticky 与 max-height 上限） */
+.settings-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-rail);
+  position: sticky;
+  /* AIGX top: 12px；hint 的页头在滚动容器内，留出同样偏移即可 */
+  top: 12px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  /* 滚动条出现时不挤动条目宽度 */
+  scrollbar-gutter: stable;
+}
+
+.settings-rail-skeleton {
+  gap: 6px;
+}
+
+.settings-rail-title {
+  /* AIGX .mm-rail-title: 10.5px / 700 / .08em / muted / padding 10px 6px 4px */
+  font-size: var(--font-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 10px 6px 4px;
+}
+
+.settings-rail > .settings-rail-title:first-child {
+  padding-top: 2px;
+}
+
+/* AIGX .mm-rail-item: 6px 8px / radius 7px / 12.5px；需压掉全局 button 的
+   36px 高度与胶囊圆角，否则 rail 会被撑成按钮列表。 */
+.settings-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-rail-item);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast) var(--ease-out);
+}
+
+.settings-rail-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.settings-rail-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* AIGX .mm-mono：无图标时的 20×20 色块字符，作为条目锚点 */
+.settings-rail-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-rail-item.active .settings-rail-glyph {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.settings-rail-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* AIGX .mm-rail-count：10.5px + tabular-nums，这里兼作状态徽标 */
+.settings-rail-badge {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.settings-rail-badge.tone-ok {
+  color: var(--success-text);
+}
+
+.settings-rail-badge.tone-warn {
+  color: var(--warning-text);
+}
+
+.settings-rail-badge.tone-error {
+  color: var(--danger-text);
+}
+
+.settings-rail-badge.tone-busy {
+  color: var(--accent);
+}
+
+/* 右栏：标题栏 + 内容 + 固定底栏（AIGX .mm-panel） */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-rail);
+  /* 内容在面板内滚动，底栏永远可见且不压住控件。
+     200px ≈ 页头 + tab + 页面上下留白（920×700 实测 panel 起始 y=155，
+     留 40px 底边距）；760×560 下同样是这个偏移，因此两个尺寸共用。 */
+  max-height: calc(100vh - 200px);
+  overflow: hidden;
+}
+
+/* AIGX .mm-titlebar: flex / space-between / 12px 14px 6px */
+.settings-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 6px;
+}
+
+/* AIGX .mm-title: align-items baseline + 10px，允许换行防窄窗挤压 */
+.settings-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+/* AIGX .mm-title-name: 14.5px / 650 */
+.settings-title-name {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+/* AIGX .mm-meta: 11.5px / muted / tabular-nums / nowrap */
+.settings-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.settings-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 14px 12px;
+  min-width: 0;
+  /* 面板内滚动：底栏用 flex 常驻，不需要 sticky 就不会盖住最后一行控件 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 单个区块：取代原来的整张 .card，改成 panel 内的分组堆叠。
+   display:block 会盖掉 UA 的 [hidden] { display:none }，必须显式补回，
+   否则 rail 切换时所有区块会一起显示。 */
+.settings-section {
+  display: block;
+  min-width: 0;
+}
+
+.settings-section[hidden] {
+  display: none;
+}
+
+.settings-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* 区块内标题降一档：AIGX 的小字号分组标签（10.5–11px 弱化色） */
+.settings-block .field-group-title {
+  font-size: var(--font-xs);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* 技术值表：两列 kv，比逐字段大卡片密度高一倍（AIGX 表格 8px 10px 节奏） */
+.settings-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: var(--font-sm);
+}
+
+.settings-kv-key {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding-top: 1px;
+}
+
+.settings-kv-val {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* 等宽技术值：AIGX .mm-mono / .mm-price 的 11.5px + tabular-nums */
+.settings-mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* 可编辑的等宽输入框只借字体，字号回到正文档：
+   11.5px 用于只读展示够用，但输入时光标与选字会显得过小。 */
+.settings-body input.settings-mono,
+.settings-body textarea.settings-mono {
+  font-size: var(--font-sm);
+}
+
+/* 面板内控件收紧：AIGX 表格行高 30px，hint 全局是 40px。
+   只收紧 .settings-body 里的控件；底栏的保存按钮保持 36px——
+   它是最高频操作，不能跟着变矮。 */
+.settings-body input:not([type="range"]),
+.settings-body select {
+  min-height: var(--control-h-row);
+}
+
+.settings-body .form-textarea {
+  min-height: var(--control-h-row);
+}
+
+.settings-body button:not(.input-toggle):not(.segment):not(.preset) {
+  height: var(--control-h-sm);
+  font-size: var(--font-sm);
+}
+
+.settings-footer button {
+  height: var(--control-h-btn);
+  font-size: var(--font-md);
+  padding: 0 var(--space-4);
+}
+
+/* AIGX .mm-seg / .mm-seg-btn：容器 2px 内边距 + 1px 间隙 + 8px 圆角，
+   每段 12px 字号、激活段实底。hint 的 .segment-bar 原本是 40px 等分按钮。 */
+.settings-body .segment-bar {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  padding: 2px;
+  gap: 1px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.settings-body button.segment {
+  flex: 1 1 auto;
+  height: var(--control-h-row);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-inline);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
+
+.settings-body button.segment:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  transform: none;
+  box-shadow: none;
+}
+
+.settings-body button.segment.active {
+  background: var(--surface);
+  border: 0;
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-control);
+}
+
+/* 固定底栏：最高频的「保存全部配置」常驻面板底部。
+   用 flex 的 flex-shrink:0 常驻（不是 sticky），内容区自己滚动，
+   所以底栏不会压住内容区最后一行控件。 */
+.settings-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 0 0 var(--radius-rail) var(--radius-rail);
+}
+
+.settings-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* --------------------------------------------------------------------------
  * 响应式覆盖必须放在文件末尾：媒体查询本身不提升优先级，
  * 写在基础规则之前会被后面的基础声明覆盖。
@@ -2045,19 +2428,30 @@ button.mini.ghost {
   }
 }
 
-/* 主窗口窄宽（<860px）：设置页单列、复盘页单列。 */
+/* 主窗口窄宽（<860px）：复盘页单列；设置页保持双栏但收窄 rail。
+   760×560 最小窗口下：内容宽 760-32=728，rail 200 + gap 10 → 右栏 518，
+   仍 ≥ 430px；rail 200 是为「简历与项目资料 + 状态徽标」这组最长的
+   （88px 名称 + 32px 徽标 + 20px 字形 + 间距）留够，不触发省略号。 */
 @media (max-width: 860px) {
   .dashboard-root {
     padding: var(--space-4) var(--space-4) 40px;
   }
 
-  .dashboard-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .settings-shell {
+    --rail-w: 200px;
+    --rail-gap: 10px;
   }
 
-  .dashboard-grid > .card:first-child,
-  .save-card {
-    grid-column: auto;
+  .settings-titlebar {
+    padding: 10px 12px 6px;
+  }
+
+  .settings-body {
+    padding: 4px 12px 10px;
+  }
+
+  .settings-footer {
+    padding: 10px 12px 12px;
   }
 
   .review-layout {

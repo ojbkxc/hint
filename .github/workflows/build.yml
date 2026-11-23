@@ -32,14 +32,26 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      - name: ESLint
+        run: npm run lint
+
       - name: TypeScript 类型检查
         run: npx tsc --noEmit
+
+      - name: 前端单元测试（Vitest）
+        run: npm run test
 
       - name: 前端生产构建
         run: npm run build
 
+      - name: Rust 格式检查（rustfmt）
+        run: cargo fmt --all -- --check
+
       - name: 核心库检查
         run: cargo check --locked -p hint-core -p hint-store -p hint-audio
+
+      - name: Clippy（核心库）
+        run: cargo clippy --locked -p hint-core -p hint-store -p hint-audio --all-targets -- -D warnings
 
       - name: 核心库测试
         run: cargo test --locked -p hint-core -p hint-store -p hint-audio
@@ -53,8 +65,16 @@ jobs:
       - name: 语音推理引擎编译（sherpa-onnx 预编译库，需联网）
         run: cargo check --locked -p hint-stt
 
+      - name: Clippy（语音与壳层）
+        run: cargo clippy --locked -p hint-stt -p hint --bins -- -D warnings
+
       - name: Tauri 集成编译检查
         run: cargo check --locked -p hint --bins
+
+      - name: 依赖安全审计（cargo-audit）
+        run: |
+          rustup component add cargo-audit 2>$null || cargo install cargo-audit --locked || exit 0
+          cargo audit --file Cargo.lock
 
   build:
     name: 构建 Windows 安装包

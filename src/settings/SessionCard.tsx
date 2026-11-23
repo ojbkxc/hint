@@ -2,7 +2,8 @@ import type { SessionControl } from "./useSessionControl";
 
 type Props = { control: SessionControl };
 
-const STATE_LABEL: Record<string, string> = {
+/** 状态中文短名；Dashboard 的 titlebar 与卡片内部共用同一份映射。 */
+export const SESSION_STATE_LABEL: Record<string, string> = {
   idle: "未开始",
   connecting: "正在启动语音引擎…",
   listening: "面试进行中",
@@ -25,12 +26,9 @@ export default function SessionCard({ control }: Props) {
         : "开始面试";
 
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>面试会话</h2>
-        <span className={`session-state state-${state}`}>{STATE_LABEL[state] ?? state}</span>
-      </div>
-      <div className="card-body">
+    <section className="settings-block">
+      <div className="field-group">
+        <p className="field-group-title">会话控制</p>
         <p className="muted small">
           开始后面板会启动双通道采集与本地识别，转录和答案实时显示在浮层。
           快捷键 Ctrl+Shift+R 也可开始 / 结束。
@@ -65,11 +63,26 @@ export default function SessionCard({ control }: Props) {
             {busyAction === "stop" ? "正在结束…" : "结束面试"}
           </button>
         </div>
+      </div>
 
+      <div className="field-group">
+        <p className="field-group-title">状态来源</p>
+        <div className="settings-kv">
+          <span className="settings-kv-key">当前状态</span>
+          <span className="settings-kv-val">
+            {SESSION_STATE_LABEL[state] ?? state}
+          </span>
+          <span className="settings-kv-key">会话编号</span>
+          <span className="settings-kv-val settings-mono">
+            {sessionId !== null ? sessionId : "—"}
+          </span>
+          <span className="settings-kv-key">界面焦点</span>
+          <span className="settings-kv-val">{running ? "浮层已接管" : "设置页空闲"}</span>
+        </div>
         {error && (
           <>
             <p className="error-text">{error}</p>
-            <p className="muted small">可检查上方 API Key / 语音模型状态后重新开始。</p>
+            <p className="muted small">可检查「模型接口」的 API Key 与「语音模型」状态后重新开始。</p>
           </>
         )}
         {notice && !error && <p className="status-info">{notice}</p>}

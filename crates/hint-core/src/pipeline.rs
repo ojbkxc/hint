@@ -325,7 +325,10 @@ pub fn looks_like_question(text: &str) -> bool {
     // 没有任何可识别文字（STT 在静音段常吐「？？？」「……」）→ 不是问题。
     // 这里不看长度：超过 24 字符的纯符号串会跳过下面的寒暄剥离，
     // 直接被「含问号即问题」判成问题，入队一个空问题。
-    if !text.chars().any(|ch| !ch.is_whitespace() && !is_punctuation(ch)) {
+    if !text
+        .chars()
+        .any(|ch| !ch.is_whitespace() && !is_punctuation(ch))
+    {
         return false;
     }
     // 寒暄/语气词命中整句时基本都很短；长句直接跳过完整匹配，省下热路径开销。
@@ -965,10 +968,7 @@ mod tests {
 
     #[test]
     fn english_echo_is_detected() {
-        assert!(is_echo(
-            "hello can you hear me",
-            &["hello can you hear me"]
-        ));
+        assert!(is_echo("hello can you hear me", &["hello can you hear me"]));
         // 太短的英文仍不判回声。
         assert!(!is_echo("yes", &["yes"]));
     }

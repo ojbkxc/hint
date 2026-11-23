@@ -147,11 +147,7 @@ impl LifecycleQueue {
     /// 返回 `None` 表示没有待执行请求（或唯一一项已达成）。
     pub fn next_pending(&mut self) -> Option<LifecycleDir> {
         let dir = self.pending.take()?;
-        if self.at_target(dir) {
-            None
-        } else {
-            Some(dir)
-        }
+        if self.at_target(dir) { None } else { Some(dir) }
     }
 }
 

@@ -151,7 +151,9 @@ fn decode_xml_entities(raw: &str) -> String {
                     .ok()
                     .and_then(char::from_u32)
             }
-            _ if entity.starts_with('#') => entity[1..].parse::<u32>().ok().and_then(char::from_u32),
+            _ if entity.starts_with('#') => {
+                entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+            }
             _ => None,
         };
         match decoded {
@@ -228,10 +230,7 @@ mod tests {
 
     #[test]
     fn clean_extracted_collapses_blank_runs_and_trims_trailing() {
-        assert_eq!(
-            clean_extracted("a\r\n\r\n\r\nb  \n\n"),
-            "a\n\nb"
-        );
+        assert_eq!(clean_extracted("a\r\n\r\n\r\nb  \n\n"), "a\n\nb");
         assert_eq!(clean_extracted("\n\n"), "");
     }
 }

@@ -20,10 +20,10 @@ use hint_core::audio::SPEECH_RMS;
 use hint_core::llm::{self, ChatRequest, Turn, TurnRole};
 use hint_core::pipeline;
 use hint_core::secret;
-use hint_core::settings::{Settings, TriggerMode};
 use hint_core::session::{LifecycleAction, LifecycleDir, LifecycleState};
+use hint_core::settings::{Settings, TriggerMode};
 use hint_core::stt::{
-    is_covered_by_live, split_into_speech_clips, ClipOptions, Outage, SttGapTracker,
+    ClipOptions, Outage, SttGapTracker, is_covered_by_live, split_into_speech_clips,
 };
 use hint_store::{AnswerMetrics, CHANNEL_MIC, CHANNEL_SYSTEM};
 use hint_stt::WorkerClient;
@@ -1408,10 +1408,7 @@ fn run_recovery(
     let pending = {
         let mut recovery = lock(&shared.recovery);
         let now = Instant::now();
-        let position = recovery
-            .queue
-            .iter()
-            .position(|item| item.ready_at <= now);
+        let position = recovery.queue.iter().position(|item| item.ready_at <= now);
         position.and_then(|index| recovery.queue.remove(index))
     };
     let Some(mut pending) = pending else {

@@ -144,11 +144,15 @@ mod tests {
     #[test]
     fn four_state_flow() {
         let mut tracker = JointSpeechTracker::new();
-        let t = tracker.on_edge(JointChannel::Interviewer, true, 100).unwrap();
+        let t = tracker
+            .on_edge(JointChannel::Interviewer, true, 100)
+            .unwrap();
         assert_eq!(t.joint, JointSpeechState::InterviewerSpeaking);
         let t = tracker.on_edge(JointChannel::Me, true, 200).unwrap();
         assert_eq!(t.joint, JointSpeechState::Both);
-        let t = tracker.on_edge(JointChannel::Interviewer, false, 300).unwrap();
+        let t = tracker
+            .on_edge(JointChannel::Interviewer, false, 300)
+            .unwrap();
         assert_eq!(t.joint, JointSpeechState::MeSpeaking);
         let t = tracker.on_edge(JointChannel::Me, false, 400).unwrap();
         assert_eq!(t.joint, JointSpeechState::Neither);
@@ -159,13 +163,19 @@ mod tests {
         let mut tracker = JointSpeechTracker::new();
         tracker.on_edge(JointChannel::Interviewer, true, 100);
         // 再次同向 → None。
-        assert!(tracker.on_edge(JointChannel::Interviewer, true, 150).is_none());
+        assert!(
+            tracker
+                .on_edge(JointChannel::Interviewer, true, 150)
+                .is_none()
+        );
     }
 
     #[test]
     fn first_edge_ms_since_other_is_max() {
         let mut tracker = JointSpeechTracker::new();
-        let t = tracker.on_edge(JointChannel::Interviewer, true, 100).unwrap();
+        let t = tracker
+            .on_edge(JointChannel::Interviewer, true, 100)
+            .unwrap();
         assert_eq!(t.ms_since_other_edge, u64::MAX);
     }
 
@@ -187,12 +197,16 @@ mod tests {
         tracker.on_edge(JointChannel::Interviewer, true, 100);
         tracker.on_edge(JointChannel::Me, true, 200);
         // reset 面试官 → 只剩我。
-        let t = tracker.reset_channel(JointChannel::Interviewer, 300).unwrap();
+        let t = tracker
+            .reset_channel(JointChannel::Interviewer, 300)
+            .unwrap();
         assert_eq!(t.joint, JointSpeechState::MeSpeaking);
         // reset 一个已经静默的通道 → None。
-        assert!(tracker
-            .reset_channel(JointChannel::Interviewer, 350)
-            .is_none());
+        assert!(
+            tracker
+                .reset_channel(JointChannel::Interviewer, 350)
+                .is_none()
+        );
     }
 
     #[test]

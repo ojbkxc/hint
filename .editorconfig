@@ -1,0 +1,43 @@
+# hint — editor defaults
+# Windows desktop repo, but everything text-like is committed with LF (see .gitattributes).
+# Keep editors on the same rules so saving a file does not add line-ending noise.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown hard line breaks are two trailing spaces — never trim them
+[*.md]
+trim_trailing_whitespace = false
+
+# Rust: rustfmt default is 4 spaces
+[*.rs]
+indent_style = space
+indent_size = 4
+
+# Frontend and config files: 2 spaces
+[*.{ts,tsx,js,jsx,json,css,html}]
+indent_style = space
+indent_size = 2
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# Windows-only scripts must stay CRLF for cmd.exe / PowerShell parsing
+[*.ps1]
+end_of_line = crlf
+
+[*.bat]
+end_of_line = crlf
+
+[*.cmd]
+end_of_line = crlf
+
+[Makefile]
+end_of_line = crlf

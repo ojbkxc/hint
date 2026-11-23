@@ -4,7 +4,7 @@ pub mod dedup;
 pub mod gap;
 pub mod ring;
 
-pub use clips::{split_into_speech_clips, ClipOptions, SpeechClip};
+pub use clips::{ClipOptions, SpeechClip, split_into_speech_clips};
 pub use dedup::is_covered_by_live;
-pub use gap::{stall_backoff_ms, Outage, OutageReason, SttGapTracker};
+pub use gap::{Outage, OutageReason, SttGapTracker, stall_backoff_ms};
 pub use ring::{PcmFrame, PcmRingBuffer};

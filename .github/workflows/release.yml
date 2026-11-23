@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.11）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.12）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,15 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.0.11 更新
+            ## 1.0.12 更新
+
+            - 修复卸载重装后语音模型被删、被迫重新下载 241 MB：Tauri NSIS 卸载器在勾选「删除应用数据」时会整目录删除 `%APPDATA%\<应用标识>`，模型原来就住在里面。现在语音模型存放在 `%LOCALAPPDATA%\hint-models`（不含应用标识，卸载器不触碰），从旧版本升级时已下载的模型会自动搬移过去，卸载重装不再丢失。
+            - 修复浮层答案文字看起来发灰/半透明：浮层不透明度滑块只作用于白色背景，模型返回的答案正文改为显式实色并去掉光晕渗色，任何不透明度下正文都清晰。
+            - 设置页按「模型管理」审美重构：左侧分组导航（接口与模型 / 会话 / 资料与行为 / 其他）+ 右侧单区块面板，导航条目实时显示状态徽标（Key 未保存、语音模型失败、会话未开始等），「保存全部配置」常驻面板底栏；760×560 最小窗口下无横向滚动。
+            - 建立前端测试与 lint 体系：Vitest + Testing Library 66 个用例（覆盖清空后不复活、已答计数不封顶、排队数不抹零等回归点），ESLint flat config，CI 新增 vitest / eslint / clippy / fmt / audit / 覆盖率 6 道质量门。
+            - 开源仓库配套：LICENSE（MIT）、SECURITY.md、CONTRIBUTING.md、CHANGELOG.md、.gitattributes（消除 CRLF 噪音）、.editorconfig、rust-toolchain.toml。
+
+            ## 1.0.11 更新（历史）
 
             1.0.10 之后的三个文档修正，**二进制与 1.0.10 相同**（纯文案，无功能改动）：
 
@@ -136,7 +144,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.11_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.12_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 

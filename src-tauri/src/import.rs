@@ -18,8 +18,7 @@ const MAX_DOCX_XML_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn document_text(path: &str) -> Result<String, String> {
     let path_buf = Path::new(path);
-    let metadata =
-        std::fs::metadata(path_buf).map_err(|error| format!("读取文件失败：{error}"))?;
+    let metadata = std::fs::metadata(path_buf).map_err(|error| format!("读取文件失败：{error}"))?;
     if !metadata.is_file() {
         return Err("请选择文件，而不是文件夹".to_string());
     }

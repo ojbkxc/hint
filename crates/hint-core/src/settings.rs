@@ -167,7 +167,9 @@ impl Settings {
             Err(copy_error) => {
                 tracing::warn!(%copy_error, "复制覆盖配置失败");
                 // 以最后一条 rename 错误为准：占用/权限才是根因，复制只是兜底。
-                Err(crate::error::CoreError::Io(last_error.unwrap_or(copy_error)))
+                Err(crate::error::CoreError::Io(
+                    last_error.unwrap_or(copy_error),
+                ))
             }
         }
     }

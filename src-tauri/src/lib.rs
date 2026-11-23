@@ -110,12 +110,84 @@ impl AppState {
             log_dir: data_dir.join("logs"),
             close_tip_shown: AtomicBool::new(false),
             store: Mutex::new(store),
-            model: ModelManager::new(data_dir.join("voice")),
+            model: ModelManager::new(model_root(data_dir)),
             session: Mutex::new(None),
             prepare_cancel: Mutex::new(None),
             dispatch_done: Mutex::new(None),
             lifecycle: Mutex::new(LifecycleQueue::default()),
         })
+    }
+}
+
+/// 语音模型的落盘根目录。
+///
+/// 历史上放在 `<app_data_dir>/voice`：但 Tauri NSIS 卸载器在用户勾选
+/// 「删除应用数据」时会 `RmDir /r $APPDATA/<bundle-id>` 与
+/// `$LOCALAPPDATA/<bundle-id>`，241 MB 的模型会连同会话库一起被删，
+/// 重装后被迫重新下载。模型改放在**不含 bundle id** 的
+/// `%LOCALAPPDATA%/hint-models`，卸载器不会触碰它。
+///
+/// 兼容：启动时若发现旧 `<app_data_dir>/voice/sensevoice` 且新位置不存在，
+/// 整体搬过去（纯 `rename`，失败则继续用旧目录，不阻塞启动）。
+fn model_root(data_dir: &std::path::Path) -> std::path::PathBuf {
+    // Windows 下 %LOCALAPPDATA% 即 Tauri app_local_data_dir 的来源；
+    // 拿不到时回退 %APPDATA% 的父目录（Roaming 的上级即 Local），
+    // 两者都失败则继续使用旧位置（行为退化为历史版本）。
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("APPDATA")
+                .map(std::path::PathBuf::from)
+                .and_then(|roaming| roaming.parent().map(|parent| parent.to_path_buf()))
+        });
+    let new_root = match local_app_data {
+        Some(base) => base.join("hint-models"),
+        None => {
+            tracing::warn!("无法定位 LOCALAPPDATA，语音模型继续存放在应用数据目录");
+            return data_dir.join("voice");
+        }
+    };
+    let legacy = data_dir.join("voice");
+    if let Ok(Some(migrated)) = migrate_legacy_voice_dir(&legacy, &new_root) {
+        tracing::info!(from = %legacy.display(), to = %migrated.display(), "已迁移旧语音模型目录");
+    }
+    new_root
+}
+
+/// 旧 `voice` 下的模型搬进新根；返回 `Ok(Some(新模型目录))` 表示发生了搬移。
+///
+/// `ModelManager` 的 `Layout` 在根目录下拼 `sensevoice/`，所以这里必须把
+/// 旧的 `voice/sensevoice` 搬到 `new_root/sensevoice`——搬到 `new_root/voice`
+/// 会让 manager 找不到模型、又触发一次下载（正是要修的问题）。
+fn migrate_legacy_voice_dir(
+    legacy: &std::path::Path,
+    new_root: &std::path::Path,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let legacy_model_dir = legacy.join("sensevoice");
+    if !legacy_model_dir.is_dir() {
+        return Ok(None);
+    }
+    let target = new_root.join("sensevoice");
+    if target.exists() {
+        // 新位置已有模型：保留新位置，不覆盖。
+        return Ok(None);
+    }
+    if let Err(error) = std::fs::create_dir_all(new_root) {
+        tracing::warn!(%error, to = %new_root.display(), "创建模型根目录失败，继续使用旧位置");
+        return Ok(None);
+    }
+    // 同卷 rename 原子且不重下 241MB。
+    match std::fs::rename(&legacy_model_dir, &target) {
+        Ok(()) => Ok(Some(target)),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                from = %legacy_model_dir.display(),
+                to = %target.display(),
+                "迁移语音模型目录失败（可能跨卷），继续使用旧位置"
+            );
+            Ok(None)
+        }
     }
 }
 

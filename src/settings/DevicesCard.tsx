@@ -40,14 +40,15 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
   }, [loaded]);
 
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>设备</h2>
-        <button type="button" className="ghost" onClick={() => void refresh()} disabled={loading}>
-          {loading ? "检测中…" : "刷新设备"}
-        </button>
-      </div>
-      <div className="card-body">
+    <section className="settings-block">
+      <div className="field-group">
+        <div className="field-head">
+          <p className="field-group-title">输入与输出</p>
+          <button type="button" className="ghost" onClick={() => void refresh()} disabled={loading}>
+            {loading ? "检测中…" : "刷新设备"}
+          </button>
+        </div>
+
         <div className="field">
           <label className="field-label" htmlFor="device-mic">
             麦克风（我的声音）
@@ -88,6 +89,18 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
               </option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="field-group">
+        <p className="field-group-title">检测结果</p>
+        <div className="settings-kv">
+          <span className="settings-kv-key">输入通道</span>
+          <span className="settings-kv-val settings-mono">{inputs.length}</span>
+          <span className="settings-kv-key">输出通道</span>
+          <span className="settings-kv-val settings-mono">{outputs.length}</span>
+          <span className="settings-kv-key">采集方式</span>
+          <span className="settings-kv-val">双通道（麦克风 + loopback）</span>
         </div>
 
         {error ? (

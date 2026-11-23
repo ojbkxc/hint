@@ -4,8 +4,8 @@ pub mod import;
 pub mod llm;
 pub mod pipeline;
 pub mod secret;
-pub mod settings;
 pub mod session;
+pub mod settings;
 pub mod stt;
 
 pub use error::{CoreError, Result};

@@ -8,8 +8,8 @@ use crate::level::LevelsBus;
 use crate::lock;
 use crate::{AudioChunk, AudioConfig, Channel, Levels};
 use hint_core::audio::{
-    apply_noise_gate, JointChannel, JointSpeechTracker, JointSpeechTransition, SpeechEdgeDetector,
-    SPEECH_RMS,
+    JointChannel, JointSpeechTracker, JointSpeechTransition, SPEECH_RMS, SpeechEdgeDetector,
+    apply_noise_gate,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
