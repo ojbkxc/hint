@@ -347,6 +347,26 @@ label {
   gap: var(--space-1);
 }
 
+/* 卡内信息分组：预设 / 凭据 / 预留三类信息用细分隔线切开。 */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field-group + .field-group {
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-3);
+}
+
+.field-group-title {
+  margin: 0;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
 .field-label {
   font-size: var(--font-sm);
   color: var(--text-muted);
@@ -580,6 +600,46 @@ button.ghost.mini-import {
 
 button.ghost.mini-import:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+/* ---------- 分段切换控件（协议选择等三选一场景） ---------- */
+
+.segment-bar {
+  display: flex;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+button.segment {
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  border-radius: var(--radius-control);
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  box-shadow: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.segment:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+  transform: none;
+  box-shadow: none;
+}
+
+button.segment.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ---------- 预设 / 操作行 / 截图行 ---------- */
