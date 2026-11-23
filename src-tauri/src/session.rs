@@ -890,7 +890,8 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
         return Err(message);
     }
 
-    let dispatch_done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let dispatch_done: Arc<crate::DispatchDone> =
+        Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let dispatcher = {
         let thread_app = app.clone();
         let shared = Arc::clone(&shared);
@@ -1303,7 +1304,7 @@ fn dispatcher_loop(
     shared: Arc<SessionShared>,
     jobs: Receiver<SttJob>,
     client: Arc<WorkerClient>,
-    done: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    done: Arc<crate::DispatchDone>,
 ) {
     // 补录期间收到的实时任务暂存在这里，下个循环优先处理。
     let mut parked: Option<SttJob> = None;

@@ -52,10 +52,15 @@ pub(crate) struct AppState {
     /// 模型下载的取消标志；`None` 表示没有进行中的下载。
     pub(crate) prepare_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// 最近一次会话的分发线程完成信号；会话结束后仍保留，供 `remove_model` 等待。
-    pub(crate) dispatch_done: Mutex<Option<Arc<(Mutex<bool>, Condvar)>>>,
+    pub(crate) dispatch_done: Mutex<Option<Arc<DispatchDone>>>,
     /// 会话生命周期队列：串行化 start/stop，消除 check-exec 竞态。
     pub(crate) lifecycle: Mutex<LifecycleQueue>,
 }
+
+/// 分发线程完成信号：`(Mutex<bool>, Condvar)` 是「完成标志 + 唤醒」对，
+/// 置位 true 后 Condvar 唤醒所有等待方。类型别名压平 `AppState` 字段的
+/// clippy type_complexity 嵌套计数，语义不变。
+pub(crate) type DispatchDone = (Mutex<bool>, Condvar);
 
 /// 托盘里的「开始/结束面试」菜单项，随会话状态启用/禁用。
 pub(crate) struct TrayItems {
