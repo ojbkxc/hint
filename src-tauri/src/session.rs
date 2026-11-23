@@ -1049,6 +1049,13 @@ pub(crate) fn stop_session(app: &AppHandle) -> Result<(), String> {
         json!({ "text": "", "model": "", "ttftMs": null }),
     );
     crate::set_session_running(app, false);
+    // 结束面试自动收起浮层：浮层是面试过程中的实时转录窗口，结束后问答已落库、
+    // 可在「会话复盘」查看。这里与开始面试的自动显示对称；用户仍可随时按热键
+    // Ctrl+Shift+H 重新唤起浮层查看。保持不可聚焦语义，避免收起后还抢占焦点。
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.set_focusable(false);
+        let _ = window.hide();
+    }
     emit(app, EVT_LEVELS, json!({ "mic": 0.0, "system": 0.0 }));
     emit_status(app, "idle", "会话已结束");
     tracing::info!(session_id = shared.session_id, "session stopped");

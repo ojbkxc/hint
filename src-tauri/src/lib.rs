@@ -67,14 +67,14 @@ pub(crate) struct TrayItems {
 
 /// 全局热键的 4 组组合（与前端约定一致）。
 const SHORTCUTS: [(&str, Code); 4] = [
-    ("ctrl+shift+space", Code::Space),
+    ("ctrl+shift+h", Code::KeyH),
     ("ctrl+shift+a", Code::KeyA),
     ("ctrl+shift+r", Code::KeyR),
     ("ctrl+shift+s", Code::KeyS),
 ];
 
 /// 托盘 tooltip：主窗口关掉后，这是用户唯一能确认「程序在干什么」的地方。
-const TRAY_TOOLTIP_IDLE: &str = "hint · 空闲（右键可退出；Ctrl+Shift+Space 显示浮层）";
+const TRAY_TOOLTIP_IDLE: &str = "hint · 空闲（右键可退出；Ctrl+Shift+H 显示浮层）";
 const TRAY_TOOLTIP_LIVE: &str = "hint · 面试进行中（右键可结束或退出）";
 
 fn combo(code: Code) -> Shortcut {
@@ -196,7 +196,7 @@ pub fn run() {
                     session::emit_notice(
                         window.app_handle(),
                         "info",
-                        "窗口已隐藏到系统托盘；右键托盘图标可退出，按 Ctrl+Shift+Space 显示浮层（左键托盘图标可恢复主窗口）。",
+                        "窗口已隐藏到系统托盘；右键托盘图标可退出，按 Ctrl+Shift+H 显示浮层（左键托盘图标可恢复主窗口）。",
                     );
                 }
             }
@@ -254,7 +254,7 @@ pub fn run() {
 /// API 可以同步完成。
 fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
     // 托盘与热键互不依赖：托盘构建失败（图标 / 菜单资源异常）不能让热键一起
-    // 被跳过——主窗口关掉后，Ctrl+Shift+Space 是用户唯一能取回浮层的入口。
+    // 被跳过——主窗口关掉后，Ctrl+Shift+H 是用户唯一能取回浮层的入口。
     let tray = build_tray(app);
     register_shortcuts(app);
     tray?;
@@ -343,7 +343,7 @@ fn register_shortcuts(app: &tauri::AppHandle) {
 }
 
 fn handle_pressed_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) {
-    if shortcut == combo(Code::Space) {
+    if shortcut == combo(Code::KeyH) {
         toggle_overlay(app);
     } else if shortcut == combo(Code::KeyA) {
         session::spawn_regenerate(app);

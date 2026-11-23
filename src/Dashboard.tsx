@@ -85,7 +85,7 @@ export default function Dashboard() {
           <h1>hint</h1>
           <p className="subtitle">面试实时提词器</p>
         </div>
-        <div className="hint-badge">Ctrl+Shift+Space 显示浮层</div>
+        <div className="hint-badge">Ctrl+Shift+H 显示浮层</div>
       </header>
 
       {banner && (

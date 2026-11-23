@@ -63,7 +63,7 @@ export default function BehaviorCard({ form, patch }: Props) {
           </p>
         )}
         <p className="muted small">
-          热键：Ctrl+Shift+Space 显示浮层 · Ctrl+Shift+A 重新生成（手动模式下即「生成答案」）
+          热键：Ctrl+Shift+H 显示浮层 · Ctrl+Shift+A 重新生成（手动模式下即「生成答案」）
           · Ctrl+Shift+S 截图（M5） · Ctrl+Shift+R 开始/结束面试 · Esc 隐藏浮层。
         </p>
 
