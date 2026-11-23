@@ -143,6 +143,52 @@ jobs:
       - name: 构建 Tauri 应用
         run: npm run tauri build
 
+      # 冒烟测试：真的把构建出来的 exe 跑一次 `--doctor`。
+      #
+      # 为什么必须放在 CI：1.0.19 的 `--doctor` 编译过、clippy 过、单测过，
+      # 真机一跑 stdout 却是空的（GUI 子系统下没重绑句柄）。只验证「能编译」
+      # 会漏掉这类「功能整体不生效」的缺陷。这里直接断言报告文件非空、
+      # 且包含应有的分节，等于每次 CI 都替用户跑一遍。
+      - name: 冒烟测试 --doctor
+        shell: pwsh
+        run: |
+          $exe = "target/release/hint.exe"
+          if (-not (Test-Path $exe)) { throw "构建产物缺失：$exe" }
+          # PowerShell 不会把裸相对名当可执行文件（与 cmd 不同），
+          # 用 Resolve-Path 拿到绝对路径再调用。
+          $exePath = (Resolve-Path $exe).Path
+          Write-Host "== 运行 $exePath --doctor =="
+          & $exePath --doctor
+          $code = $LASTEXITCODE
+          Write-Host "exit=$code"
+          # 退出码 0 表示「未发现阻塞项」。CI runner 上没有模型/Key/设备，
+          # 预期会有阻塞项并返回 1——所以这里只要求「进程跑完没崩」。
+          if ($null -eq $code) { throw "doctor 未正常返回退出码（进程可能没跑起来）" }
+          $report = Join-Path $env:APPDATA "com.ojbkxc.hint\doctor-report.txt"
+          if (-not (Test-Path $report)) { throw "报告文件未生成：$report" }
+          $size = (Get-Item $report).Length
+          Write-Host "报告大小：$size bytes"
+          if ($size -lt 200) { throw "报告内容过短（$size bytes），诊断可能提前中断" }
+          $text = Get-Content $report -Raw -Encoding UTF8
+          # 分节必须齐全——少一节说明某段探测panic 或提前返回了。
+          $required = @("hint 诊断报告", "【语音模型】", "【配置】", "【会话数据库】", "【音频设备】", "【最近日志】", "结论：")
+          foreach ($marker in $required) {
+            if ($text -notlike "*$marker*") { throw "报告缺少分节：$marker" }
+          }
+          # 版本三重对齐：package.json / exe 文件版本 / 报告里写的版本。
+          # CI 里三者来自同一 commit 必然一致；任一不一致说明版本号有地方漏改，
+          # 或者报告没读 CARGO_PKG_VERSION 而是硬编码。
+          $version = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
+          $exeVersion = (Get-Item $exe).VersionInfo.ProductVersion
+          Write-Host "package.json=$version  exe=$exeVersion"
+          if ($exeVersion -ne $version) { throw "exe 文件版本($exeVersion)与 package.json($version) 不一致" }
+          if ($text -notlike "*版本：$version*") { throw "报告版本与 package.json($version) 不一致" }
+          # 复制到工作区，供 artifact 上传（uploads 只认工作区内路径，
+          # 也避免依赖 runner 的具体用户名）。
+          New-Item -ItemType Directory -Force -Path "ci-artifacts" | Out-Null
+          Copy-Item $report "ci-artifacts/doctor-report.txt" -Force
+          Write-Host "== --doctor 冒烟通过（版本 $version，$size bytes，7 个分节齐全）=="
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -151,3 +197,4 @@ jobs:
           path: |
             target/release/hint.exe
             target/release/bundle/nsis/*.exe
+            ci-artifacts/doctor-report.txt
