@@ -675,7 +675,9 @@ fn anthropic_body(settings: &Settings, request: &ChatRequest, stream: bool) -> V
     } else {
         let mut parts: Vec<Value> = Vec::with_capacity(request.images.len() + 1);
         // 同上：避免在当前问题前出现连续两条 user 消息。
-        if let Some(previous) = messages.pop()
+        // 外层角色检查不能省——末条是 assistant 时绝不 pop。
+        if messages.last().and_then(|message| message["role"].as_str()) == Some("user")
+            && let Some(previous) = messages.pop()
             && let Some(text) = previous["content"].as_str()
         {
             parts.push(json!({ "type": "text", "text": text }));
