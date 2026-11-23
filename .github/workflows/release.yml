@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.0.12）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.0.13）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,14 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.0.12 更新
+            ## 1.0.13 更新
+
+            - 修复 1.0.12 引入的 Anthropic 带图消息回归：连续同角色合并折叠时误删了「末条是 user 才并入」的角色检查，末条为 assistant 时消息被错误弹掉（CI 单测拦下，含图追问的请求体会少一条消息）。
+            - 依赖安全升级：zip 2.6.1 → 9.7.0（RUSTSEC-2026-0367/0368，SUID/symlink 提权修复；与 sherpa-onnx 共用同一版本）、pdf-extract 0.9 → 0.12.1（带动 lopdf 0.36 → 0.42，深层嵌套 PDF 栈溢出修复）。cargo-audit 新门禁已清零。
+            - CI 质量门全部转绿：rustfmt / clippy（-D warnings，hint-core、hint-audio、hint-stt、壳层共 17 处既有告警修掉：collapsible_if 折叠、needless_borrow、manual char comparison、is_multiple_of、as_chunks、type_complexity 等，行为全部等价）、ESLint、Vitest 66 用例。
+            - 升级 1.0.12 后首次启动会看到日志出现「已迁移旧语音模型目录」，属正常现象。
+
+            ## 1.0.12 更新（历史）
 
             - 修复卸载重装后语音模型被删、被迫重新下载 241 MB：Tauri NSIS 卸载器在勾选「删除应用数据」时会整目录删除 `%APPDATA%\<应用标识>`，模型原来就住在里面。现在语音模型存放在 `%LOCALAPPDATA%\hint-models`（不含应用标识，卸载器不触碰），从旧版本升级时已下载的模型会自动搬移过去，卸载重装不再丢失。
             - 修复浮层答案文字看起来发灰/半透明：浮层不透明度滑块只作用于白色背景，模型返回的答案正文改为显式实色并去掉光晕渗色，任何不透明度下正文都清晰。
@@ -144,7 +151,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.12_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.0.13_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 

@@ -4,6 +4,18 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.13] - 2026-11-24
+
+### 修复
+
+- **Anthropic 带图消息回归（1.0.12 引入）**：`anthropic_body` 带图分支做 collapsible_if 折叠时把「末条是 user 才 pop 并入」的角色检查整个删掉，末条为 assistant 时被错误弹掉、请求体少一条消息；CI 单测 `anthropic_body_merges_consecutive_roles_and_images` 拦下。补回角色条件。
+- 依赖安全升级：zip 2.6.1→9.7.0（连带与 sherpa-onnx-sys 收敛为同一版本；feature `deflate` 改名 `deflate-flate2-zlib-rs`）、pdf-extract 0.9→0.12.1（带动 lopdf 0.36→0.42 栈溢出修复）。url（RUSTSEC-2026-0592）与 cookie（0594）为 tauri/wry 生态锁定的传递依赖，hint 的利用面不存在（不解析不可信 blob: URL、非 fork 的桌面进程），audit 豁免并注明理由。
+
+### 工程
+
+- clippy `-D warnings` 清零：17 处既有写法修复（collapsible_if let-chains 折叠、needless_borrow、question_mark、manual_pattern_char_comparison、manual_is_multiple_of、chunks_exact→as_chunks、type_complexity 提 `DispatchDone` 别名）。
+- cargo-audit 加入 CI 并清零（zip/lopdf 已升级；url/cookie 带理由豁免）。
+
 ## [1.0.12] - 2026-11-23
 
 ### 修复
