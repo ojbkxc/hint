@@ -1,10 +1,4 @@
-import type {
-  AnswerStyle,
-  ProxyMode,
-  Settings,
-  SttLanguage,
-  TriggerMode,
-} from "./types";
+import type { AnswerStyle, ProxyMode, Settings, TriggerMode } from "./types";
 import {
   MAX_OVERLAY_FONT_SCALE,
   MAX_OVERLAY_OPACITY,
@@ -188,35 +182,6 @@ export default function BehaviorCard({ form, patch }: Props) {
           Windows「Internet 选项」里的代理，代理软件开着「系统代理」时选它最省事。
           本机回环（浮层通信、语音识别）永不走代理，不受影响。
           {form.proxyMode === "system" && " 注意：切换后需重新点「测试连接」才会生效。"}
-        </p>
-      </div>
-
-      <div className="field-group">
-        <p className="field-group-title">语音识别语言</p>
-        <div className="field">
-          <label className="field-label" htmlFor="stt-language">
-            识别语言
-          </label>
-          <select
-            id="stt-language"
-            className="form-input"
-            value={form.sttLanguage}
-            onChange={(event) =>
-              patch({ sttLanguage: event.target.value as SttLanguage })
-            }
-          >
-            <option value="zh">中文（默认，夹英文词也认）</option>
-            <option value="en">英文</option>
-            <option value="yue">粤语</option>
-            <option value="ja">日语</option>
-            <option value="ko">韩语</option>
-            <option value="auto">自动判别（可能判偏，中文场景不建议）</option>
-          </select>
-        </div>
-        <p className="muted small">
-          默认固定在中文：模型自己判语言时，中文里夹几个英文词容易判成日文/韩文，
-          整句就会变成乱码。纯英文会议再切「英文」。改完点「保存全部配置」，
-          下一段语音生效。
         </p>
       </div>
 

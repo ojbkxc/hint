@@ -128,3 +128,16 @@ describe("BehaviorCard —— 热键清单", () => {
     expect(screen.getByText("截图问答")).toBeInTheDocument();
   });
 });
+
+describe("BehaviorCard —— 不再暴露无效设置", () => {
+  it("设置页没有「识别语言」选择器（实测该参数对 SenseVoice 无效）", () => {
+    // 实测：同一段中文音频，auto/zh/en/ja/ko/yue 六个值输出**逐字相同**；
+    // 强制 ja/ko 也照样输出中文、强制 zh 也照样输出英文（只有 yue 造成
+    // 大小写差异，不是真实能力）。所以这个下拉框会误导用户，已移除。
+    // 这条守卫防它被重新加回来。
+    const { container } = renderCard();
+    expect(container.querySelector("#stt-language")).toBeNull();
+    expect(screen.queryByText(/识别语言/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/语音识别语言/)).not.toBeInTheDocument();
+  });
+});

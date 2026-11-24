@@ -114,13 +114,16 @@ pub struct Settings {
     /// 手填代理地址（仅 `proxy_mode == Manual` 时使用），如 `http://127.0.0.1:7890`。
     #[serde(default)]
     pub proxy_url: String,
-    /// 语音识别语言提示（`zh` / `en` / `ja` / `ko` / `yue` / `auto`）。默认 `zh`。
+    /// 语音识别语言提示（保留字段仅为兼容旧配置，**不再暴露给用户**）。
     ///
-    /// **为什么默认 zh 而不是 auto**：`auto` 由模型自己判语言，中文口语里夹
-    /// 几个英文单词时容易判偏（判成日/韩后整句输出成乱码）。用户绝大多数场景
-    /// 是说中文、偶尔夹英文，固定 `zh` 最稳——SenseVoice 的 zh 模式对中英混说
-    /// 有训练覆盖，夹的英文词能正常识别。
-    /// 需要识别纯英文会议时再改成 `en`，或改回 `auto`。
+    /// **实测结论：这个参数对 SenseVoice 基本无效**——同一段中文音频，
+    /// `auto` / `zh` / `en` / `ja` / `ko` / `yue` 六个值输出**逐字相同**；
+    /// 甚至强制 `ja`/`ko` 也照样输出中文、强制 `zh` 也照样输出英文
+    /// （只有 `yue` 造成大小写差异，不是真实能力）。
+    ///
+    /// 所以 1.1.1 里「默认固定中文」那个修复是**无效的**：它基于「auto 会判偏」
+    /// 的假设，而模型根本不按这个参数走。设置项已从 UI 移除，字段保留只为
+    /// 让老配置文件仍能反序列化（删字段会让旧配置解析失败）。
     #[serde(default = "default_stt_language")]
     pub stt_language: String,
     /// 配置结构版本，用于把旧默认值留下的错误状态迁移掉。
@@ -134,11 +137,11 @@ pub struct Settings {
 /// 当前配置结构版本。
 ///
 /// - `1`：1.1.0 起。迁移 `overlay_content_protected`（1.0.26 写进文件的
-///   `true` 会在共享屏幕时显示黑框）与 `stt_language`（`auto` 会让中文夹英文
-///   被判成日韩）。
+///   `true` 会在共享屏幕时显示黑框）。
 const SCHEMA_VERSION: u32 = 1;
 
-/// 语音识别语言的默认值：中文（见 `stt_language` 字段上的说明）。
+/// 语音识别语言的默认值。字段本身已不对用户暴露（见 `stt_language` 上的实测
+/// 说明），保留只是为了让旧配置仍能反序列化。
 fn default_stt_language() -> String {
     "zh".to_string()
 }
@@ -246,13 +249,6 @@ impl Settings {
                     "配置迁移：关闭浮层内容保护（1.0.26 的默认值会在共享屏幕时显示黑框）"
                 );
                 self.overlay_content_protected = false;
-            }
-            // 语音识别语言：老配置里没有这个字段，serde 已经给了默认 zh；
-            // 显式设成 auto 的（1.1.0 之前的隐式行为）也一并拉回 zh，
-            // 因为「中文夹英文被判成日韩」正是要修的问题。
-            if self.stt_language == "auto" {
-                tracing::info!("配置迁移：语音识别语言由 auto 改为 zh");
-                self.stt_language = default_stt_language();
             }
             self.schema_version = SCHEMA_VERSION;
         }
@@ -431,9 +427,11 @@ mod tests {
             !migrated.overlay_content_protected,
             "老配置的 true 必须被迁移成 false，否则共享屏幕仍是黑框"
         );
+        // stt_language 不再参与迁移：实测该参数对 SenseVoice 无效
+        // （六个语言值输出逐字相同），保留用户原值即可。
         assert_eq!(
-            migrated.stt_language, "zh",
-            "auto 要拉回 zh（中文夹英文被判成日韩正是要修的问题）"
+            migrated.stt_language, "auto",
+            "语言字段不再迁移，原值保留（设置项已从 UI 移除）"
         );
         assert_eq!(migrated.schema_version, SCHEMA_VERSION);
     }
