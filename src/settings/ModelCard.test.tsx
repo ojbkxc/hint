@@ -21,7 +21,6 @@ type CardProps = {
   busy?: boolean;
   action?: FormAction;
   answer?: string;
-  status?: string;
   models?: string[];
   onApiKey?: (value: string) => void;
   onPatch?: (next: Partial<Settings>) => void;
@@ -42,7 +41,6 @@ function renderCard(props: CardProps = {}) {
       busy={props.busy ?? false}
       action={props.action ?? ""}
       answer={props.answer ?? ""}
-      status={props.status ?? ""}
       models={props.models ?? []}
       onApiKey={onApiKey}
       onPatch={onPatch}
@@ -190,9 +188,12 @@ describe("ModelCard —— 刷新模型与测试连接", () => {
     expect(screen.getByRole("button", { name: /测试中/ })).toBeDisabled();
   });
 
-  it("status 文案按语义上色：失败走 error-text", () => {
-    renderCard({ status: "连接失败：认证失败" });
-    expect(screen.getByText("连接失败：认证失败")).toHaveClass("error-text");
+  it("卡片内不再渲染全局 status（避免与底部固定栏重复显示同一条提示）", () => {
+    // 保存/拉取这类全局结果统一由面板底栏显示；卡片里再渲染一次会让用户
+    // 看到两行一模一样的提示（真机实测确实出现过）。
+    renderCard({});
+    expect(screen.queryByText(/连接失败/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/保存失败/)).not.toBeInTheDocument();
   });
 });
 

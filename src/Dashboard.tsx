@@ -393,7 +393,6 @@ export default function Dashboard() {
                       busy={form.busy}
                       action={form.action}
                       answer={testAnswer}
-                      status={form.status}
                       models={form.models}
                       onApiKey={form.setApiKey}
                       onPatch={form.patch}

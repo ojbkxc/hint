@@ -279,8 +279,10 @@ describe("useSettingsForm —— save", () => {
     expect(result.current.action).toBe("");
   });
 
-  it("save_settings 失败：提示「保存失败：…」并返回 false", async () => {
-    route("save_settings", () => Promise.reject("磁盘只读"));
+  it("save_settings 失败：原样透传后端错误（不再叠加「保存失败：」前缀）", async () => {
+    // 后端 save_settings 的所有错误都以「保存配置失败：」开头，前端再拼一次
+    // 会出现「保存失败：保存配置失败：…」（真机实测过）。
+    route("save_settings", () => Promise.reject("保存配置失败：Base URL 为空"));
     const { result } = await mount();
 
     let saved: boolean | undefined;
@@ -288,7 +290,8 @@ describe("useSettingsForm —— save", () => {
       saved = await result.current.save();
     });
     expect(saved).toBe(false);
-    expect(result.current.status).toBe("保存失败：磁盘只读");
+    expect(result.current.status).toBe("保存配置失败：Base URL 为空");
+    expect(result.current.status.startsWith("保存失败：")).toBe(false);
     expect(result.current.busy).toBe(false);
   });
 

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { FormAction, Provider, Settings } from "./types";
 import { PRESETS, detectProvider, normalizeBaseUrl } from "./types";
-import { deriveStatusTone, statusToneClass } from "./statusTone";
 
 type Props = {
   form: Settings;
@@ -10,7 +9,6 @@ type Props = {
   busy: boolean;
   action: FormAction;
   answer: string;
-  status: string;
   /** 接口返回的可用模型列表（点「刷新模型」拉取）。 */
   models: string[];
   onApiKey: (value: string) => void;
@@ -96,7 +94,7 @@ function EyeOffIcon() {
 }
 
 export default function ModelCard(props: Props) {
-  const { form, apiKey, keySaved, busy, action, answer, status, models } = props;
+  const { form, apiKey, keySaved, busy, action, answer, models } = props;
   const [visionHint, setVisionHint] = useState(false);
   /** API Key 明文切换：只影响本输入框的 type，Key 内容不进任何日志 / DOM 属性。 */
   const [keyVisible, setKeyVisible] = useState(false);
@@ -353,7 +351,11 @@ export default function ModelCard(props: Props) {
             )}
           </div>
         )}
-        {status && <p className={statusToneClass(deriveStatusTone(status))}>{status}</p>}
+        {/*
+          全局状态（保存结果、拉取结果等）统一由面板底部固定栏显示：
+          同一份 form.status 在这里再渲染一次，会让用户看到两行一模一样的提示。
+          卡片内只保留本卡片自己的反馈（测试连接结果卡 / 截图提示）。
+        */}
 
         <div className="screenshot-row">
           <button

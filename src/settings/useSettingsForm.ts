@@ -114,7 +114,9 @@ export function useSettingsForm() {
       if (settings.baseUrl !== form.baseUrl) patch({ baseUrl: settings.baseUrl });
       const result = await safeInvoke("save_settings", { settings });
       if (!result.ok) {
-        setStatus(`保存失败：${result.error}`);
+        // 后端 save_settings 的所有错误都以「保存配置失败：」开头，
+        // 这里再拼一次前缀会出现「保存失败：保存配置失败：…」。
+        setStatus(result.error);
         return false;
       }
       if (providerRef.current !== providerAtStart) {
