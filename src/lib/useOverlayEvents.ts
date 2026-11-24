@@ -41,6 +41,7 @@ const EMPTY_ANSWER: AnswerState = {
   streaming: false,
   done: false,
   model: "",
+  configuredModel: "",
   ttftMs: null,
   question: "",
   pending: 0,
@@ -82,13 +83,25 @@ export function useOverlayEvents() {
   const nextId = useRef(1);
 
   useEffect(() => {
-    // 启动时读取已保存的不透明度与字号；失败保持 CSS 默认值，不在浮层弹错误。
+    // 启动时读取已保存的不透明度、字号与模型名；失败保持默认值，不在浮层弹错误。
+    let disposed = false;
     void safeInvoke<unknown>("get_settings").then((result) => {
-      if (!result.ok) return;
+      if (disposed || !result.ok) return;
       const settings = normalizeSettings(result.data);
       applyOverlayOpacity(settings.overlayOpacity);
       applyOverlayFontScale(settings.overlayFontScale);
+      // 记下配置的模型名：浮层底部要显示「当前用哪个模型」，
+      // 只靠 answer.model（要答过题才有值）会让没答题时永远显示「未连接模型」。
+      if (settings.model) {
+        setState((current) => ({
+          ...current,
+          answer: { ...current.answer, configuredModel: settings.model },
+        }));
+      }
     });
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -227,6 +240,7 @@ export function useOverlayEvents() {
               streaming: false,
               done: true,
               model: model || current.answer.model,
+              configuredModel: current.answer.configuredModel,
               ttftMs: ttft ?? current.answer.ttftMs,
               question: current.answer.question,
               pending: current.answer.pending,
@@ -255,6 +269,7 @@ export function useOverlayEvents() {
             streaming: false,
             done: true,
             model: model || current.answer.model,
+            configuredModel: current.answer.configuredModel,
             ttftMs: ttft ?? current.answer.ttftMs,
             question: current.answer.question,
             pending: current.answer.pending,

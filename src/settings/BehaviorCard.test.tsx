@@ -64,7 +64,7 @@ describe("BehaviorCard —— 触发方式", () => {
 describe("BehaviorCard —— 不透明度滑块", () => {
   it("默认 88%，滑块值等于百分比且限制在 20–100", () => {
     renderCard();
-    const slider = screen.getByLabelText("浮层不透明度") as HTMLInputElement;
+    const slider = screen.getByLabelText(/浮层不透明度/) as HTMLInputElement;
     expect(slider.value).toBe("88");
     expect(slider.min).toBe("20");
     expect(slider.max).toBe("100");
@@ -74,7 +74,7 @@ describe("BehaviorCard —— 不透明度滑块", () => {
 
   it("拖动滑块把百分比换算成 0.2–1 的小数并 patch overlayOpacity", () => {
     const { patchLast } = renderCard();
-    const slider = screen.getByLabelText("浮层不透明度");
+    const slider = screen.getByLabelText(/浮层不透明度/);
 
     fireEvent.change(slider, { target: { value: "55" } });
     expect(patchLast()).toEqual({ overlayOpacity: 0.55 });
@@ -90,7 +90,7 @@ describe("BehaviorCard —— 不透明度滑块", () => {
     // 现在有两个滑块（不透明度 + 字号），默认字号 100% 与不透明度 100% 会撞文本，
     // 必须按 id 精确定位到不透明度那一条的数值。
     const opacityValue = (root: HTMLElement) =>
-      root.querySelector("#behavior-opacity ~ .slider-value")?.textContent;
+      root.querySelector("label[for=\"behavior-opacity\"] .slider-value")?.textContent;
 
     const { unmount, container } = renderCard(makeForm({ overlayOpacity: 1.6 }));
     expect(opacityValue(container)).toBe("100%");
@@ -106,7 +106,7 @@ describe("BehaviorCard —— 不透明度滑块", () => {
 
   it("字号滑块默认 100%，保存时按比例下发 overlayFontScale", () => {
     const { container, patchLast } = renderCard(makeForm());
-    expect(container.querySelector("#behavior-font-scale ~ .slider-value")?.textContent).toBe(
+    expect(container.querySelector("label[for=\"behavior-font-scale\"] .slider-value")?.textContent).toBe(
       "100%",
     );
     const slider = container.querySelector<HTMLInputElement>("#behavior-font-scale");

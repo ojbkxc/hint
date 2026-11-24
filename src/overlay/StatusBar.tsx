@@ -21,8 +21,12 @@ export default function StatusBar({ levels, model, ttftMs, streaming, speech }: 
         )}
       </span>
       <span className="footer-group">
-        <span className="footer-item" title={model || "尚未连接模型"}>
-          {model || "未连接模型"}
+        {/*
+          没有模型两个来源都空时才这么说，且措辞用「未配置」而不是「未连接」：
+          用户看到「未连接模型」会以为接口连不上，实际只是还没在设置里选模型。
+        */}
+        <span className="footer-item" title={model || "尚未在设置里选择模型"}>
+          {model || "未配置模型"}
         </span>
         <span className="footer-item" title="首字延迟">
           {ttftText(ttftMs, streaming)}

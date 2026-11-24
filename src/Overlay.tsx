@@ -135,7 +135,10 @@ export default function Overlay() {
 
       <StatusBar
         levels={levels}
-        model={answer.model}
+        // 优先显示最近一次答题实际用的模型；还没答过题时回落显示配置里选定的模型。
+        // 旧实现只用 answer.model，导致没答题时永远显示「未连接模型」——
+        // 那文案会让人以为接口没连上（真机反馈过）。
+        model={answer.model || answer.configuredModel}
         ttftMs={answer.ttftMs}
         streaming={answer.streaming}
         speech={speech}

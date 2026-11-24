@@ -14,6 +14,8 @@ export type AnswerState = {
   streaming: boolean;
   done: boolean;
   model: string;
+  /** 配置里当前选定的模型名（get_settings 读回）。没答过题时浮层显示它。 */
+  configuredModel: string;
   ttftMs: number | null;
   /** 这一轮答案对应的面试官问题；空字符串表示未知。 */
   question: string;

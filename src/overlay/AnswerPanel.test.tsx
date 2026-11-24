@@ -10,6 +10,7 @@ function makeAnswer(overrides: Partial<AnswerState> = {}): AnswerState {
     streaming: false,
     done: false,
     model: "",
+  configuredModel: "",
     ttftMs: null,
     question: "",
     pending: 0,

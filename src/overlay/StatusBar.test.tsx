@@ -78,17 +78,17 @@ describe("StatusBar —— 电平条", () => {
 });
 
 describe("StatusBar —— 连接状态与模型名", () => {
-  it("没有模型时显示「未连接模型」并给出 title 兜底", () => {
+  it("没有模型时显示「未配置模型」并给出 title 兜底（不是「未连接」）", () => {
     renderBar({ model: "" });
-    const item = screen.getByText("未连接模型");
-    expect(item).toHaveAttribute("title", "尚未连接模型");
+    const item = screen.getByText("未配置模型");
+    expect(item).toHaveAttribute("title", "尚未在设置里选择模型");
   });
 
   it("有模型时显示模型名，title 为模型名本身", () => {
     renderBar({ model: "deepseek-chat" });
     const item = screen.getByText("deepseek-chat");
     expect(item).toHaveAttribute("title", "deepseek-chat");
-    expect(screen.queryByText("未连接模型")).not.toBeInTheDocument();
+    expect(screen.queryByText("未配置模型")).not.toBeInTheDocument();
   });
 });
 
