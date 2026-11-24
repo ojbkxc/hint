@@ -152,29 +152,30 @@ jobs:
       - name: 冒烟测试 --doctor
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $exe = "target/release/hint.exe"
           if (-not (Test-Path $exe)) { throw "构建产物缺失：$exe" }
           # PowerShell 不会把裸相对名当可执行文件（与 cmd 不同），
-          # 用 Resolve-Path 拿到绝对路径再调用。
+          # 且对 GUI 子系统程序用 `&` 调用**不等待**、$LASTEXITCODE 为 null。
+          # 必须用 Start-Process -Wait -PassThru 才能拿到真实退出码。
           $exePath = (Resolve-Path $exe).Path
           Write-Host "== 运行 $exePath --doctor =="
-          & $exePath --doctor
-          $code = $LASTEXITCODE
+          $proc = Start-Process -FilePath $exePath -ArgumentList '--doctor' -PassThru -Wait
+          $code = $proc.ExitCode
           Write-Host "exit=$code"
-          # 退出码 0 表示「未发现阻塞项」。CI runner 上没有模型/Key/设备，
-          # 预期会有阻塞项并返回 1——所以这里只要求「进程跑完没崩」。
-          if ($null -eq $code) { throw "doctor 未正常返回退出码（进程可能没跑起来）" }
           $report = Join-Path $env:APPDATA "com.ojbkxc.hint\doctor-report.txt"
           if (-not (Test-Path $report)) { throw "报告文件未生成：$report" }
           $size = (Get-Item $report).Length
           Write-Host "报告大小：$size bytes"
           if ($size -lt 200) { throw "报告内容过短（$size bytes），诊断可能提前中断" }
           $text = Get-Content $report -Raw -Encoding UTF8
-          # 分节必须齐全——少一节说明某段探测panic 或提前返回了。
+          # 分节必须齐全——少一节说明某段探测 panic 或提前返回了。
           $required = @("hint 诊断报告", "【语音模型】", "【配置】", "【会话数据库】", "【音频设备】", "【最近日志】", "结论：")
           foreach ($marker in $required) {
             if ($text -notlike "*$marker*") { throw "报告缺少分节：$marker" }
           }
+          # 全新 runner 上没有日志文件，必须报「尚无日志文件」而不是「读取失败」。
+          if ($text -like "*读取失败*") { throw "日志缺失被误报成读取失败（应提示『尚无日志文件』）" }
           # 版本三重对齐：package.json / exe 文件版本 / 报告里写的版本。
           # CI 里三者来自同一 commit 必然一致；任一不一致说明版本号有地方漏改，
           # 或者报告没读 CARGO_PKG_VERSION 而是硬编码。

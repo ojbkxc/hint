@@ -295,7 +295,13 @@ fn collect(app_data_dir: &Path) -> String {
             }
         }
         Err(message) => {
-            let _ = writeln!(out, "  读取失败：{message}");
+            // 「文件不存在」是全新安装的正常状态，不是错误——报「读取失败」
+            // 会让用户以为程序坏了（CI 上的冒烟测试正是被这句话误导过一次）。
+            if log_path.exists() {
+                let _ = writeln!(out, "  读取失败：{message}");
+            } else {
+                let _ = writeln!(out, "  尚无日志文件（首次启动后会创建）");
+            }
         }
     }
     let _ = writeln!(out);
