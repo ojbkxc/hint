@@ -6,7 +6,13 @@ export type TriggerMode = "auto" | "manual";
 export type ProxyMode = "direct" | "system" | "manual";
 export const PROXY_MODES: ProxyMode[] = ["direct", "system", "manual"];
 
-/** 语音识别语言提示。默认 zh：中文场景最稳，夹的英文词也能认。 */
+/**
+ * 语音识别语言提示——**兼容字段，已不对用户暴露**。
+ *
+ * 实测该参数对 SenseVoice 基本无效：同一段中文音频，auto/zh/en/ja/ko/yue
+ * 六个值输出逐字相同，强制 ja/ko 也照样输出中文。所以设置页那个下拉框已移除，
+ * 这里保留类型只为让配置读写不丢字段（后端字段也在）。
+ */
 export type SttLanguage = "zh" | "en" | "ja" | "ko" | "yue" | "auto";
 export const STT_LANGUAGES: SttLanguage[] = ["zh", "en", "ja", "ko", "yue", "auto"];
 export const DEFAULT_STT_LANGUAGE: SttLanguage = "zh";
@@ -29,7 +35,12 @@ export type Settings = {
   overlayOpacity: number;
   /** 浮层字号缩放，0.8–3（默认 1.0）。答案、转录、问题行按同一比例放大。 */
   overlayFontScale: number;
-  /** 浮层是否从屏幕捕获中排除（默认 true，共享屏幕时对方看不到）。 */
+  /**
+   * 浮层是否从屏幕捕获中排除（**默认 false**）。
+   *
+   * 开启后部分会议软件共享屏幕时会显示成黑块（比被看到更尴尬），还有一类
+   * 捕获方式完全拦不住，所以默认关；需要时由用户在设置页自行开启并先自测。
+   */
   overlayContentProtected: boolean;
   /** 出网代理模式。装代理软件的用户要靠它连模型接口。 */
   proxyMode: ProxyMode;

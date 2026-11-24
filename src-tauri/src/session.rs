@@ -1376,6 +1376,10 @@ fn dispatcher_loop(
 /// 两者起点不同（音频从首块开始计时、dispatcher 从线程启动计时），
 /// 混用会让补录窗口整体错位。
 fn process_job(app: &AppHandle, shared: &Arc<SessionShared>, client: &WorkerClient, job: SttJob) {
+    // 语言提示照传（worker 侧仍会校验取值），但要清楚它**基本不起作用**：
+    // 实测同一段中文音频，auto/zh/en/ja/ko/yue 六个值输出逐字相同，强制
+    // ja/ko 也照样输出中文——SenseVoice 自己判语言。设置项已从 UI 移除，
+    // 这里传的是配置里的历史值（默认 zh），保留只为不破坏 worker 的入参契约。
     let result = client.transcribe(&job.wav, &shared.settings.stt_language);
     match result {
         Ok(transcript) => {
@@ -1484,6 +1488,8 @@ fn run_recovery(
             return;
         }
         let wav = encode_wav(&clip.samples);
+        // 语言提示与实时识别共用同一份设置（见 `process_job` 的说明：
+        // 该参数对 SenseVoice 基本无效，传值只为满足 worker 入参契约）。
         match client.transcribe(&wav, &shared.settings.stt_language) {
             Ok(transcript) => {
                 let text = transcript.text.trim().to_string();
