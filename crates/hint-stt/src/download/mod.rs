@@ -509,7 +509,16 @@ where
             if cancel.load(Ordering::Relaxed) {
                 return Err(cancelled());
             }
-            match transfer(&part, &destination, file, &url, source, &progress, cancel) {
+            match transfer(
+                &part,
+                &destination,
+                file,
+                &url,
+                source,
+                &progress,
+                cancel,
+                proxy,
+            ) {
                 Ok(true) => {
                     let record = manifest::VerifiedFile {
                         name: file.target.to_string(),
@@ -524,7 +533,16 @@ where
                 // 立刻从零重来一次，不计入重试次数。
                 Ok(false) => {
                     tracing::warn!(resource = file.name, source = %source, "restarting download from zero");
-                    match transfer(&part, &destination, file, &url, source, &progress, cancel) {
+                    match transfer(
+                        &part,
+                        &destination,
+                        file,
+                        &url,
+                        source,
+                        &progress,
+                        cancel,
+                        proxy,
+                    ) {
                         Ok(true) => {
                             let record = manifest::VerifiedFile {
                                 name: file.target.to_string(),
@@ -641,6 +659,7 @@ fn transfer<F>(
     source: &str,
     progress: &F,
     cancel: &AtomicBool,
+    proxy: Option<&str>,
 ) -> Result<bool>
 where
     F: Fn(u64, Option<u64>, &str),
@@ -976,6 +995,7 @@ mod tests {
             "test",
             &|_, _, _| {},
             &cancel,
+            None,
         )
         .unwrap();
         assert!(!result, "bad complete part must request a restart");
