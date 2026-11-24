@@ -74,13 +74,18 @@ export default function QuestionBar({ running }: Props) {
             setText("");
             return;
           }
-          // 输入框为空时，方向键用来滚动答案区。
+          // 上下方向键 / 翻页键始终用来滚动答案区。
           //
           // 为什么要专门处理：输入框在会话开始时会自动聚焦（方便直接打字），
           // 而焦点在 <input> 上时方向键只移动光标、不会滚动下方的答案区。
           // 面试里答案通常 150 字、浮层高度有限，往上翻看前文是常见动作，
           // 每次都要先点一下答案区很打断节奏。
-          if (text === "" && SCROLL_KEYS.has(event.key)) {
+          //
+          // 不判空的原因（真机验证抓到的）：单行 <input> 里 ArrowUp/Down 没有
+          // 光标可移，浏览器会把滚动**原生转发**给最近的滚动容器——也就是说
+          // 即使这里不处理，有内容时答案区照样会滚。与其放任浏览器隐式滚动，
+          // 不如显式接管：按行高 48px 滚，行为可预期。左右键仍归输入框。
+          if (SCROLL_KEYS.has(event.key)) {
             const scroller = document.querySelector(".overlay-answer-body");
             if (scroller) {
               event.preventDefault();

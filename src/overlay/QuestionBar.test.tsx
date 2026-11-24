@@ -158,13 +158,29 @@ describe("QuestionBar —— 方向键滚动答案区", () => {
     cleanupDom();
   });
 
-  it("输入框有内容时方向键不抢滚动（保持光标移动）", async () => {
+  it("输入框有内容时上下键同样滚动答案区（不判空）", async () => {
+    // 这条原本写的是「有内容时不抢滚动」，真机验证证伪了：
+    // 单行 <input> 里 ArrowUp/Down 没有光标可移，浏览器会把滚动**原生转发**
+    // 给最近的滚动容器——即使我们的 handler 不处理，答案区照样会滚。
+    // 与其放任浏览器隐式滚动，不如显式接管（按行高 48px），行为可预期。
     const user = userEvent.setup();
     const { calls, cleanupDom } = mountWithScroller();
     const input = screen.getByLabelText("手动提问");
     await user.type(input, "abc");
     calls.length = 0;
     await user.type(input, "{ArrowDown}");
+    expect(calls).toHaveLength(1);
+    cleanupDom();
+  });
+
+  it("左右键仍归输入框（移动光标，不滚动答案区）", async () => {
+    // 正向对照：只接管上下/翻页，左右不能抢——否则输入框里连光标都动不了。
+    const user = userEvent.setup();
+    const { calls, cleanupDom } = mountWithScroller();
+    const input = screen.getByLabelText("手动提问");
+    await user.type(input, "abc");
+    calls.length = 0;
+    await user.type(input, "{ArrowLeft}{ArrowRight}");
     expect(calls).toHaveLength(0);
     cleanupDom();
   });
