@@ -62,19 +62,15 @@ skip = [
   { name = "inout", version = "0.1.4" },
   { name = "sha2", version = "0.10.9" },
   # --- 通用基础件（tauri 生态与 cargo 工具链各自钉版本）---
-  { name = "base64", version = "0.21.7" },
   { name = "base64", version = "0.22.1" },
   { name = "getrandom", version = "0.2.17" },
   { name = "getrandom", version = "0.3.4" },
   { name = "hashbrown", version = "0.12.3" },
   { name = "indexmap", version = "1.9.3" },
   { name = "miniz_oxide", version = "0.8.9" },
-  { name = "syn", version = "1.0.109" },
   { name = "syn", version = "2.0.119" },
   # --- 平台绑定 ---
   { name = "keyboard-types", version = "0.7.0" },
-  { name = "windows-sys", version = "0.45.0" },
-  { name = "windows-sys", version = "0.52.0" },
   { name = "windows-sys", version = "0.59.0" },
   # --- 压缩（zip → sherpa-onnx-sys 链路）---
   { name = "bzip2", version = "0.4.4" },
