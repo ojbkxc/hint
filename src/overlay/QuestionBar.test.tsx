@@ -121,12 +121,16 @@ describe("QuestionBar —— 方向键滚动答案区", () => {
     const scroller = document.createElement("div");
     scroller.className = "overlay-answer-body";
     Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
+    // jsdom 不做布局，scrollHeight 默认 0；不造出来会被「不可滚动就跳过」挡住。
+    Object.defineProperty(scroller, "scrollHeight", { value: 2000, configurable: true });
     scroller.scrollBy = ((opts: { top?: number }) => {
       calls.push({ top: opts?.top ?? 0 });
     }) as typeof scroller.scrollBy;
     document.body.appendChild(scroller);
 
     const utils = render(<QuestionBar running />);
+    // 捕获阶段监听按 document.activeElement 判定，测试里必须真的聚焦。
+    utils.container.querySelector("input")?.focus();
     return { ...utils, calls, cleanupDom: () => scroller.remove() };
   }
 

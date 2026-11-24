@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { safeInvoke } from "../lib/tauri";
 
-/** 输入框为空时用来滚动答案区的键。 */
+/** 方向键的滚动步进（像素）。 */
+const STEP_PX = 48;
+
+/** 用来自动滚动答案区的键。 */
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown"]);
 
 type Props = {
@@ -49,6 +52,35 @@ export default function QuestionBar({ running }: Props) {
     if (running) inputRef.current?.focus();
   }, [running]);
 
+  /**
+   * 上下方向键 / 翻页键滚动答案区。
+   *
+   * 为什么放在 window 的**捕获阶段**而不是 input 的 onKeyDown：
+   * 真机实测过，React 合成事件里调 preventDefault 拦不住浏览器的原生滚动
+   * （捕获阶段读到的 `defaultPrevented` 仍是 false，答案区照样滚了一屏的 80%）。
+   * 捕获阶段在浏览器执行默认动作之前，才能真正接管。
+   *
+   * 为什么不管左右键：单行输入框里左右键要移动光标，抢了就没法编辑。
+   */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!SCROLL_KEYS.has(event.key)) return;
+      // 只管我们自己的输入框：焦点在别处（答案区、按钮）时不干预。
+      if (document.activeElement !== inputRef.current) return;
+      const scroller = document.querySelector(".overlay-answer-body");
+      if (!scroller || scroller.scrollHeight <= scroller.clientHeight) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const page = scroller.clientHeight * 0.9;
+      const step =
+        event.key === "PageUp" || event.key === "PageDown" ? page : STEP_PX;
+      const direction = event.key === "ArrowUp" || event.key === "PageUp" ? -1 : 1;
+      scroller.scrollBy({ top: direction * step, behavior: "auto" });
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   return (
     <div className="overlay-question-bar">
       <input
@@ -73,29 +105,6 @@ export default function QuestionBar({ running }: Props) {
             event.stopPropagation();
             setText("");
             return;
-          }
-          // 上下方向键 / 翻页键始终用来滚动答案区。
-          //
-          // 为什么要专门处理：输入框在会话开始时会自动聚焦（方便直接打字），
-          // 而焦点在 <input> 上时方向键只移动光标、不会滚动下方的答案区。
-          // 面试里答案通常 150 字、浮层高度有限，往上翻看前文是常见动作，
-          // 每次都要先点一下答案区很打断节奏。
-          //
-          // 不判空的原因（真机验证抓到的）：单行 <input> 里 ArrowUp/Down 没有
-          // 光标可移，浏览器会把滚动**原生转发**给最近的滚动容器——也就是说
-          // 即使这里不处理，有内容时答案区照样会滚。与其放任浏览器隐式滚动，
-          // 不如显式接管：按行高 48px 滚，行为可预期。左右键仍归输入框。
-          if (SCROLL_KEYS.has(event.key)) {
-            const scroller = document.querySelector(".overlay-answer-body");
-            if (scroller) {
-              event.preventDefault();
-              const page = scroller.clientHeight * 0.9;
-              const step =
-                event.key === "PageUp" || event.key === "PageDown" ? page : 48;
-              const direction =
-                event.key === "ArrowUp" || event.key === "PageUp" ? -1 : 1;
-              scroller.scrollBy({ top: direction * step, behavior: "smooth" });
-            }
           }
         }}
       />
