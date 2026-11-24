@@ -20,8 +20,8 @@ use crate::runtime::Runtime;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wasapi::{
-    AudioCaptureClient, AudioClient, Device, DeviceEnumerator, DeviceState, Direction, Handle,
-    Role, SampleType, StreamMode, WasapiError, WaveFormat,
+    AudioCaptureClient, AudioClient, AudioClientProperties, Device, DeviceEnumerator, DeviceState,
+    Direction, Handle, Role, SampleType, StreamMode, StreamOption, WasapiError, WaveFormat,
 };
 
 /// 连续读取错误多少次后判定会话失效（触发重连）。
@@ -72,10 +72,15 @@ pub(crate) fn run(
                     let _ = tx.send(Ok(()));
                 }
                 tracing::info!(
-                    "系统声 loopback 已启动：{} Hz，{} 声道，格式={}",
+                    "系统声 loopback 已启动：{} Hz，{} 声道，格式={}，RAW={}",
                     session.rate,
                     session.channels,
-                    session.format_label
+                    session.format_label,
+                    if session.raw_accepted {
+                        "已绕开音效"
+                    } else {
+                        "未绕开（音效会改写波形）"
+                    }
                 );
                 let started = Instant::now();
                 match session.run(&rt) {
@@ -206,6 +211,11 @@ struct LoopbackSession {
     /// 落日志用：前两种会自动转换（可能经音效处理改写波形），最后一种才是设备
     /// 原始样本。排查「识别成乱码」时需要一眼看出走的是哪条路径。
     format_label: &'static str,
+    /// 是否成功请求到 RAW 流（绕开音效处理）。仅在 `设备混音格式` 这一档尝试。
+    ///
+    /// 排查用：若这里是 `false` 而识别仍乱，说明音效绕不过去，方向要转成
+    /// 「引导用户关音效」或「换采集方式」，而不是继续调格式。
+    raw_accepted: bool,
     /// 未显式指定输出设备时，跟随系统默认设备变更。
     follow_default: bool,
     /// 会话打开时的系统默认 render 端点 ID；用于检测「用户换了默认设备」。
@@ -599,6 +609,7 @@ fn init_loopback(device: Device) -> std::result::Result<LoopbackSession, String>
                     channels: parts.channels,
                     sample: parts.sample,
                     format_label: attempt.label(),
+                    raw_accepted: parts.raw_accepted,
                     follow_default: false,
                     default_at_open: None,
                 });
@@ -617,6 +628,8 @@ struct LoopbackParts {
     rate: u32,
     channels: usize,
     sample: WasapiSample,
+    /// RAW 流是否被接受（见 `LoopbackSession::raw_accepted`）。
+    raw_accepted: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -687,10 +700,37 @@ fn init_with_attempt(
         autoconvert,
         buffer_duration_hns: buffer_duration,
     };
+    // 设备原生格式这一档再追加「RAW 流」请求：`AUDCLNT_STREAMOPTIONS_RAW`
+    // 是 Windows 10 2004+ 提供的**官方绕开音效处理**的开关（等价于独占模式下
+    // 的原始通路），语义上要求格式与端点原生格式一致。
+    //
+    // 为什么需要它：实测采集回来的音频与原句互相关只有 -0.08（几乎不相关）但
+    // 频谱正常（语音频带 70%），即音效处理把波形改写了；「人能听懂、模型认不出」，
+    // 中文尤甚（声调依赖精确基频轮廓）。
+    //
+    // 设 RAW 只是**请求**：设备不接受时 `initialize_client` 会失败，所以失败
+    // 就退回不设 RAW 再试一次，绝不因此让通道连不上。
+    let wants_raw = matches!(attempt, FormatAttempt::MixFormat);
+    if wants_raw {
+        let props = AudioClientProperties::new().set_option(StreamOption::Raw);
+        // set_properties 失败不算错：个别驱动不支持 IAudioClient2，继续走普通路径。
+        let _ = client.set_properties(props);
+    }
     // 对 render 端点以 Capture 方向初始化即得到 loopback 流。
-    client
-        .initialize_client(&format, Direction::Capture, mode, None)
-        .map_err(|e| format!("初始化 loopback 客户端失败：{e}"))?;
+    let raw_accepted =
+        if let Err(error) = client.initialize_client(&format, Direction::Capture, mode, None) {
+            if !wants_raw {
+                return Err(format!("初始化 loopback 客户端失败：{error}"));
+            }
+            // RAW 被拒绝：退回普通属性重试一次。
+            let _ = client.set_properties(AudioClientProperties::new());
+            client
+                .initialize_client(&format, Direction::Capture, mode, None)
+                .map_err(|e| format!("初始化 loopback 客户端失败（已回退 RAW）：{e}"))?;
+            false
+        } else {
+            wants_raw
+        };
 
     let event = client
         .set_get_eventhandle()
@@ -709,6 +749,7 @@ fn init_with_attempt(
         rate,
         channels,
         sample,
+        raw_accepted,
     })
 }
 
