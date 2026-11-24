@@ -37,6 +37,14 @@ export type Settings = {
   proxyUrl: string;
   /** 语音识别语言提示（默认 zh）。 */
   sttLanguage: SttLanguage;
+  /**
+   * 配置结构版本（后端迁移用）。
+   *
+   * **必须原样透传**：后端靠它判断要不要跑一次性的旧值修正。前端若把它丢掉，
+   * 保存后版本变 0，下次加载会重新迁移一遍——用户手动打开的内容保护会被
+   * 强行关掉（真机验证时发现过这个连带问题）。
+   */
+  schemaVersion: number;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -210,6 +218,7 @@ export const EMPTY_SETTINGS: Settings = {
   proxyMode: "system",
   proxyUrl: "",
   sttLanguage: DEFAULT_STT_LANGUAGE,
+  schemaVersion: 1,
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -252,6 +261,9 @@ export function normalizeSettings(raw: unknown): Settings {
     sttLanguage: (STT_LANGUAGES as string[]).includes(str("sttLanguage"))
       ? (str("sttLanguage") as SttLanguage)
       : DEFAULT_STT_LANGUAGE,
+    // 原样透传：丢了这个值，保存后后端会重新迁移一遍。
+    schemaVersion:
+      typeof value.schemaVersion === "number" ? value.schemaVersion : 1,
   };
 }
 

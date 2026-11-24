@@ -123,7 +123,20 @@ pub struct Settings {
     /// 需要识别纯英文会议时再改成 `en`，或改回 `auto`。
     #[serde(default = "default_stt_language")]
     pub stt_language: String,
+    /// 配置结构版本，用于把旧默认值留下的错误状态迁移掉。
+    ///
+    /// 只在「改默认值不足以修正已落盘配置」时才需要 bump：默认值只影响字段
+    /// 缺失的配置，旧用户文件里已经有值了。见 [`Settings::migrate`]。
+    #[serde(default)]
+    pub schema_version: u32,
 }
+
+/// 当前配置结构版本。
+///
+/// - `1`：1.1.0 起。迁移 `overlay_content_protected`（1.0.26 写进文件的
+///   `true` 会在共享屏幕时显示黑框）与 `stt_language`（`auto` 会让中文夹英文
+///   被判成日韩）。
+const SCHEMA_VERSION: u32 = 1;
 
 /// 语音识别语言的默认值：中文（见 `stt_language` 字段上的说明）。
 fn default_stt_language() -> String {
@@ -187,6 +200,8 @@ impl Default for Settings {
             proxy_mode: crate::proxy::ProxyMode::System,
             proxy_url: String::new(),
             stt_language: default_stt_language(),
+            // 新建的配置已经是当前结构，不需要迁移。
+            schema_version: SCHEMA_VERSION,
         }
     }
 }
@@ -201,14 +216,47 @@ impl Settings {
             Ok(raw) => raw,
             Err(_) => return Self::default(),
         };
-        match serde_json::from_str(&raw) {
-            Ok(settings) => settings,
+        match serde_json::from_str::<Self>(&raw) {
+            Ok(settings) => settings.migrate(),
             Err(error) => {
                 tracing::warn!(%error, path = %path.display(), "配置文件损坏，已备份并回退默认值");
                 let _ = std::fs::rename(path, path.with_extension("json.bad"));
                 Self::default()
             }
         }
+    }
+
+    /// 老配置的语义修正。
+    ///
+    /// 改一个字段的**默认值**只对「字段缺失」的配置生效；已经落盘的旧值不会
+    /// 变。1.0.26 把 `overlay_content_protected` 默认写成 `true` 并随首次保存
+    /// 进了配置文件，于是 1.1.0 把默认改成 `false` 之后，**老用户打开还是
+    /// 黑框**（真机验证时抓到的就是这个：配置里是 true，启动日志
+    /// `protected=true`）。
+    ///
+    /// 这里做一次显式迁移：`schema_version` 低于当前值的配置，把该项强制改回
+    /// `false`。宁可让曾经手动开过它的用户重新开一次，也不能让所有人继续
+    /// 顶着黑框进会议——黑框比被看到内容更糟。
+    fn migrate(mut self) -> Self {
+        if self.schema_version < SCHEMA_VERSION {
+            if self.overlay_content_protected {
+                tracing::info!(
+                    old = self.schema_version,
+                    new = SCHEMA_VERSION,
+                    "配置迁移：关闭浮层内容保护（1.0.26 的默认值会在共享屏幕时显示黑框）"
+                );
+                self.overlay_content_protected = false;
+            }
+            // 语音识别语言：老配置里没有这个字段，serde 已经给了默认 zh；
+            // 显式设成 auto 的（1.1.0 之前的隐式行为）也一并拉回 zh，
+            // 因为「中文夹英文被判成日韩」正是要修的问题。
+            if self.stt_language == "auto" {
+                tracing::info!("配置迁移：语音识别语言由 auto 改为 zh");
+                self.stt_language = default_stt_language();
+            }
+            self.schema_version = SCHEMA_VERSION;
+        }
+        self
     }
 
     /// 原子写入：先写临时文件，再替换目标，避免中途崩溃留下半截 JSON。
@@ -366,6 +414,54 @@ mod tests {
             missing_required_fields(&settings).is_none(),
             "默认配置两项都有值，不应被拦"
         );
+    }
+
+    /// 老配置里被 1.0.26 写成 true 的内容保护，必须被迁移关掉——
+    /// 否则「改了默认值」对老用户完全无效，打开还是黑框（真机验证抓到的）。
+    #[test]
+    fn migrate_disables_content_protection_from_old_config() {
+        let old = Settings {
+            overlay_content_protected: true,
+            stt_language: "auto".to_string(),
+            schema_version: 0,
+            ..Default::default()
+        };
+        let migrated = old.migrate();
+        assert!(
+            !migrated.overlay_content_protected,
+            "老配置的 true 必须被迁移成 false，否则共享屏幕仍是黑框"
+        );
+        assert_eq!(
+            migrated.stt_language, "zh",
+            "auto 要拉回 zh（中文夹英文被判成日韩正是要修的问题）"
+        );
+        assert_eq!(migrated.schema_version, SCHEMA_VERSION);
+    }
+
+    /// 已经是当前版本的不再迁移：用户手动开启内容保护后不能被强行关掉。
+    #[test]
+    fn migrate_leaves_current_version_untouched() {
+        let current = Settings {
+            overlay_content_protected: true,
+            stt_language: "en".to_string(),
+            schema_version: SCHEMA_VERSION,
+            ..Default::default()
+        };
+        let kept = current.migrate();
+        assert!(
+            kept.overlay_content_protected,
+            "用户自己开的保护不能被默认值迁移顶掉"
+        );
+        assert_eq!(kept.stt_language, "en", "用户选的 en 要保留");
+    }
+
+    /// 新建配置不该被迁移（schema_version 已是当前值）。
+    #[test]
+    fn default_settings_are_already_current() {
+        let settings = Settings::default();
+        assert_eq!(settings.schema_version, SCHEMA_VERSION);
+        assert!(!settings.overlay_content_protected);
+        assert_eq!(settings.stt_language, "zh");
     }
 
     #[test]

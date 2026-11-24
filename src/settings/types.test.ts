@@ -80,6 +80,7 @@ describe("normalizeSettings", () => {
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
+        schemaVersion: 1,
       });
     }
   });
@@ -110,6 +111,7 @@ describe("normalizeSettings", () => {
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
+        schemaVersion: 1,
     });
     expect(settings).toEqual({
       provider: "anthropic",
@@ -127,6 +129,7 @@ describe("normalizeSettings", () => {
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
+        schemaVersion: 1,
     });
   });
 
@@ -231,5 +234,16 @@ describe("事件与容量契约", () => {
     expect(normalizeSettings({ proxyMode: "manual" }).proxyMode).toBe("manual");
     // 非法值回落默认。
     expect(normalizeSettings({ proxyMode: "bogus" }).proxyMode).toBe("system");
+  });
+
+  it("schemaVersion 必须原样透传（丢了会让后端重复迁移）", () => {
+    // 后端靠它判断要不要跑一次性旧值修正；前端丢掉会让版本归零，
+    // 下次加载重新迁移，把用户手动打开的内容保护强行关掉。
+    expect(normalizeSettings({ schemaVersion: 1 }).schemaVersion).toBe(1);
+    expect(normalizeSettings({ schemaVersion: 7 }).schemaVersion).toBe(7);
+    // 缺失时给当前版本（1），而不是 0——0 会触发迁移。
+    expect(normalizeSettings({}).schemaVersion).toBe(1);
+    // 脏值同样回落当前版本。
+    expect(normalizeSettings({ schemaVersion: "bad" }).schemaVersion).toBe(1);
   });
 });
