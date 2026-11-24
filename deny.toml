@@ -34,18 +34,51 @@ allow = [
 ]
 # 说明例外：括号里的包逐个声明理由。
 exceptions = [
-  # ring 的 OpenSSL 风格许可证：tauri 生态传递依赖，未被链接进二进制的部分不影响分发。
-  { allow = ["OpenSSL"], crate = "ring" },
   # libbz2-rs-sys（zip → sherpa-onnx-sys 链路）：bzip2 1.0.6 是类 BSD 的宽松许可，
   # SPDX id "bzip2-1.0.6"，rust 生态标准做法是显式放行。
   { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
 ]
 
 [bans]
-# 不全量去重（zip 双版本已被收敛，其余重复多来自 tauri 生态的不同小版本）。
+# 重复版本：**已知可接受的重复显式登记，新出现的重复就会立刻暴露**。
+#
+# 为什么不全量去重：这些重复来自 tauri / sherpa-onnx / pdf-extract 生态内部，
+# 它们各自钉着不同的大版本（aes 0.8 vs 0.9、digest 0.10 vs 0.11…），
+# 上游不升我们改不动。以前一路 warn 的结果是 17 条固定噪声常年挂着，
+# 真出问题时根本看不出来——license-exception-not-encountered 就是这么被埋掉的。
+#
+# 登记策略：每个 crate 保留**最新**版本，旧版本进 skip。依赖升级后旧版本消失，
+# cargo-deny 会报「skip 条目未命中」，届时同步删掉对应行即可（这也是提醒）。
 multiple-versions = "warn"
 deny = []
-skip = []
+skip = [
+  # --- tauri / 加密栈 ---
+  { name = "aes", version = "0.8.4" },
+  { name = "block-buffer", version = "0.10.4" },
+  { name = "cipher", version = "0.4.4" },
+  { name = "cpufeatures", version = "0.2.17" },
+  { name = "crypto-common", version = "0.1.7" },
+  { name = "digest", version = "0.10.7" },
+  { name = "inout", version = "0.1.4" },
+  { name = "sha2", version = "0.10.9" },
+  # --- 通用基础件（tauri 生态与 cargo 工具链各自钉版本）---
+  { name = "base64", version = "0.21.7" },
+  { name = "base64", version = "0.22.1" },
+  { name = "getrandom", version = "0.2.17" },
+  { name = "getrandom", version = "0.3.4" },
+  { name = "hashbrown", version = "0.12.3" },
+  { name = "indexmap", version = "1.9.3" },
+  { name = "miniz_oxide", version = "0.8.9" },
+  { name = "syn", version = "1.0.109" },
+  { name = "syn", version = "2.0.119" },
+  # --- 平台绑定 ---
+  { name = "keyboard-types", version = "0.7.0" },
+  { name = "windows-sys", version = "0.45.0" },
+  { name = "windows-sys", version = "0.52.0" },
+  { name = "windows-sys", version = "0.59.0" },
+  # --- 压缩（zip → sherpa-onnx-sys 链路）---
+  { name = "bzip2", version = "0.4.4" },
+]
 
 [sources]
 # 只允许 crates.io，防止依赖被替换为任意 git/本地源。
