@@ -1802,6 +1802,52 @@ button.mini.ghost {
   }
 }
 
+/* 手动提问行：浮层底部、状态栏之上。识别不准时用户直接打字问模型，
+   不经过语音识别，也不用切到主窗口。 */
+.overlay-question-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+}
+
+.overlay-question-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #14161a;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+}
+
+.overlay-question-input::placeholder {
+  color: var(--text-dim);
+}
+
+.overlay-question-input:disabled {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-dim);
+}
+
+.overlay-question-bar button.mini {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.overlay-question-hint {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .overlay-footer {
   display: flex;
   align-items: center;

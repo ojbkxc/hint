@@ -5,6 +5,7 @@ import StatusBar from "./overlay/StatusBar";
 import TranscriptPanel from "./overlay/TranscriptPanel";
 import { useCaptureAnswer } from "./lib/useCaptureAnswer";
 import { useOverlayEvents } from "./lib/useOverlayEvents";
+import QuestionBar from "./overlay/QuestionBar";
 
 const ACTIVE_STATES = new Set(["connected", "listening", "ready"]);
 
@@ -162,6 +163,10 @@ export default function Overlay() {
           onDismiss={dismissCaptureAnswer}
         />
       )}
+
+      {/* 手动提问行：识别不准时直接在浮层里打字问，不用切窗口。
+          放在答案区之后、状态栏之前——既显眼又不挤占答案空间。 */}
+      <QuestionBar running={ACTIVE_STATES.has(status.state)} />
 
       <StatusBar
         levels={levels}
