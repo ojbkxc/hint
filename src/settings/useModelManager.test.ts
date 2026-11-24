@@ -414,7 +414,11 @@ describe("useModelManager —— 并发保护与清理", () => {
     act(() => {
       void result.current.refresh();
     });
-    expect(calls).toBe(1);
+    // safeInvoke 先 await「IPC 是否就绪」，首次命令比同步断言晚一个 microtask；
+    // 等它真正发出后再断言——仍然要求「两次 refresh 只发一次 model_status」。
+    await waitFor(() => {
+      expect(calls).toBe(1);
+    });
 
     await act(async () => {
       gate.resolve({ phase: "unprepared" });

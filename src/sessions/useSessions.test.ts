@@ -91,7 +91,11 @@ describe("useSessions —— 列表请求序号（旧响应不覆盖新列表）
     act(() => {
       void result.current.refresh();
     });
-    expect(commandsCalled().filter((c) => c === "list_sessions")).toHaveLength(2);
+    // safeInvoke 内部现在会先 await「IPC 是否就绪」，命令发出比同步断言晚
+    // 一个 microtask；用 waitFor 等它发出来，断言强度不变（仍要求两次都发出）。
+    await waitFor(() => {
+      expect(commandsCalled().filter((c) => c === "list_sessions")).toHaveLength(2);
+    });
 
     // 后发的先返回：新列表上屏
     await act(async () => {
@@ -402,7 +406,11 @@ describe("useSessions —— 删除单条", () => {
     expect(result.current.notice).toBe("会话已删除");
     expect(result.current.selectedId).toBe("");
     expect(result.current.detail).toBeNull();
-    expect(commandsCalled().filter((c) => c === "list_sessions")).toHaveLength(2);
+    // safeInvoke 内部现在会先 await「IPC 是否就绪」，命令发出比同步断言晚
+    // 一个 microtask；用 waitFor 等它发出来，断言强度不变（仍要求两次都发出）。
+    await waitFor(() => {
+      expect(commandsCalled().filter((c) => c === "list_sessions")).toHaveLength(2);
+    });
     expect(result.current.sessions).toEqual([]);
   });
 
