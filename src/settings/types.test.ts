@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_OVERLAY_CONTENT_PROTECTED,
+  DEFAULT_STT_LANGUAGE,
   DEFAULT_OVERLAY_FONT_SCALE,
   DEFAULT_OVERLAY_OPACITY,
   MAX_OVERLAY_OPACITY,
@@ -78,6 +79,7 @@ describe("normalizeSettings", () => {
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
         proxyMode: "system",
         proxyUrl: "",
+        sttLanguage: DEFAULT_STT_LANGUAGE,
       });
     }
   });
@@ -107,6 +109,7 @@ describe("normalizeSettings", () => {
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
         proxyMode: "system",
         proxyUrl: "",
+        sttLanguage: DEFAULT_STT_LANGUAGE,
     });
     expect(settings).toEqual({
       provider: "anthropic",
@@ -123,6 +126,7 @@ describe("normalizeSettings", () => {
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
         proxyMode: "system",
         proxyUrl: "",
+        sttLanguage: DEFAULT_STT_LANGUAGE,
     });
   });
 

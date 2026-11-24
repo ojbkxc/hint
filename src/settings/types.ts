@@ -6,6 +6,11 @@ export type TriggerMode = "auto" | "manual";
 export type ProxyMode = "direct" | "system" | "manual";
 export const PROXY_MODES: ProxyMode[] = ["direct", "system", "manual"];
 
+/** 语音识别语言提示。默认 zh：中文场景最稳，夹的英文词也能认。 */
+export type SttLanguage = "zh" | "en" | "ja" | "ko" | "yue" | "auto";
+export const STT_LANGUAGES: SttLanguage[] = ["zh", "en", "ja", "ko", "yue", "auto"];
+export const DEFAULT_STT_LANGUAGE: SttLanguage = "zh";
+
 /** 设置页当前正在进行的操作，用于给对应按钮显示准确的阶段文案。 */
 export type FormAction = "" | "save" | "test" | "models";
 
@@ -30,6 +35,8 @@ export type Settings = {
   proxyMode: ProxyMode;
   /** 手填代理地址（仅 manual 生效），如 http://127.0.0.1:7890。 */
   proxyUrl: string;
+  /** 语音识别语言提示（默认 zh）。 */
+  sttLanguage: SttLanguage;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -84,8 +91,15 @@ export const DEFAULT_OVERLAY_FONT_SCALE = 1;
 export const MIN_OVERLAY_FONT_SCALE = 0.8;
 export const MAX_OVERLAY_FONT_SCALE = 3;
 
-/** 浮层内容保护默认开：视频面试时不该把提词器共享给对方。 */
-export const DEFAULT_OVERLAY_CONTENT_PROTECTED = true;
+/**
+ * 浮层内容保护默认**关**。
+ *
+ * 真机实测三条捕获路径行为完全不同：GDI 下正确排除；PrintWindow+
+ * PW_RENDERFULLCONTENT 下变成**纯黑块**（腾讯会议类软件共享屏幕时看到的就是
+ * 这个黑框）；旧式 PrintWindow 完全绕过保护、内容原样可见。
+ * 开了反而暴露「在用工具」，所以默认关；需要时用户自己开并先在本地试过。
+ */
+export const DEFAULT_OVERLAY_CONTENT_PROTECTED = false;
 
 /**
  * Base URL 规范化：把用户常见的各种写法统一成后端能直接拼接的形态。
@@ -195,6 +209,7 @@ export const EMPTY_SETTINGS: Settings = {
   overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
   proxyMode: "system",
   proxyUrl: "",
+  sttLanguage: DEFAULT_STT_LANGUAGE,
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -233,6 +248,10 @@ export function normalizeSettings(raw: unknown): Settings {
         ? value.proxyMode
         : "system",
     proxyUrl: str("proxyUrl"),
+    // 白名单校验：后端只接受这几种，前端也不让脏值进表单。
+    sttLanguage: (STT_LANGUAGES as string[]).includes(str("sttLanguage"))
+      ? (str("sttLanguage") as SttLanguage)
+      : DEFAULT_STT_LANGUAGE,
   };
 }
 

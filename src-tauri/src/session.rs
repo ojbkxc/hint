@@ -1346,7 +1346,7 @@ fn dispatcher_loop(
 /// 两者起点不同（音频从首块开始计时、dispatcher 从线程启动计时），
 /// 混用会让补录窗口整体错位。
 fn process_job(app: &AppHandle, shared: &Arc<SessionShared>, client: &WorkerClient, job: SttJob) {
-    let result = client.transcribe(&job.wav, "auto");
+    let result = client.transcribe(&job.wav, &shared.settings.stt_language);
     match result {
         Ok(transcript) => {
             let text = transcript.text.trim().to_string();
@@ -1454,7 +1454,7 @@ fn run_recovery(
             return;
         }
         let wav = encode_wav(&clip.samples);
-        match client.transcribe(&wav, "auto") {
+        match client.transcribe(&wav, &shared.settings.stt_language) {
             Ok(transcript) => {
                 let text = transcript.text.trim().to_string();
                 if text.is_empty() {

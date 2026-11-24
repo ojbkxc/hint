@@ -89,10 +89,20 @@ pub struct Settings {
     /// 存比例能让它们一起放大，不会只变大一块。
     #[serde(default = "default_overlay_font_scale")]
     pub overlay_font_scale: f64,
-    /// 浮层是否从屏幕捕获中排除（默认开）。
+    /// 浮层是否从屏幕捕获中排除（默认**关**）。
     ///
-    /// 开：腾讯会议 / 钉钉 / OBS 等共享屏幕时，面试官看到桌面而看不到浮层。
-    /// 关：自己录屏留证时需要。底层 `WDA_EXCLUDEFROMCAPTURE`，Win10 2004+ 生效。
+    /// **默认关的原因（真机实测，不是保守）**：`WDA_EXCLUDEFROMCAPTURE` 的行为
+    /// 取决于对方的捕获方式，三条路径实测结果完全不同——
+    /// - GDI `CopyFromScreen`：窗口区域透出下层桌面（理想效果）；
+    /// - `PrintWindow` + `PW_RENDERFULLCONTENT`：**纯黑块**（R=0 G=0 B=0），
+    ///   也就是用户看到的「共享屏幕时浮层变黑框」；
+    /// - 旧式 `PrintWindow`（flag=0）：**完全绕过保护，内容原样可见**。
+    ///
+    /// 也就是说：开了它，在腾讯会议这类走 PrintWindow / DXGI 的软件里会显示
+    /// 黑块（比被看到内容更尴尬，等于告诉对方「我在用工具」），而旧式捕获
+    /// 根本拦不住。需要时由用户自己开并**先在自己机器上试过**再进会议。
+    ///
+    /// 更可靠的替代：面试开始前按 `Ctrl+Shift+H` 隐藏浮层。
     #[serde(default = "default_overlay_content_protected")]
     pub overlay_content_protected: bool,
     /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
@@ -104,11 +114,27 @@ pub struct Settings {
     /// 手填代理地址（仅 `proxy_mode == Manual` 时使用），如 `http://127.0.0.1:7890`。
     #[serde(default)]
     pub proxy_url: String,
+    /// 语音识别语言提示（`zh` / `en` / `ja` / `ko` / `yue` / `auto`）。默认 `zh`。
+    ///
+    /// **为什么默认 zh 而不是 auto**：`auto` 由模型自己判语言，中文口语里夹
+    /// 几个英文单词时容易判偏（判成日/韩后整句输出成乱码）。用户绝大多数场景
+    /// 是说中文、偶尔夹英文，固定 `zh` 最稳——SenseVoice 的 zh 模式对中英混说
+    /// 有训练覆盖，夹的英文词能正常识别。
+    /// 需要识别纯英文会议时再改成 `en`，或改回 `auto`。
+    #[serde(default = "default_stt_language")]
+    pub stt_language: String,
 }
 
-/// 浮层内容保护默认开：视频面试时不该把提词器共享给对方。
+/// 语音识别语言的默认值：中文（见 `stt_language` 字段上的说明）。
+fn default_stt_language() -> String {
+    "zh".to_string()
+}
+
+/// 浮层内容保护默认**关**：见 `overlay_content_protected` 字段上的实测说明——
+/// 开了在 PrintWindow 类捕获下会变成黑块，旧式捕获还拦不住。默认关掉，
+/// 需要时由用户自己开。
 fn default_overlay_content_protected() -> bool {
-    true
+    false
 }
 
 /// 浮层字号的默认缩放比，与前端 `DEFAULT_OVERLAY_FONT_SCALE` 保持一致。
@@ -160,6 +186,7 @@ impl Default for Settings {
             overlay_content_protected: default_overlay_content_protected(),
             proxy_mode: crate::proxy::ProxyMode::System,
             proxy_url: String::new(),
+            stt_language: default_stt_language(),
         }
     }
 }
