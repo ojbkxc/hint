@@ -208,6 +208,30 @@ impl Segmenter {
     }
 }
 
+/// 诊断用：把送识别的音频落盘。**仅在设置了 `HINT_DUMP_STT` 时生效**。
+///
+/// 用途：本地语音识别在合成音频上完全准确（同一模型、同一 worker、同一段 16k wav
+/// 都能正确识别），但真实设备采集的音频会出乱码。这种问题只在真实采集链路里出现，
+/// 必须拿到那段音频才能判断是设备/驱动问题还是代码问题。
+///
+/// 隐私：默认不写盘（与「音频不落盘」的设计一致）；用户显式设置环境变量时才写，
+/// 且写的是他自己机器上的目录。
+fn dump_segment_if_requested(channel: Channel, start_ms: i64, wav: &[u8]) {
+    let Some(dir) = std::env::var_os("HINT_DUMP_STT") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let name = match channel {
+        Channel::Interviewer => format!("system-{start_ms:07}.wav"),
+        Channel::Me => format!("mic-{start_ms:07}.wav"),
+    };
+    // 落盘失败只是诊断信息缺失，绝不能影响识别主流程。
+    let _ = std::fs::write(dir.join(name), wav);
+}
+
 /// 编一个 44 字节标准头的 16k 单声道 PCM16 WAV（hint-stt worker 只接受这种形态）。
 fn encode_wav(samples: &[f32]) -> Vec<u8> {
     let data_bytes = (samples.len() * 2) as u32;
@@ -803,6 +827,12 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
                     start_ms: segment.start_ms,
                     end_ms: segment.end_ms,
                 };
+                // 诊断用：把**真正送识别**的音频落盘，便于排查「识别成乱码」这类
+                // 只有真实设备音频才复现的问题（离线同一模型在合成音频上是准的）。
+                //
+                // 默认完全关闭——只有在用户显式把 `HINT_DUMP_STT` 指向一个目录时
+                // 才写盘，隐私边界（不落盘）对正常使用不变。
+                dump_segment_if_requested(chunk.channel, segment.start_ms, &job.wav);
                 match jobs.try_send(job) {
                     Ok(()) => {}
                     Err(std::sync::mpsc::TrySendError::Full(_)) => {
