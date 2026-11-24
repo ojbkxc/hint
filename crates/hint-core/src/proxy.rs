@@ -121,7 +121,7 @@ pub fn parse_windows_proxy_registry(output: &str) -> Option<String> {
     }) {
         return normalize_proxy_url(rest);
     }
-    /// 没写协议名（直接是 host:port）：整串当作 HTTP 代理。
+    // 没写协议名（直接是 host:port）：整串当作 HTTP 代理。
     normalize_proxy_url(&raw)
 }
 

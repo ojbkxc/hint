@@ -862,7 +862,7 @@ pub async fn stream(
         let outcome = tokio::time::timeout(
             STREAM_TIMEOUT,
             stream_once(
-                client,
+                &client,
                 settings,
                 api_key,
                 &request,
