@@ -24,14 +24,14 @@ type CardProps = {
   models?: string[];
   onApiKey?: (value: string) => void;
   onPatch?: (next: Partial<Settings>) => void;
-  onTest?: () => Promise<{ text: string; model: string } | null>;
+  onTest?: () => Promise<{ text: string; model: string; error?: string }>;
   onLoadModels?: () => void;
 };
 
 function renderCard(props: CardProps = {}) {
   const onApiKey = props.onApiKey ?? vi.fn();
   const onPatch = props.onPatch ?? vi.fn();
-  const onTest = props.onTest ?? vi.fn(() => Promise.resolve(null));
+  const onTest = props.onTest ?? vi.fn(() => Promise.resolve({ text: "", model: "" }));
   const onLoadModels = props.onLoadModels ?? vi.fn();
   const utils = render(
     <ModelCard
@@ -173,7 +173,9 @@ describe("ModelCard —— 刷新模型与测试连接", () => {
 
   it("测试连接返回 null 时结果卡标红并写「连接失败」", async () => {
     const user = userEvent.setup();
-    renderCard({ onTest: vi.fn(() => Promise.resolve(null)) });
+    renderCard({
+    onTest: vi.fn(() => Promise.resolve({ text: "", model: "", error: "连接超时" })),
+  });
 
     await user.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -340,5 +342,40 @@ describe("ModelCard —— 截图问答提示", () => {
     await user.click(screen.getByRole("button", { name: /截图问答/ }));
     const hint = await screen.findByText(/截图问答需要支持视觉输入的模型/);
     expect(hint.textContent).not.toContain("当前模型");
+  });
+});
+
+describe("ModelCard —— 测试连接失败要说明原因", () => {
+  it("失败原因直接显示在结果卡里（不用去翻底栏）", async () => {
+    // 真机验证时发现：结果卡只显示「连接失败 耗时 10.3s」，用户完全不知道
+    // 是 Base URL 错、Key 错还是网络不通——真正的原因藏在页面底部的固定栏。
+    const user = userEvent.setup();
+    renderCard({
+      onTest: vi.fn(() =>
+        Promise.resolve({
+          text: "",
+          model: "",
+          error: "Base URL 无法解析，请检查设置页的地址",
+        }),
+      ),
+    });
+
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("连接失败")).toBeInTheDocument();
+    expect(
+      screen.getByText("Base URL 无法解析，请检查设置页的地址"),
+    ).toBeInTheDocument();
+  });
+
+  it("成功时不显示错误行", async () => {
+    const user = userEvent.setup();
+    renderCard({
+      onTest: vi.fn(() => Promise.resolve({ text: "我是模型", model: "m-1" })),
+    });
+
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(await screen.findByText("连接成功")).toBeInTheDocument();
+    expect(document.querySelector(".test-result-error")).toBeNull();
   });
 });

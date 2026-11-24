@@ -472,16 +472,22 @@ describe("useSettingsForm —— testConnection", () => {
     expect(result.current.status).toBe("连接成功，模型：gpt-4o-mini");
   });
 
-  it("测试失败：剥掉后端前缀，返回 null", async () => {
+  it("测试失败：剥掉后端前缀，并把原因带回来", async () => {
+    // 失败时**不能只返回 null**：ModelCard 的结果卡要显示「为什么失败」，
+    // 只写进底部固定栏的话用户视线要跳很远才看得到（真机验证时发现的）。
     route("test_llm", () => Promise.reject("模型连接失败：认证失败"));
     const { result } = await mount();
 
-    let response: { text: string; model: string } | null = { text: "", model: "" };
+    let response: { text: string; model: string; error?: string } = {
+      text: "",
+      model: "",
+    };
     await act(async () => {
       response = await result.current.testConnection();
     });
 
-    expect(response).toBeNull();
+    expect(response.error).toBe("认证失败");
+    expect(response.text).toBe("");
     expect(result.current.status).toBe("连接失败：认证失败");
     expect(result.current.busy).toBe(false);
     expect(result.current.action).toBe("");

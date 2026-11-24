@@ -10,6 +10,18 @@ import {
 } from "./types";
 
 /**
+ * 「测试连接」的返回。
+ *
+ * 失败时**不能只返回 null**：结果卡要展示原因（Base URL 错、Key 错、网络不通），
+ * 只写进底部固定栏的话用户视线要跳很远才看得到。
+ */
+export type TestConnectionResult = {
+  text: string;
+  model: string;
+  error?: string;
+};
+
+/**
  * 设置表单状态与后端读写。
  * 读取失败时退回默认值并给出中文提示，不阻塞页面渲染。
  */
@@ -186,7 +198,7 @@ export function useSettingsForm() {
     }
   }
 
-  async function testConnection(): Promise<{ text: string; model: string } | null> {
+  async function testConnection(): Promise<TestConnectionResult> {
     setBusy(true);
     setAction("test");
     setStatus("");
@@ -210,7 +222,9 @@ export function useSettingsForm() {
           ? result.error.slice(prefix.length)
           : result.error;
         setStatus(`连接失败：${detail}`);
-        return null;
+        // 结果卡需要「为什么失败」：Base URL 错 / Key 错 / 网络不通，用户看底栏
+        // 太远。这里把原因一并返回（见 ModelCard 的结果卡）。
+        return { text: "", model: "", error: detail };
       }
       const data = result.data as { text?: string; model?: string } | null;
       const text = typeof data?.text === "string" ? data.text : "";

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormAction, Provider, Settings } from "./types";
 import { PRESETS, detectProvider, normalizeBaseUrl } from "./types";
+import type { TestConnectionResult } from "./useSettingsForm";
 
 type Props = {
   form: Settings;
@@ -13,7 +14,7 @@ type Props = {
   models: string[];
   onApiKey: (value: string) => void;
   onPatch: (next: Partial<Settings>) => void;
-  onTest: () => Promise<{ text: string; model: string } | null>;
+  onTest: () => Promise<TestConnectionResult>;
   onLoadModels: () => void;
 };
 
@@ -45,7 +46,13 @@ const PROTOCOL_OPTIONS: Array<{
 ];
 
 /** 展示层的测试结果（成功 / 失败 + 耗时 + 模型摘要），只在 tsx 内派生，不回写 hook。 */
-type TestOutcome = { ok: boolean; model: string; elapsedMs: number };
+type TestOutcome = {
+  ok: boolean;
+  model: string;
+  elapsedMs: number;
+  /** 失败原因（成功时为空）。 */
+  error: string;
+};
 
 function formatElapsed(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -120,10 +127,12 @@ export default function ModelCard(props: Props) {
     const startedAt = performance.now();
     const response = await props.onTest();
     const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+    const failed = !response || !!response.error;
     setTestResult({
-      ok: response !== null,
+      ok: !failed,
       model: response?.model ?? "",
       elapsedMs,
+      error: response?.error ?? (response ? "" : "测试没有返回结果"),
     });
   }
 
@@ -341,6 +350,11 @@ export default function ModelCard(props: Props) {
                 {testResult.model ? ` · 模型 ${testResult.model}` : ""}
               </span>
             </div>
+            {/* 失败原因就放在结果卡里：Base URL 错 / Key 错 / 网络不通
+                三种情况用户要能当场看出来，不用去翻底栏。 */}
+            {testResult.error && (
+              <p className="status-error test-result-error">{testResult.error}</p>
+            )}
             {answer && (
               <>
                 <span className="visually-hidden">测试连接返回内容</span>
