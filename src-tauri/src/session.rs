@@ -1606,6 +1606,109 @@ fn handle_transcript(
 // LLM 流式生成
 // ---------------------------------------------------------------------------
 
+/// 一次流式调用的产物。
+///
+/// 只放客观数据（已推出去的文本、首字耗时、结果）；业务语义——写库、会话状态、
+/// 事件名——留给调用方。这样面试作答与截图问答才能真正共用同一份实现。
+pub(crate) struct StreamRun {
+    /// 已经通过 `on_delta` 推给前端的文本；取消或失败时用它保留已输出内容。
+    pub(crate) partial: String,
+    /// 首个非空增量的耗时（毫秒）；一个增量都没收到时为 `None`。
+    pub(crate) ttft_ms: Option<u64>,
+    /// 成功是完整统计；失败是「可读原因 + 是否可重试」。
+    pub(crate) outcome: std::result::Result<llm::ChatStats, StreamFailure>,
+}
+
+/// 流式失败的类型化判定结果。
+///
+/// `retryable` 取模型层的类型化判定，不靠字符串里的状态码猜（例如「响应中没有
+/// 可用文本」不含状态码，但并不可重试）。
+pub(crate) struct StreamFailure {
+    /// 给用户看的中文原因（透传模型层错误的 Display）。
+    pub(crate) message: String,
+    /// 是否值得让用户重试。
+    pub(crate) retryable: bool,
+}
+
+impl StreamRun {
+    /// 还没进到流式阶段就失败（读 Key 失败等）：没有部分内容、不可重试。
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            partial: String::new(),
+            ttft_ms: None,
+            outcome: Err(StreamFailure {
+                message: message.into(),
+                retryable: false,
+            }),
+        }
+    }
+}
+
+/// 跑一次流式生成：`读 Key → llm::stream → 收集增量` 的唯一实现。
+///
+/// 面试作答（[`answer_one`]）与截图问答（`commands::capture_answer_task`）共用
+/// 这一份。两者的差别只在系统提示词、事件名与取消条件；流式循环一旦有第二份，
+/// 超时 / 重试 / 取消的修复必然只改到其中一处。
+///
+/// `gate` 是调用方额外的取消判定（会话级 `cancelled`、截图问答的 60 秒超时）：
+/// 返回 `true` 时立刻停止把增量推给 `on_delta`，但已经收到的内容仍保留在
+/// [`StreamRun::partial`] 里。
+pub(crate) async fn stream_chat(
+    settings: &Settings,
+    request: ChatRequest,
+    cancel: &Arc<AtomicBool>,
+    gate: &(dyn Fn() -> bool + Sync),
+    on_delta: &mut (dyn FnMut(&str) + Send),
+) -> StreamRun {
+    let provider = settings.provider.as_str().to_string();
+    // 凭据管理器读取是阻塞调用：域账号漫游或凭据服务异常时可能卡住数百毫秒到
+    // 数秒，不能占住异步运行时线程，统一丢给阻塞线程池。
+    let key = match tauri::async_runtime::spawn_blocking(move || secret::get(&provider)).await {
+        Ok(Ok(key)) => key,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "读取 API Key 失败");
+            // 调用方负责补上「点哪个按钮」：这里只说原因与去处。
+            return StreamRun::failed(format!(
+                "读取 API Key 失败：{error}。请到设置页重新保存 Key 后重试。"
+            ));
+        }
+        Err(error) => {
+            tracing::warn!(%error, "读取 API Key 任务失败");
+            return StreamRun::failed(format!("读取 API Key 任务失败：{error}。请重试。"));
+        }
+    };
+
+    let mut partial = String::new();
+    let mut ttft_ms: Option<u64> = None;
+    let started = Instant::now();
+    let result = llm::stream(settings, &key, request, cancel.as_ref(), |delta| {
+        // 旧流被重新生成 / 会话停止 / 截图超时取代后，模型层要到下一个 delta
+        // 才会观察到取消；这里在推送前先看一眼，避免旧 delta 污染新答案。
+        if cancel.load(Ordering::Acquire) || gate() {
+            return;
+        }
+        if ttft_ms.is_none() && !delta.trim().is_empty() {
+            ttft_ms = Some(started.elapsed().as_millis() as u64);
+        }
+        partial.push_str(delta);
+        on_delta(delta);
+    })
+    .await;
+
+    let outcome = match result {
+        Ok(stats) => Ok(stats),
+        Err(error) => Err(StreamFailure {
+            message: error.to_string(),
+            retryable: error.is_retryable(),
+        }),
+    };
+    StreamRun {
+        partial,
+        ttft_ms,
+        outcome,
+    }
+}
+
 /// 作答一个问题（由 worker 串行调用）。
 ///
 /// 上下文在**此刻**才快照：这样能包含前面已经完成并写入历史的答案。
@@ -1660,86 +1763,29 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
         }),
     );
 
-    let provider = settings.provider.as_str().to_string();
-    // 凭据管理器读取是阻塞调用：域账号漫游或凭据服务异常时可能卡住数百毫秒到
-    // 数秒，不能占住异步运行时线程，统一丢给阻塞线程池。
-    let key: Result<String, String> =
-        match tauri::async_runtime::spawn_blocking(move || secret::get(&provider)).await {
-            Ok(Ok(key)) => Ok(key),
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "读取 API Key 失败");
-                Err(format!(
-                    "读取 API Key 失败：{error}。请到设置页重新保存 Key 后点「重新生成」。"
-                ))
-            }
-            Err(error) => {
-                tracing::warn!(%error, "读取 API Key 任务失败");
-                Err(format!(
-                    "读取 API Key 任务失败：{error}。请重试或重新开始会话。"
-                ))
-            }
-        };
-    let key = match key {
-        Ok(key) => key,
-        Err(message) => {
-            finish_answer(
-                app,
-                shared,
-                &cancel,
-                AnswerOutcome::Failed {
-                    message,
-                    partial: String::new(),
-                    ttft_ms: None,
-                    retryable: false,
-                },
-                job.segment_id,
-                // 带模型名，避免被前端当成「空 text + 空 model = 清空答案」。
-                Some(settings.model.clone()),
-            );
-            return;
-        }
+    // 会话级取消也要拦住增量：`stop_session` 只会取消「当时槽位里的那个」
+    // 标志，本轮如果是在停止瞬间刚出队的，必须额外看会话级 `cancelled`。
+    let gate_shared = Arc::clone(shared);
+    let gate_cancel = Arc::clone(&cancel);
+    let gate = move || {
+        gate_cancel.load(Ordering::Acquire) || gate_shared.cancelled.load(Ordering::Acquire)
     };
+    let mut emit_delta = |delta: &str| emit(app, EVT_ANSWER_DELTA, json!({ "text": delta }));
+    let StreamRun {
+        partial,
+        ttft_ms,
+        outcome,
+    } = stream_chat(&settings, request, &cancel, &gate, &mut emit_delta).await;
 
-    // 旧流被重新生成 / 会话停止取代后，stream 内部要到下一个 delta 才会
-    // 观察到取消；这里在 emit 前先看自己的取消标志，避免旧 delta 污染新答案。
-    let cancel_for_delta = Arc::clone(&cancel);
-    // 会话停止时 stop_session 只会取消「当时槽位里的那个」标志；如果本轮
-    // 是在停止瞬间刚出队的，需要额外看会话级 cancelled，避免继续推 delta。
-    let session_for_delta = Arc::clone(shared);
-    let partial = Arc::new(Mutex::new(PartialAnswer::default()));
-    let partial_for_delta = Arc::clone(&partial);
-    let started = Instant::now();
-    let result = llm::stream(&settings, &key, request, &cancel, |delta| {
-        if cancel_for_delta.load(Ordering::Acquire)
-            || session_for_delta.cancelled.load(Ordering::Acquire)
-        {
-            return;
-        }
-        {
-            let mut state = lock(&partial_for_delta);
-            if state.ttft_ms.is_none() && !delta.trim().is_empty() {
-                state.ttft_ms = Some(started.elapsed().as_millis() as u64);
-            }
-            state.text.push_str(delta);
-        }
-        emit(app, EVT_ANSWER_DELTA, json!({ "text": delta }));
-    })
-    .await;
-
-    let outcome = match result {
+    let outcome = match outcome {
         Ok(stats) => AnswerOutcome::Completed(stats),
-        Err(error) => {
-            // 可重试性必须取类型化判定的结果，不能靠字符串里的状态码猜；
-            // 例如「响应中没有可用文本」不含状态码，但并不可重试。
-            let retryable = error.is_retryable();
-            let state = lock(&partial);
-            AnswerOutcome::Failed {
-                message: error.to_string(),
-                partial: state.text.clone(),
-                ttft_ms: state.ttft_ms,
-                retryable,
-            }
-        }
+        Err(failure) => AnswerOutcome::Failed {
+            message: failure.message,
+            // 没收到任何内容就是空串；收到过就保留，避免前端看到空白。
+            partial,
+            ttft_ms,
+            retryable: failure.retryable,
+        },
     };
     finish_answer(
         app,
@@ -1747,15 +1793,9 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
         &cancel,
         outcome,
         job.segment_id,
+        // 带模型名，避免被前端当成「空 text + 空 model = 清空答案」。
         Some(settings.model.clone()),
     );
-}
-
-/// 流式过程中的部分结果：失败时用来回填 answer-done，避免用户看到空白。
-#[derive(Default)]
-struct PartialAnswer {
-    text: String,
-    ttft_ms: Option<u64>,
 }
 
 /// 一轮回答的最终结果。

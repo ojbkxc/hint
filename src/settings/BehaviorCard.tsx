@@ -193,13 +193,14 @@ export default function BehaviorCard({ form, patch }: Props) {
           <span className="settings-kv-val settings-mono">Ctrl+Shift+A</span>
           <span className="settings-kv-key">开始 / 结束</span>
           <span className="settings-kv-val settings-mono">Ctrl+Shift+R</span>
-          <span className="settings-kv-key">截图（M5）</span>
+          <span className="settings-kv-key">截图问答</span>
           <span className="settings-kv-val settings-mono">Ctrl+Shift+S</span>
           <span className="settings-kv-key">隐藏浮层</span>
           <span className="settings-kv-val settings-mono">Esc</span>
         </div>
         <p className="muted small">
           手动模式下 Ctrl+Shift+A 即「生成答案」。
+          Ctrl+Shift+S 打开全屏选区，框选后把这一块屏幕发给当前模型作答，答案显示在浮层单独一块区域里。
         </p>
       </div>
     </section>

@@ -27,6 +27,10 @@ allow = [
   "0BSD",
   "MPL-2.0",
   "CDLA-Permissive-2.0",
+  # jpeg-encoder（capture 模块的区域截图编码）许可证是 (MIT OR Apache-2.0) AND IJG。
+  # IJG 是 Independent JPEG Group 的宽松许可：允许使用/修改/分发，只要求在文档里
+  # 保留出处声明，不是 copyleft，与本仓「只收宽松许可」的口径一致。
+  "IJG",
 ]
 # 说明例外：括号里的包逐个声明理由。
 exceptions = [

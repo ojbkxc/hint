@@ -118,13 +118,13 @@ describe("BehaviorCard —— 不透明度滑块", () => {
 });
 
 describe("BehaviorCard —— 热键清单", () => {
-  it("列出全部快捷键，含 M5 截图预留", () => {
+  it("列出全部快捷键，含截图问答", () => {
     renderCard();
     expect(screen.getByText("Ctrl+Shift+H")).toBeInTheDocument();
     expect(screen.getByText("Ctrl+Shift+A")).toBeInTheDocument();
     expect(screen.getByText("Ctrl+Shift+R")).toBeInTheDocument();
     expect(screen.getByText("Ctrl+Shift+S")).toBeInTheDocument();
     expect(screen.getByText("Esc")).toBeInTheDocument();
-    expect(screen.getByText("截图（M5）")).toBeInTheDocument();
+    expect(screen.getByText("截图问答")).toBeInTheDocument();
   });
 });

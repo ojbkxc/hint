@@ -1918,7 +1918,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hint"
-version = "1.0.26"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "encoding_rs",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "hint-audio"
-version = "1.0.26"
+version = "1.1.0"
 dependencies = [
  "cpal",
  "hint-core",
@@ -1955,10 +1955,12 @@ dependencies = [
 
 [[package]]
 name = "hint-core"
-version = "1.0.26"
+version = "1.1.0"
 dependencies = [
+ "base64 0.22.1",
  "encoding_rs",
  "futures-util",
+ "jpeg-encoder",
  "keyring",
  "reqwest 0.12.28",
  "serde",
@@ -1966,11 +1968,12 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "windows",
 ]
 
 [[package]]
 name = "hint-store"
-version = "1.0.26"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -1980,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "hint-stt"
-version = "1.0.26"
+version = "1.1.0"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -2507,6 +2510,12 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
 ]
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b454d911ac55068f53495488d8ccd0646eaa540c033a28ee15b07838afafb01f"
 
 [[package]]
 name = "js-sys"

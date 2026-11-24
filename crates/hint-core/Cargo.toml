@@ -1,6 +1,6 @@
 [package]
 name = "hint-core"
-version = "1.0.26"
+version = "1.1.0"
 edition = "2024"
 description = "hint 的核心业务逻辑：配置、凭证、LLM 调用"
 license = "MIT"
@@ -15,3 +15,16 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 encoding_rs = "0.8"
+# 区域截图（capture 模块）：只编码不解码，所以用 jpeg-encoder 而不是 image，
+# 避免把整棵解码依赖一起拖进来。
+base64 = "0.22"
+jpeg-encoder = "0.6"
+
+# BitBlt 抓屏只在 Windows 上有意义，非 Windows 构建不拉这棵树。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -57,6 +57,11 @@ pub(crate) struct AppState {
     pub(crate) dispatch_done: Mutex<Option<Arc<DispatchDone>>>,
     /// 会话生命周期队列：串行化 start/stop，消除 check-exec 竞态。
     pub(crate) lifecycle: Mutex<LifecycleQueue>,
+    /// 进行中的截图问答：`None` 表示当前没有在跑。
+    ///
+    /// 与 `session` 完全分开：截图问答不参与面试会话的生命周期，也不被
+    /// `stop_session` 取消；两者只共享「同一份模型配置」这个前提。
+    pub(crate) capture: Mutex<Option<Arc<crate::commands::CaptureRun>>>,
 }
 
 /// 分发线程完成信号：`(Mutex<bool>, Condvar)` 是「完成标志 + 唤醒」对，
@@ -122,6 +127,7 @@ impl AppState {
             prepare_cancel: Mutex::new(None),
             dispatch_done: Mutex::new(None),
             lifecycle: Mutex::new(LifecycleQueue::default()),
+            capture: Mutex::new(None),
         })
     }
 }
@@ -364,6 +370,7 @@ pub fn run() {
             commands::start_capture,
             commands::cancel_capture,
             commands::finish_capture,
+            commands::cancel_capture_answer,
             commands::open_log_dir,
         ])
         .build(tauri::generate_context!())
@@ -505,6 +512,10 @@ fn handle_pressed_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) {
         // 启动中再按一次会排队停止，而不是被合并成一个无效的 Start。
         session::spawn_toggle(app);
     } else if shortcut == combo(Code::KeyS) {
-        commands::emit_capture_placeholder(app);
+        // M5 起截图问答已接通：热键直接拉起截图选区窗口（与设置页/托盘走
+        // 同一个命令），失败只提示不弹窗。
+        if let Err(error) = commands::start_capture(app.clone()) {
+            session::emit_notice(app, "error", format!("截图问答启动失败：{error}"));
+        }
     }
 }

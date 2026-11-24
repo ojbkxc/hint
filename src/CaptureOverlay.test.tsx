@@ -86,7 +86,7 @@ describe("CaptureOverlay —— 初始态", () => {
     expect(rectBox()).toBeNull();
     expect(screen.getByText("拖拽框选要提问的区域")).toBeInTheDocument();
     expect(
-      screen.getByText("松开鼠标后截取；Esc 取消。截图问答将在 M5 启用。"),
+      screen.getByText("松开鼠标后截取；Esc 或右键取消。"),
     ).toBeInTheDocument();
     expect(container.querySelector(".capture-error")).toBeNull();
   });
@@ -120,7 +120,7 @@ describe("CaptureOverlay —— 初始态", () => {
 
     expect(rectBox()).toBeNull();
     expect(callsTo("finish_capture")).toHaveLength(0);
-    expect(screen.queryByText("选区太小，请重新拖拽。")).not.toBeInTheDocument();
+    expect(screen.queryByText("选区太小，请重新框选")).not.toBeInTheDocument();
   });
 });
 
@@ -176,17 +176,18 @@ describe("CaptureOverlay —— 确认选区", () => {
       y: 130,
       width: 100,
       height: 80,
+      dpr: 1,
     });
     expect(capture.releaseCapture).toHaveBeenCalledWith(7);
     expect(rectBox()).toBeNull();
-    expect(screen.queryByText("选区太小，请重新拖拽。")).not.toBeInTheDocument();
+    expect(screen.queryByText("选区太小，请重新框选")).not.toBeInTheDocument();
   });
 
   it("宽度或高度小于 8 视为太小：不调后端并给出中文提示", async () => {
     const { root } = mount();
     drag(root, { x: 30, y: 30 }, { x: 36, y: 200 });
 
-    expect(screen.getByText("选区太小，请重新拖拽。")).toBeInTheDocument();
+    expect(screen.getByText("选区太小，请重新框选")).toBeInTheDocument();
     expect(callsTo("finish_capture")).toHaveLength(0);
     expect(rectBox()).toBeNull();
     // 让 pointerUp 里 await 的分支落定，确认之后也不会补发命令
@@ -197,7 +198,7 @@ describe("CaptureOverlay —— 确认选区", () => {
     const { root } = mount();
     drag(root, { x: 10, y: 10 }, { x: 17, y: 17 });
 
-    expect(screen.getByText("选区太小，请重新拖拽。")).toBeInTheDocument();
+    expect(screen.getByText("选区太小，请重新框选")).toBeInTheDocument();
     expect(callsTo("finish_capture")).toHaveLength(0);
   });
 
@@ -213,16 +214,17 @@ describe("CaptureOverlay —— 确认选区", () => {
       y: 60,
       width: 8,
       height: 8,
+      dpr: 1,
     });
   });
 
-  it("finish_capture 失败时提示「截图问答尚未接通：」并清空选区", async () => {
+  it("finish_capture 失败时提示「截图问答失败：」并清空选区", async () => {
     route("finish_capture", () => Promise.reject("命令未注册"));
     const { root } = mount();
     drag(root, { x: 10, y: 10 }, { x: 110, y: 110 });
 
     expect(
-      await screen.findByText("截图问答尚未接通：命令未注册"),
+      await screen.findByText("截图问答失败：命令未注册"),
     ).toBeInTheDocument();
     expect(rectBox()).toBeNull();
   });

@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AnswerPanel from "./overlay/AnswerPanel";
+import CaptureAnswerPanel from "./overlay/CaptureAnswerPanel";
 import StatusBar from "./overlay/StatusBar";
 import TranscriptPanel from "./overlay/TranscriptPanel";
+import { useCaptureAnswer } from "./lib/useCaptureAnswer";
 import { useOverlayEvents } from "./lib/useOverlayEvents";
 
 const ACTIVE_STATES = new Set(["connected", "listening", "ready"]);
@@ -26,6 +28,27 @@ export default function Overlay() {
     clearAnswer,
     dismissAnswerError,
   } = useOverlayEvents();
+  // 截图问答与面试问答是两条独立事件流：各自的状态、各自的分区，互不覆盖。
+  const {
+    text: captureText,
+    streaming: captureStreaming,
+    error: captureError,
+    model: captureModel,
+    dismiss: dismissCaptureAnswer,
+  } = useCaptureAnswer();
+  // memo 化的 CaptureAnswerPanel 靠引用比较：电平事件重渲染时不要换新对象。
+  const captureAnswer = useMemo(
+    () => ({
+      text: captureText,
+      streaming: captureStreaming,
+      error: captureError,
+      model: captureModel,
+    }),
+    [captureText, captureStreaming, captureError, captureModel],
+  );
+  // 没有任何截图内容时不占位：浮层版式与改动前完全一致（不挤压转录区）。
+  const hasCaptureAnswer =
+    captureStreaming || captureError !== "" || captureText.trim() !== "";
   const [localError, setLocalError] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
   const toastKey = useRef(0);
@@ -132,6 +155,13 @@ export default function Overlay() {
         onClear={handleClear}
         onDismissError={dismissAnswerError}
       />
+
+      {hasCaptureAnswer && (
+        <CaptureAnswerPanel
+          answer={captureAnswer}
+          onDismiss={dismissCaptureAnswer}
+        />
+      )}
 
       <StatusBar
         levels={levels}

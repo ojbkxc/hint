@@ -1594,6 +1594,21 @@ button.preset.active {
   padding: 8px 14px 0;
 }
 
+/* ---------- 截图问答区（浮层内独立分区） ----------
+ * 与面试答案并列而不是覆盖：不参与 flex:1 的主区域分配，
+ * 只按内容高度占用（上限 38%），超出时在答案体内自己滚动，
+ * 转录区与面试答案的版式不受影响。
+ */
+.overlay-capture-answer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 38%;
+  overflow: hidden;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
 .overlay-question-row {
   display: flex;
   align-items: center;

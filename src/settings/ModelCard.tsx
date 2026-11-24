@@ -362,15 +362,16 @@ export default function ModelCard(props: Props) {
             type="button"
             className="ghost m5"
             onClick={() => setVisionHint(true)}
-            title="截图问答在 M5 实现，当前版本尚未启用"
+            title="截图问答需要支持视觉输入的模型；模型不接受图片时接口会报错"
           >
             截图问答
-            <span className="tag-m5">M5 预留</span>
+            <span className="tag-m5">需要视觉模型</span>
           </button>
           {visionHint && (
             <p className="muted small">
-              截图问答尚未启用：v1 只预留了窗口与接口，需等 M5 接入视觉模型后开放。
-              {form.model ? ` 当前模型「${form.model}」是否支持图片需在 M5 由设置项标注。` : ""}
+              截图问答需要支持视觉输入的模型：按 Ctrl+Shift+S 框选屏幕区域，截图随问题一起发给你自己配置的模型接口；
+              模型不接受图片时接口会直接报错，换一个支持视觉的模型即可。
+              {form.model ? ` 当前模型「${form.model}」是否支持图片由接口决定，报错即需更换。` : ""}
             </p>
           )}
         </div>

@@ -318,27 +318,27 @@ describe("ModelCard —— 模型下拉与 Base URL", () => {
   });
 });
 
-describe("ModelCard —— M5 截图提示", () => {
-  it("点「截图问答」后出现 M5 说明，且带上当前模型名", async () => {
+describe("ModelCard —— 截图问答提示", () => {
+  it("点「截图问答」后出现视觉模型说明，且带上当前模型名", async () => {
     const user = userEvent.setup();
     renderCard({ form: makeForm({ model: "qwen-plus" }) });
 
-    expect(screen.queryByText(/截图问答尚未启用/)).not.toBeInTheDocument();
-    expect(screen.getByText("M5 预留")).toBeInTheDocument();
+    expect(screen.queryByText(/截图问答需要支持视觉输入的模型/)).not.toBeInTheDocument();
+    expect(screen.getByText("需要视觉模型")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /截图问答/ }));
     await waitFor(() => {
-      expect(screen.getByText(/截图问答尚未启用/)).toBeInTheDocument();
+      expect(screen.getByText(/截图问答需要支持视觉输入的模型/)).toBeInTheDocument();
     });
     expect(screen.getByText(/当前模型「qwen-plus」/)).toBeInTheDocument();
   });
 
-  it("模型名为空时 M5 说明不带模型推断那句", async () => {
+  it("模型名为空时视觉模型说明不带模型推断那句", async () => {
     const user = userEvent.setup();
     renderCard({ form: makeForm({ model: "" }) });
 
     await user.click(screen.getByRole("button", { name: /截图问答/ }));
-    const hint = await screen.findByText(/截图问答尚未启用/);
+    const hint = await screen.findByText(/截图问答需要支持视觉输入的模型/);
     expect(hint.textContent).not.toContain("当前模型");
   });
 });
