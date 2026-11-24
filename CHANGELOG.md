@@ -4,6 +4,22 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.0.21] - 2026-11-24
+
+### 修复
+
+- **模型可能因清单版本号变化而重下（隐患）**：`read_manifest` 原先要求 `version == MANIFEST_VERSION`，否则整份判无效。这意味着以后任何一次清单版本 bump（哪怕只加字段）都会让所有用户重下 241 MB。兼容性改由结构解析判断，文件是否可信仍由 `is_installed` 的 sha256 + 大小二次校验兜底；读入后版本统一规整为当前常量。新增 `stale_manifest_version_still_counts_as_installed` 守住，并修正 `corrupted_manifest_reads_as_empty` 里依赖旧门控的断言。
+- **配置保存成/败均无日志**：用户反馈「配置存不住」时 `hint.log` 一片空白，无法判断是没点到、被拒绝还是写盘失败。现在保存失败记 error（含路径）、成功记 info（协议、Base URL 与模型名是否填写、不透明度——不记录内容以免泄露自建网关域名）；`get_settings` 也记一条，用于区分「没写成」与「写成了但回滚成默认」。
+- **`--doctor` 在全新机器上写不出报告**：写文件前未创建数据目录，而全新安装 / 卸载重装后该目录本就不存在——恰是最需要诊断时。已补 `create_dir_all`。
+
+### 新增
+
+- CI 增加 `--doctor` 冒烟测试：构建后真实运行一次，断言报告 >200 字节、7 个分节齐全、版本三重对齐（`package.json` / exe 文件版本 / 报告内版本）、日志缺失不被误报为读取失败。本轮就是它抓出了上面「全新机器写不出报告」的缺陷。
+
+### 验证说明
+
+文件系统层面实测：Windows 下 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` 能可靠覆盖目标，`Settings::save` 的 rename→重试→copy 兜底策略可生效。（先前用 PowerShell `File.Move` 测失败是测试脚本用错 API，非产品问题。）
+
 ## [1.0.20] - 2026-11-24
 
 ### 修复
