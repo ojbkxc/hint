@@ -83,12 +83,23 @@ pub struct Settings {
     /// 这里只存纯数据，不在此 clamp：由应用层决定越界值如何处理。
     #[serde(default = "default_overlay_opacity")]
     pub overlay_opacity: f64,
-    /// 浮层字号缩放（0.8–1.6）；缺字段时取 1.0（= 现状大小）。
+    /// 浮层字号缩放（0.8–3）；缺字段时取 1.0（= 现状大小）。
     ///
     /// 用缩放比而不是像素值：浮层里答案/转录/问题行各有自己的字号，
     /// 存比例能让它们一起放大，不会只变大一块。
     #[serde(default = "default_overlay_font_scale")]
     pub overlay_font_scale: f64,
+    /// 浮层是否从屏幕捕获中排除（默认开）。
+    ///
+    /// 开：腾讯会议 / 钉钉 / OBS 等共享屏幕时，面试官看到桌面而看不到浮层。
+    /// 关：自己录屏留证时需要。底层 `WDA_EXCLUDEFROMCAPTURE`，Win10 2004+ 生效。
+    #[serde(default = "default_overlay_content_protected")]
+    pub overlay_content_protected: bool,
+}
+
+/// 浮层内容保护默认开：视频面试时不该把提词器共享给对方。
+fn default_overlay_content_protected() -> bool {
+    true
 }
 
 /// 浮层字号的默认缩放比，与前端 `DEFAULT_OVERLAY_FONT_SCALE` 保持一致。
@@ -137,6 +148,7 @@ impl Default for Settings {
             output_device: String::new(),
             overlay_opacity: default_overlay_opacity(),
             overlay_font_scale: default_overlay_font_scale(),
+            overlay_content_protected: default_overlay_content_protected(),
         }
     }
 }

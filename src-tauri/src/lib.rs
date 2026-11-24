@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use hint_core::session::LifecycleQueue;
+use hint_core::settings::Settings;
 use hint_store::Store;
 use hint_stt::ModelManager;
 use tauri::{
@@ -353,6 +354,7 @@ pub fn run() {
             commands::hide_overlay,
             commands::show_overlay,
             commands::toggle_overlay,
+            commands::set_overlay_content_protected,
             commands::regenerate_answer,
             commands::list_audio_devices,
             commands::prepare_model,
@@ -391,8 +393,26 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
     let tray = build_tray(app);
     register_shortcuts(app);
     tray?;
-    if app.get_webview_window("overlay").is_none() {
-        tracing::warn!("浮层窗口未创建，请检查 tauri.conf.json");
+    match app.get_webview_window("overlay") {
+        Some(window) => {
+            // 浮层默认不进入屏幕捕获：腾讯会议 / 钉钉 / OBS 这类共享屏幕时，
+            // 面试官看到的是桌面，看不到浮层与答案。
+            // 底层是 Windows 的 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)
+            // （Win10 2004+：从捕获中排除；更早的系统会退化成黑块）。
+            // 用户可在设置里关掉（需要自己录屏留证时）。
+            let protected = {
+                let state = app.state::<AppState>();
+                Settings::load(&state.settings_path).overlay_content_protected
+            };
+            match window.set_content_protected(protected) {
+                Ok(()) => tracing::info!(protected, "浮层内容保护已设置"),
+                Err(error) => tracing::warn!(
+                    %error,
+                    "设置浮层内容保护失败（共享屏幕时浮层可能被看到）"
+                ),
+            }
+        }
+        None => tracing::warn!("浮层窗口未创建，请检查 tauri.conf.json"),
     }
     Ok(())
 }

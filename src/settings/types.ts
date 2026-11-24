@@ -18,8 +18,10 @@ export type Settings = {
   outputDevice: string;
   /** 浮层背景不透明度，0.2–1.0（默认 0.88）。文字始终不透明。 */
   overlayOpacity: number;
-  /** 浮层字号缩放，0.8–1.6（默认 1.0）。答案、转录、问题行按同一比例放大。 */
+  /** 浮层字号缩放，0.8–3（默认 1.0）。答案、转录、问题行按同一比例放大。 */
   overlayFontScale: number;
+  /** 浮层是否从屏幕捕获中排除（默认 true，共享屏幕时对方看不到）。 */
+  overlayContentProtected: boolean;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -72,7 +74,10 @@ export const MAX_OVERLAY_OPACITY = 1;
 /** 浮层字号缩放的默认值与上下限（1.0 = 现状大小）。 */
 export const DEFAULT_OVERLAY_FONT_SCALE = 1;
 export const MIN_OVERLAY_FONT_SCALE = 0.8;
-export const MAX_OVERLAY_FONT_SCALE = 1.6;
+export const MAX_OVERLAY_FONT_SCALE = 3;
+
+/** 浮层内容保护默认开：视频面试时不该把提词器共享给对方。 */
+export const DEFAULT_OVERLAY_CONTENT_PROTECTED = true;
 
 /**
  * Base URL 规范化：把用户常见的各种写法统一成后端能直接拼接的形态。
@@ -152,7 +157,7 @@ export function normalizeOpacity(raw: unknown): number {
   return Math.min(MAX_OVERLAY_OPACITY, Math.max(MIN_OVERLAY_OPACITY, parsed));
 }
 
-/** 浮层字号缩放归一：非法值回落 1.0，越界钳到 0.8–1.6。 */
+/** 浮层字号缩放归一：非法值回落 1.0，越界钳到 0.8–3。 */
 export function normalizeFontScale(raw: unknown): number {
   const parsed =
     typeof raw === "number"
@@ -179,6 +184,7 @@ export const EMPTY_SETTINGS: Settings = {
   outputDevice: "",
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
   overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
+  overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -207,6 +213,8 @@ export function normalizeSettings(raw: unknown): Settings {
     overlayFontScale: normalizeFontScale(
       value.overlayFontScale ?? value.overlay_font_scale,
     ),
+    overlayContentProtected:
+      (value.overlayContentProtected ?? value.overlay_content_protected) !== false,
   };
 }
 

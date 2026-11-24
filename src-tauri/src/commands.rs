@@ -90,12 +90,19 @@ pub fn save_settings(
         json!({ "opacity": opacity }),
     );
     // 字号缩放与不透明度同一条路径下发：浮层拿到后立刻改 CSS 变量，不用重开。
-    let font_scale = settings.overlay_font_scale.clamp(0.8, 1.6);
+    let font_scale = settings.overlay_font_scale.clamp(0.8, 3.0);
     session::emit(
         &app,
         session::EVT_OVERLAY_FONT_SCALE,
         json!({ "scale": font_scale }),
     );
+    // 内容保护随保存立即生效：用户刚在设置里关掉/打开，不该等到下次启动。
+    // 失败只记日志——它是「共享时不泄露」的加固，不该让整次保存失败。
+    if let Some(window) = app.get_webview_window("overlay")
+        && let Err(error) = window.set_content_protected(settings.overlay_content_protected)
+    {
+        tracing::warn!(%error, "应用浮层内容保护失败");
+    }
     Ok(())
 }
 
@@ -398,6 +405,20 @@ pub fn toggle_overlay(app: AppHandle) -> Result<bool, String> {
         show_overlay_window(&window)?;
         Ok(true)
     }
+}
+
+/// 切换浮层是否从屏幕捕获中排除（设置页开关即时生效）。
+///
+/// 底层 `WDA_EXCLUDEFROMCAPTURE`：开了之后腾讯会议共享屏幕时对方看不到浮层。
+/// 返回实际生效的状态：某些系统版本（Win10 2004 之前）不支持，会如实返回 false。
+#[tauri::command]
+pub fn set_overlay_content_protected(app: AppHandle, protected: bool) -> Result<bool, String> {
+    let window = overlay_window(&app)?;
+    window
+        .set_content_protected(protected)
+        .map_err(|error| format!("设置浮层内容保护失败：{error}"))?;
+    tracing::info!(protected, "浮层内容保护已切换");
+    Ok(protected)
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_OVERLAY_CONTENT_PROTECTED,
   DEFAULT_OVERLAY_FONT_SCALE,
   DEFAULT_OVERLAY_OPACITY,
   MAX_OVERLAY_OPACITY,
@@ -74,6 +75,7 @@ describe("normalizeSettings", () => {
         outputDevice: "",
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
         overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
+        overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
       });
     }
   });
@@ -100,6 +102,7 @@ describe("normalizeSettings", () => {
       outputDevice: "spk-2",
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
+        overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
     });
     expect(settings).toEqual({
       provider: "anthropic",
@@ -113,6 +116,7 @@ describe("normalizeSettings", () => {
       outputDevice: "spk-2",
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
+        overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
     });
   });
 

@@ -117,6 +117,24 @@ export default function BehaviorCard({ form, patch }: Props) {
             }
           />
         </div>
+        <div className="field">
+          <label className="field-label field-label-row" htmlFor="overlay-content-protected">
+            屏幕共享时隐藏浮层
+            <input
+              id="overlay-content-protected"
+              type="checkbox"
+              checked={form.overlayContentProtected}
+              onChange={(event) =>
+                patch({ overlayContentProtected: event.target.checked })
+              }
+            />
+          </label>
+        </div>
+        <p className="muted small">
+          开启后（默认），腾讯会议 / 钉钉 / 飞书 / OBS 等共享屏幕时，对方看到的是桌面，
+          看不到浮层和答案——你自己屏幕上照常可见。需要自己录屏留证时可关掉。
+          Win10 2004 及以上生效。
+        </p>
         <p className="muted small">
           不透明度只改背景（文字始终清晰，不影响窗口是否可见）；字号会把答案、转录与问题行一起缩放。
           改完点「保存全部配置」立即生效，不用重开浮层。
