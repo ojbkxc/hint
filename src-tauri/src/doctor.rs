@@ -185,6 +185,37 @@ fn collect(app_data_dir: &Path) -> String {
     );
     let _ = writeln!(
         out,
+        "  浮层字号：{:.0}%",
+        settings.overlay_font_scale * 100.0
+    );
+    // 内容保护直接决定「共享屏幕时对方能不能看到浮层」，是用户最关心的
+    // 一项，必须能在报告里自查；同时点明生效的系统门槛。
+    let _ = writeln!(
+        out,
+        "  浮层内容保护（共享屏幕时隐藏）：{}",
+        if settings.overlay_content_protected {
+            "开（Win10 2004+ 生效）"
+        } else {
+            "关（共享屏幕时对方能看到浮层）"
+        }
+    );
+    // 代理只报模式与「是否填了地址」，不打印地址本身：代理 URL 可能带
+    // 用户名密码（user:pass@host），报告是随手转发的东西。
+    let proxy_mode = settings.proxy_mode.as_str();
+    let proxy_desc = match proxy_mode {
+        "manual" => {
+            if settings.proxy_url.trim().is_empty() {
+                "手动指定（但地址为空，等同直连）"
+            } else {
+                "手动指定（地址已填写）"
+            }
+        }
+        "system" => "跟随系统",
+        _ => "直连",
+    };
+    let _ = writeln!(out, "  出网代理：{proxy_desc}");
+    let _ = writeln!(
+        out,
         "  麦克风：{}",
         hint_core::diagnostics::device_label(&settings.mic_device, "系统默认")
     );
