@@ -29,3 +29,10 @@ dist-ssr
 # Vitest coverage output
 coverage/
 
+
+# 临时探针脚本（CDP 验证用，不入库）
+.verify-save.cjs
+.inspect-form.cjs
+.list-pages.cjs
+.check-ipc.cjs
+
