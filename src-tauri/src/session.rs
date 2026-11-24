@@ -701,6 +701,16 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
         return Err(message);
     }
 
+    // Base URL / 模型名也必须非空：这两项为空时模型调用必然失败，而失败发生在
+    // **面试进行中**——用户已经开始共享屏幕、对方已经在说话，才发现点不出答案。
+    // 与保存时的校验共用同一份判据（hint_core::settings::missing_required_fields），
+    // 两处各写一套是最容易漂的形态。
+    if let Some(missing) = hint_core::settings::missing_required_fields(&settings) {
+        let message = format!("{missing}开始会话前请先在设置页补齐。");
+        emit_status(app, "error", &message);
+        return Err(message);
+    }
+
     emit_status(app, "connecting", "正在创建会话…");
 
     let session_id = {

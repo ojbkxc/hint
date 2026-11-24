@@ -165,6 +165,31 @@ export default function Dashboard() {
    * rail 徽标全部由现有 props 派生，只是把散落在各卡里的状态前置到导航上，
    * 不新增任何状态，也不改 hook 的返回值。
    */
+  /**
+   * 开始面试还差什么。
+   *
+   * 后端 `start_session` 会拒掉其中三项（Key / 模型 / Base URL 与模型名），
+   * 但用户在看到那条报错之前完全不知道还差几个条件——六个 rail 条目各显示
+   * 自己的状态，没有一处告诉他「现在能不能开始」。这里把判据前置到界面上。
+   *
+   * 只做提示、不拦按钮：手动提问和截图问答在没有语音模型时也能用，
+   * 拦死开始按钮会把这两条路一起堵掉。
+   */
+  const readiness = (() => {
+    if (!form.loaded) return [];
+    const missing: Array<{ label: string; section: SectionId }> = [];
+    if (!form.form.baseUrl.trim() || !form.form.model.trim()) {
+      missing.push({ label: "Base URL 与模型名", section: "model" });
+    }
+    if (!form.keySaved) {
+      missing.push({ label: "API Key", section: "model" });
+    }
+    if (model.view.phase !== "ready") {
+      missing.push({ label: "下载模型", section: "voice" });
+    }
+    return missing;
+  })();
+
   function railBadge(id: SectionId): Badge | null {
     switch (id) {
       case "model":
@@ -299,6 +324,26 @@ export default function Dashboard() {
           <kbd>Ctrl+Shift+H</kbd>
         </button>
       </header>
+
+      {/* 准备状态：缺项时列出，并可直接跳到对应区块。全齐时不占地方。 */}
+      {readiness.length > 0 && (
+        <div className="readiness-strip" role="status">
+          <span className="readiness-title">
+            开始面试前还差 {readiness.length} 项
+          </span>
+          {readiness.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className="readiness-chip"
+              onClick={() => setSection(item.section)}
+              title={`去「${SECTION_LABEL[item.section]}」补齐`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {banner && (
         <button

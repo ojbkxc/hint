@@ -830,3 +830,53 @@ describe("Dashboard —— titlebar 技术值", () => {
     );
   });
 });
+
+describe("Dashboard —— 准备状态条", () => {
+  it("缺项时列出还差哪几项", async () => {
+    // 六个 rail 条目各显示自己的状态，但没有一处告诉用户「现在能不能开始面试」。
+    // 后端 start_session 会拒（Key / 模型 / Base URL 与模型名），但用户在看到那条
+    // 报错之前完全不知道还差几个条件。
+    hooks.settings = makeForm({
+      loaded: true,
+      keySaved: false,
+      form: { ...EMPTY_SETTINGS, baseUrl: "", model: "" },
+    });
+    hooks.model = makeModel({ view: { ...INITIAL_MODEL_VIEW, phase: "unprepared" } });
+    await mount();
+
+    expect(screen.getByText(/开始面试前还差 3 项/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Base URL 与模型名" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "API Key" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载模型" })).toBeInTheDocument();
+  });
+
+  it("点 chip 跳到对应区块", async () => {
+    const user = userEvent.setup();
+    hooks.settings = makeForm({
+      loaded: true,
+      keySaved: false,
+      form: { ...EMPTY_SETTINGS, baseUrl: "", model: "" },
+    });
+    hooks.model = makeModel({ view: { ...INITIAL_MODEL_VIEW, phase: "unprepared" } });
+    const { container } = await mount();
+
+    await user.click(screen.getByRole("button", { name: "下载模型" }));
+    expect(sectionOf(container, "voice").hidden).toBe(false);
+  });
+
+  it("全部齐备时不显示状态条（不占地方）", async () => {
+    hooks.settings = makeForm({
+      loaded: true,
+      keySaved: true,
+      form: {
+        ...EMPTY_SETTINGS,
+        baseUrl: "https://api.example.com/v1",
+        model: "m",
+      },
+    });
+    hooks.model = makeModel({ view: { ...INITIAL_MODEL_VIEW, phase: "ready" } });
+    await mount();
+
+    expect(screen.queryByText(/开始面试前还差/)).not.toBeInTheDocument();
+  });
+});

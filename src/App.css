@@ -272,6 +272,43 @@ button.hint-badge-button:disabled {
 
 /* ---------- 横幅 ---------- */
 
+/* 准备状态条：只在缺项时出现，列出还差什么，点一下跳到对应区块。 */
+.readiness-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+  padding: 8px 12px;
+  border: 1px solid var(--warn-border, rgba(180, 130, 0, 0.35));
+  border-radius: var(--radius-card, 10px);
+  background: var(--warn-soft, rgba(255, 200, 0, 0.12));
+  font-size: var(--font-sm);
+}
+
+.readiness-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.readiness-chip {
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px;
+  font-size: var(--font-sm);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.16));
+  border-radius: var(--radius-pill, 999px);
+  cursor: pointer;
+}
+
+.readiness-chip:hover {
+  background: #fff;
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+
 .dashboard-banner {
   display: block;
   width: 100%;
