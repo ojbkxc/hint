@@ -389,7 +389,9 @@ mod encode {
     pub(super) fn bgra_to_rgb(bgra: &[u8]) -> Vec<u8> {
         // 顺手丢掉 alpha：屏幕上没有透明度，留着只是白占 1/4 内存。
         let mut rgb = Vec::with_capacity(bgra.len() / 4 * 3);
-        for pixel in bgra.chunks_exact(4) {
+        // as_chunks 比 chunks_exact 好在类型上就把「一整像素」写死了：
+        // pixel 是 &[u8; 4]，不会因为切分逻辑改动而静默错位。
+        for pixel in bgra.as_chunks::<4>().0 {
             rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         }
         rgb
