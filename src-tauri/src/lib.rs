@@ -253,10 +253,45 @@ pub fn doctor_entry() -> i32 {
     doctor::run(&app_data_dir)
 }
 
+/// 按 Tauri 的规则推导应用数据目录：`%APPDATA%\<identifier>`。
+///
+/// 与 `app.path().app_data_dir()` 等价（Windows），但不需要 `AppHandle`——
+/// 应用状态要在 Builder 阶段注册，那时还没有 AppHandle。
+/// setup 里会与官方结果比对，防止规则变化导致静默读错文件。
+fn fallback_app_data_dir() -> std::path::PathBuf {
+    let identifier = "com.ojbkxc.hint";
+    std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(identifier)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 日志初始化推迟到 setup：那时才拿到 app_data_dir，才能落盘。
+    // 应用状态必须在**窗口创建之前**注册。
+    //
+    // 原先 `app.manage(state)` 写在 `setup` 里，而 setup 在窗口与 webview 建好
+    // 之后才跑：前端的首屏 effect 已经开始发 IPC 了，部分命令会撞上
+    // 「state not managed for field `state`」直接失败（真机实测：设置页显示
+    // 「读取模型状态失败：state not managed…」，表单停在空值，用户一保存就把
+    // 空配置写回文件）。改成 Builder 阶段注册，任何窗口 IPC 都不可能更早。
+    //
+    // 代价是拿不到 AppHandle 推导 app_data_dir，这里按 Tauri 的规则
+    // （`%APPDATA%\<identifier>`）自行推导；setup 里再与官方路径比对一次，
+    // 不一致就报错，避免硬编码悄悄漂移。
+    let data_dir = fallback_app_data_dir();
+    let state = match AppState::new(&data_dir) {
+        Ok(state) => state,
+        Err(error) => {
+            // 此时还没有日志系统，只能走 stderr；release 下用户看不到，
+            // 但应用会因缺状态而无法工作，比静默半死好。
+            eprintln!("hint: 初始化应用状态失败：{error}");
+            std::process::exit(1);
+        }
+    };
+
     tauri::Builder::default()
+        .manage(state)
         // 单实例保护必须是第一个 plugin：第二个实例把参数交给首实例后直接退出。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app);
@@ -267,14 +302,15 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let log_dir = data_dir.join("logs");
             logging::init(&log_dir);
-            match AppState::new(&data_dir) {
-                Ok(state) => {
-                    app.manage(state);
-                }
-                Err(error) => {
-                    tracing::error!(%error, "初始化应用状态失败");
-                    return Err(error.into());
-                }
+            // 校验：Builder 阶段用的是自己推导的路径，这里与 Tauri 官方结果
+            // 比一次。不一致说明 identifier 或环境变量规则变了，必须暴露出来，
+            // 否则状态会指向另一份配置/数据库（比直接失败更难查）。
+            if data_dir != fallback_app_data_dir() {
+                tracing::error!(
+                    official = %data_dir.display(),
+                    derived = %fallback_app_data_dir().display(),
+                    "数据目录推导结果与 Tauri 不一致，配置可能读到另一份文件"
+                );
             }
             session::emit_status(app.handle(), "idle", "等待连接");
             Ok(())
