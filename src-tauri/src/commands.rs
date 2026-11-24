@@ -47,6 +47,20 @@ pub fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
+    // 拒绝保存空的必填项：Base URL 或模型名为空时，模型调用必然失败，
+    // 而把空值写进配置文件会**覆盖掉用户本来填好的值**——这是 1.0.23 之前
+    // 「配置被清空」的直接后果（表单停在空值时点保存）。宁可让保存失败并
+    // 给出明确原因，也不允许用空值污染真实配置。
+    // 校验逻辑放在 hint_core::settings（壳层测试跑不了，那边有单测）。
+    if let Some(message) = hint_core::settings::missing_required_fields(&settings) {
+        tracing::error!(
+            provider = settings.provider.as_str(),
+            reason = %message,
+            "拒绝保存配置：必填项为空，将覆盖用户已填内容"
+        );
+        return Err(format!("保存配置失败：{message}"));
+    }
+
     // 保存成功/失败都要落日志：用户反馈「配置存不住」时，日志里
     // 完全没有痕迹就没法判断到底是没点到、被拒绝，还是写盘失败。
     settings.save(&state.settings_path).map_err(|error| {

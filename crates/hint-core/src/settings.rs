@@ -101,6 +101,28 @@ fn default_overlay_opacity() -> f64 {
     0.88
 }
 
+/// 保存前校验：必填项（Base URL / 模型名）不能为空。
+///
+/// 空值保存会**覆盖掉用户已填好的配置**，而空配置下模型调用必然失败——
+/// 这是「配置被清空」事故的直接后果。返回 `Some(中文错误)` 时调用方必须
+/// 拒绝写盘，不能让它把空值落进文件。
+pub fn missing_required_fields(settings: &Settings) -> Option<String> {
+    let mut missing: Vec<&str> = Vec::new();
+    if settings.base_url.trim().is_empty() {
+        missing.push("Base URL");
+    }
+    if settings.model.trim().is_empty() {
+        missing.push("模型名");
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} 为空，保存会覆盖已填好的配置，请先填写再保存。",
+        missing.join("、")
+    ))
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -244,6 +266,51 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 保存前的必填项校验：空值必须拒绝（否则空值会覆盖用户已填好的配置）。
+    #[test]
+    fn missing_required_fields_rejects_empty_base_url() {
+        let mut settings = Settings::default();
+        settings.base_url = String::new();
+        let message = missing_required_fields(&settings).expect("应拒绝");
+        assert!(message.contains("Base URL"), "错误里要点名字段：{message}");
+        assert!(
+            !message.contains("模型名"),
+            "模型名有值不该被点名：{message}"
+        );
+    }
+
+    #[test]
+    fn missing_required_fields_rejects_empty_model() {
+        let mut settings = Settings::default();
+        settings.model = String::new();
+        let message = missing_required_fields(&settings).expect("应拒绝");
+        assert!(message.contains("模型名"), "错误里要点名字段：{message}");
+        assert!(
+            !message.contains("Base URL"),
+            "Base URL 有值不该被点名：{message}"
+        );
+    }
+
+    #[test]
+    fn missing_required_fields_rejects_both_empty() {
+        let mut settings = Settings::default();
+        settings.base_url = String::new();
+        settings.model = String::new();
+        let message = missing_required_fields(&settings).expect("应拒绝");
+        assert!(message.contains("Base URL"), "{message}");
+        assert!(message.contains("模型名"), "{message}");
+    }
+
+    /// 正向对照：字段齐全时放行，不能因为「校验存在」而误伤正常保存。
+    #[test]
+    fn missing_required_fields_passes_when_both_filled() {
+        let settings = Settings::default();
+        assert!(
+            missing_required_fields(&settings).is_none(),
+            "默认配置两项都有值，不应被拦"
+        );
+    }
 
     #[test]
     fn serde_shape_matches_frontend_lowercase_enums() {
