@@ -36,3 +36,7 @@ coverage/
 .list-pages.cjs
 .check-ipc.cjs
 
+
+# CDP 验收 / 诊断探针（不入库）
+.*.cjs
+
