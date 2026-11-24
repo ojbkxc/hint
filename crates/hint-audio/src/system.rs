@@ -72,9 +72,10 @@ pub(crate) fn run(
                     let _ = tx.send(Ok(()));
                 }
                 tracing::info!(
-                    "系统声 loopback 已启动：{} Hz，{} 声道",
+                    "系统声 loopback 已启动：{} Hz，{} 声道，格式={}",
                     session.rate,
-                    session.channels
+                    session.channels,
+                    session.format_label
                 );
                 let started = Instant::now();
                 match session.run(&rt) {
@@ -200,6 +201,11 @@ struct LoopbackSession {
     rate: u32,
     channels: usize,
     sample: WasapiSample,
+    /// 实际协商到的格式名（`设备混音格式` / `混音声道数 f32` / `单声道 f32`）。
+    ///
+    /// 落日志用：前两种会自动转换（可能经音效处理改写波形），最后一种才是设备
+    /// 原始样本。排查「识别成乱码」时需要一眼看出走的是哪条路径。
+    format_label: &'static str,
     /// 未显式指定输出设备时，跟随系统默认设备变更。
     follow_default: bool,
     /// 会话打开时的系统默认 render 端点 ID；用于检测「用户换了默认设备」。
@@ -563,12 +569,22 @@ fn find_by_name(
     Err(WasapiError::DeviceNotFound(name.to_string()))
 }
 
-/// 依次尝试三种格式：单声道 f32（自动转换）→ 混音声道数 f32 → 设备原始混音格式。
+/// 依次尝试三种格式：**设备原始混音格式优先**，其次混音声道数 f32，最后单声道 f32。
+///
+/// 顺序为什么是这样（真机抓音频后改的）：
+/// 前两种带 `autoconvert: true`，等于请 Windows 音频引擎把设备混音格式**转换**
+/// 成我们要的形态。这条转换路径会经过注册在端点上的音效处理（APO，Realtek /
+/// Dolby / DTS 之类），波形会被实际改写——实测：采集回来的音频与原句的互相关
+/// 只有 -0.08（几乎不相关），但频谱看着正常（语音频带占 70%），于是「人能听懂、
+/// 模型认不出」，中文尤甚（声调依赖精确的基频轮廓）。
+///
+/// 用设备原始格式（`autoconvert: false`）就不请求这层转换，尽量拿到端点吐出的
+/// 原始样本。它失败时才回退到会自动转换的两种——宁可音质被处理，也不能连不上。
 fn init_loopback(device: Device) -> std::result::Result<LoopbackSession, String> {
     let attempts = [
-        FormatAttempt::MonoFloat,
-        FormatAttempt::MixChannelFloat,
         FormatAttempt::MixFormat,
+        FormatAttempt::MixChannelFloat,
+        FormatAttempt::MonoFloat,
     ];
     let mut last_error = String::from("未知错误");
     for attempt in attempts {
@@ -582,6 +598,7 @@ fn init_loopback(device: Device) -> std::result::Result<LoopbackSession, String>
                     rate: parts.rate,
                     channels: parts.channels,
                     sample: parts.sample,
+                    format_label: attempt.label(),
                     follow_default: false,
                     default_at_open: None,
                 });
