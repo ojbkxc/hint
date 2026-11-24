@@ -439,6 +439,57 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<(), String
     session::ask_question(&app, &question)
 }
 
+/// 删掉升级后残留的旧模型目录（`<app_data>/voice`）。
+///
+/// 环境自检会指出「旧模型目录只剩空壳，可安全删除」，但用户拿到这条建议后
+/// 还得自己去文件管理器找——诊断发现问题却不提供动作，等于把活推回去。
+///
+/// **安全边界**：只在旧目录确实不含模型文件时才删。里面如果还有 241MB 模型，
+/// 说明迁移没跑或失败，删掉就是真丢数据——这种情况直接拒绝并说明原因。
+#[tauri::command(async)]
+pub fn clean_legacy_model_dir(state: State<'_, AppState>) -> Result<String, String> {
+    let app_data_dir = state
+        .settings_path
+        .parent()
+        .ok_or_else(|| "无法定位应用数据目录".to_string())?;
+    let legacy = app_data_dir.join("voice");
+    if !legacy.is_dir() {
+        return Err("没有需要清理的旧模型目录。".to_string());
+    }
+    // 模型文件在 <legacy>/sensevoice/ 下；有内容就绝不能删。
+    let legacy_model_dir = legacy.join(hint_stt::assets::DIR_NAME);
+    if legacy_model_dir.is_dir() {
+        let bytes = dir_size(&legacy_model_dir);
+        if bytes > 0 {
+            return Err(format!(
+                "旧目录里还有 {:.1} MB 模型文件，可能迁移未完成。请先确认新目录可用再手动处理：{}",
+                bytes as f64 / (1024.0 * 1024.0),
+                legacy.display()
+            ));
+        }
+    }
+    std::fs::remove_dir_all(&legacy).map_err(|error| format!("删除旧模型目录失败：{error}"))?;
+    tracing::info!(path = %legacy.display(), "已清理旧模型目录");
+    Ok(format!("已清理：{}", legacy.display()))
+}
+
+/// 递归统计目录字节数（跳过读不到的文件）。
+fn dir_size(dir: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match entry.metadata() {
+            Ok(meta) if meta.is_dir() => total += dir_size(&path),
+            Ok(meta) => total += meta.len(),
+            Err(_) => {}
+        }
+    }
+    total
+}
+
 /// 跑一次环境自检，把报告文本返回给设置页展示。
 ///
 /// 与 `--doctor` 走同一个 `doctor::collect`：屏幕上看到的和写进报告文件的

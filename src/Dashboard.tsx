@@ -145,6 +145,28 @@ export default function Dashboard() {
   }, []);
 
   /**
+   * 清理升级后残留的旧模型目录。
+   *
+   * 自检会指出「旧模型目录只剩空壳，可安全删除」，但用户拿到建议还得自己
+   * 去文件管理器找。后端只在旧目录确实不含模型文件时才删（有内容直接拒绝），
+   * 这里只负责触发与提示。
+   */
+  const cleanLegacy = useCallback(async () => {
+    const result = await safeInvoke<string>("clean_legacy_model_dir");
+    if (!result.ok) {
+      setBanner({ level: "error", message: result.error });
+      return;
+    }
+    setBanner({
+      level: "info",
+      message: typeof result.data === "string" ? result.data : "旧模型目录已清理",
+    });
+    // 清理后报告里那行提示就过期了，重新跑一次自检保持与磁盘一致。
+    void runDoctor();
+  }, [runDoctor]);
+
+
+  /**
    * 浮层显示 / 隐藏切换（与 Ctrl+Shift+H 同一条后端命令）。
    *
    * `toggle_overlay` 返回切换后的可见状态，直接拿去更新本地指示，
@@ -538,6 +560,17 @@ export default function Dashboard() {
                           >
                             {doctorBusy ? "自检中…" : "运行环境自检"}
                           </button>
+                          {/* 自检报告提到旧模型目录时才给这个动作：诊断发现问题
+                              却不提供动作，等于把活推回给用户。 */}
+                          {doctorText.includes("旧模型目录") && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => void cleanLegacy()}
+                            >
+                              清理旧模型目录
+                            </button>
+                          )}
                         </div>
                         {doctorText && (
                           <pre
