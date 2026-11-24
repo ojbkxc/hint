@@ -45,6 +45,8 @@ pub(crate) const EVT_NOTICE: &str = "hint://notice";
 pub(crate) const EVT_QUEUE: &str = "hint://queue";
 /// 浮层不透明度变化（设置页保存后实时生效）。
 pub(crate) const EVT_OVERLAY_OPACITY: &str = "hint://overlay-opacity";
+/// 浮层字号缩放变化（设置页保存后实时生效，无需重开浮层）。
+pub(crate) const EVT_OVERLAY_FONT_SCALE: &str = "hint://overlay-font-scale";
 pub(crate) const EVT_MODEL_PROGRESS: &str = "hint://model-progress";
 /// 双通道联合语音状态迁移（谁开始/停止说话）。
 pub(crate) const EVT_SPEECH_EDGE: &str = "hint://speech-edge";

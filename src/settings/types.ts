@@ -18,6 +18,8 @@ export type Settings = {
   outputDevice: string;
   /** 浮层背景不透明度，0.2–1.0（默认 0.88）。文字始终不透明。 */
   overlayOpacity: number;
+  /** 浮层字号缩放，0.8–1.6（默认 1.0）。答案、转录、问题行按同一比例放大。 */
+  overlayFontScale: number;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -66,6 +68,11 @@ export const PRESETS: Array<{
 export const DEFAULT_OVERLAY_OPACITY = 0.88;
 export const MIN_OVERLAY_OPACITY = 0.2;
 export const MAX_OVERLAY_OPACITY = 1;
+
+/** 浮层字号缩放的默认值与上下限（1.0 = 现状大小）。 */
+export const DEFAULT_OVERLAY_FONT_SCALE = 1;
+export const MIN_OVERLAY_FONT_SCALE = 0.8;
+export const MAX_OVERLAY_FONT_SCALE = 1.6;
 
 /**
  * Base URL 规范化：把用户常见的各种写法统一成后端能直接拼接的形态。
@@ -145,6 +152,21 @@ export function normalizeOpacity(raw: unknown): number {
   return Math.min(MAX_OVERLAY_OPACITY, Math.max(MIN_OVERLAY_OPACITY, parsed));
 }
 
+/** 浮层字号缩放归一：非法值回落 1.0，越界钳到 0.8–1.6。 */
+export function normalizeFontScale(raw: unknown): number {
+  const parsed =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && raw.trim() !== ""
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) return DEFAULT_OVERLAY_FONT_SCALE;
+  return Math.min(
+    MAX_OVERLAY_FONT_SCALE,
+    Math.max(MIN_OVERLAY_FONT_SCALE, parsed),
+  );
+}
+
 export const EMPTY_SETTINGS: Settings = {
   provider: "openai",
   baseUrl: "",
@@ -156,6 +178,7 @@ export const EMPTY_SETTINGS: Settings = {
   micDevice: "",
   outputDevice: "",
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
+  overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -180,6 +203,9 @@ export function normalizeSettings(raw: unknown): Settings {
     outputDevice: str("outputDevice"),
     overlayOpacity: normalizeOpacity(
       value.overlayOpacity ?? value.overlay_opacity,
+    ),
+    overlayFontScale: normalizeFontScale(
+      value.overlayFontScale ?? value.overlay_font_scale,
     ),
   };
 }

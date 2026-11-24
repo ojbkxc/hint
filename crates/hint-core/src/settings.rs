@@ -83,6 +83,17 @@ pub struct Settings {
     /// 这里只存纯数据，不在此 clamp：由应用层决定越界值如何处理。
     #[serde(default = "default_overlay_opacity")]
     pub overlay_opacity: f64,
+    /// 浮层字号缩放（0.8–1.6）；缺字段时取 1.0（= 现状大小）。
+    ///
+    /// 用缩放比而不是像素值：浮层里答案/转录/问题行各有自己的字号，
+    /// 存比例能让它们一起放大，不会只变大一块。
+    #[serde(default = "default_overlay_font_scale")]
+    pub overlay_font_scale: f64,
+}
+
+/// 浮层字号的默认缩放比，与前端 `DEFAULT_OVERLAY_FONT_SCALE` 保持一致。
+fn default_overlay_font_scale() -> f64 {
+    1.0
 }
 
 /// 浮层不透明度的默认值，与前端 `DEFAULT_OVERLAY_OPACITY` 保持一致。
@@ -103,6 +114,7 @@ impl Default for Settings {
             mic_device: String::new(),
             output_device: String::new(),
             overlay_opacity: default_overlay_opacity(),
+            overlay_font_scale: default_overlay_font_scale(),
         }
     }
 }

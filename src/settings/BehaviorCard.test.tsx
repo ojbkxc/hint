@@ -87,16 +87,33 @@ describe("BehaviorCard —— 不透明度滑块", () => {
   });
 
   it("表单里存了越界或不合法的不透明度时按 clamp / 默认值展示", () => {
-    const { unmount } = renderCard(makeForm({ overlayOpacity: 1.6 }));
-    expect(screen.getByText("100%")).toBeInTheDocument();
+    // 现在有两个滑块（不透明度 + 字号），默认字号 100% 与不透明度 100% 会撞文本，
+    // 必须按 id 精确定位到不透明度那一条的数值。
+    const opacityValue = (root: HTMLElement) =>
+      root.querySelector("#behavior-opacity ~ .slider-value")?.textContent;
+
+    const { unmount, container } = renderCard(makeForm({ overlayOpacity: 1.6 }));
+    expect(opacityValue(container)).toBe("100%");
     unmount();
 
     const second = renderCard(makeForm({ overlayOpacity: 0.05 }));
-    expect(second.getByText("20%")).toBeInTheDocument();
+    expect(opacityValue(second.container)).toBe("20%");
     second.unmount();
 
     const third = renderCard(makeForm({ overlayOpacity: Number.NaN }));
-    expect(third.getByText("88%")).toBeInTheDocument();
+    expect(opacityValue(third.container)).toBe("88%");
+  });
+
+  it("字号滑块默认 100%，保存时按比例下发 overlayFontScale", () => {
+    const { container, patchLast } = renderCard(makeForm());
+    expect(container.querySelector("#behavior-font-scale ~ .slider-value")?.textContent).toBe(
+      "100%",
+    );
+    const slider = container.querySelector<HTMLInputElement>("#behavior-font-scale");
+    expect(slider).not.toBeNull();
+    // 150% → 1.5
+    fireEvent.change(slider!, { target: { value: "150" } });
+    expect(patchLast()).toEqual({ overlayFontScale: 1.5 });
   });
 });
 

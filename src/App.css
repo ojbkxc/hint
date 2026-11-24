@@ -231,6 +231,38 @@ button:focus-visible,
   white-space: nowrap;
 }
 
+/* 徽章做成真按钮后（点一下切换浮层），要压掉全局 button 的高度与内边距，
+   外观与原来的徽章一致，只是多了 hover / 禁用态。 */
+button.hint-badge-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: auto;
+  min-height: 0;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+button.hint-badge-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+button.hint-badge-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hint-badge-button kbd {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-xs);
+  padding: 0 4px;
+  border-radius: var(--radius-inline);
+  border: 1px solid currentColor;
+  opacity: 0.75;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1466,7 +1498,7 @@ button.preset.active {
 }
 
 .overlay-empty {
-  font-size: 12px;
+  font-size: calc(12px * var(--overlay-font-scale, 1));
   line-height: 1.6;
   color: var(--text-dim);
 }
@@ -1474,7 +1506,7 @@ button.preset.active {
 .line {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--overlay-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -1600,7 +1632,7 @@ button.preset.active {
 
 .block-answer {
   margin: 3px 0 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--overlay-font-scale, 1));
   line-height: 1.65;
   color: #2c2e33;
   white-space: pre-wrap;
@@ -1613,7 +1645,7 @@ button.preset.active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: calc(11px * var(--overlay-font-scale, 1));
   line-height: 1.5;
   color: var(--text-muted);
 }
@@ -1690,7 +1722,9 @@ button.mini.ghost {
   padding: 10px 14px 14px;
   overflow-y: auto;
   overflow-x: hidden;
-  font-size: 15px;
+  /* 字号随「回答行为 → 浮层字号」滑块缩放：基准 15px × --overlay-font-scale。
+     用 calc 而不是改 px 值，答案/转录/问题行各自的比例关系保持不变。 */
+  font-size: calc(15px * var(--overlay-font-scale, 1));
   line-height: 1.75;
   /* 正文必须是实色：浮层不透明度只作用于背景，答案文字任何情况下不发灰。
      光晕只服务于叠视频画面的可读性，正文不靠它。 */

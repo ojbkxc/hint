@@ -71,6 +71,10 @@ export default function Dashboard() {
   const [section, setSection] = useState<SectionId>("model");
   const [testAnswer, setTestAnswer] = useState("");
   const [banner, setBanner] = useState<Banner | null>(null);
+  // 浮层可见性与切换中标志：徽章按钮据此显示「显示浮层 / 隐藏浮层」。
+  // 初值 true 与 tauri.conf.json 的 overlay.visible 一致（1.0.10 起默认显示）。
+  const [overlayVisible, setOverlayVisible] = useState(true);
+  const [overlayBusy, setOverlayBusy] = useState(false);
   const form = useSettingsForm();
   const sessions = useSessions(tab === "review");
   const model = useModelManager();
@@ -120,6 +124,23 @@ export default function Dashboard() {
   const openLogDir = useCallback(async () => {
     const result = await safeInvoke("open_log_dir");
     if (!result.ok) setBanner({ level: "error", message: `打开日志目录失败：${result.error}` });
+  }, []);
+
+  /**
+   * 浮层显示 / 隐藏切换（与 Ctrl+Shift+H 同一条后端命令）。
+   *
+   * `toggle_overlay` 返回切换后的可见状态，直接拿去更新本地指示，
+   * 不用再单独查一次。
+   */
+  const toggleOverlay = useCallback(async () => {
+    setOverlayBusy(true);
+    const result = await safeInvoke<unknown>("toggle_overlay");
+    setOverlayBusy(false);
+    if (!result.ok) {
+      setBanner({ level: "error", message: `切换浮层失败：${result.error}` });
+      return;
+    }
+    if (typeof result.data === "boolean") setOverlayVisible(result.data);
   }, []);
 
   /**
@@ -246,7 +267,19 @@ export default function Dashboard() {
           <h1>hint</h1>
           <p className="subtitle">面试实时提词器</p>
         </div>
-        <div className="hint-badge">Ctrl+Shift+H 显示浮层</div>
+        {/* 徽章原本只是提示文字，现在做成真按钮：点一下等价于按 Ctrl+Shift+H，
+            切换浮层显示 / 隐藏。热键文案保留，用户仍然知道有热键。 */}
+        <button
+          type="button"
+          className="hint-badge hint-badge-button"
+          onClick={() => void toggleOverlay()}
+          disabled={overlayBusy}
+          title="显示 / 隐藏浮层（等同按 Ctrl+Shift+H）"
+        >
+          <span aria-hidden="true">{overlayVisible ? "◉" : "◎"}</span>
+          {overlayVisible ? "隐藏浮层" : "显示浮层"}
+          <kbd>Ctrl+Shift+H</kbd>
+        </button>
       </header>
 
       {banner && (

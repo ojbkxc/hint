@@ -87,6 +87,8 @@ export const HINT_EVENTS = {
   queue: "hint://queue",
   /** 浮层背景不透明度变化，payload { opacity: number }。 */
   overlayOpacity: "hint://overlay-opacity",
+  /** 浮层字号缩放变化，payload { scale: number }（0.8–1.6，1.0 = 默认）。 */
+  overlayFontScale: "hint://overlay-font-scale",
   /** 双通道联合语音状态迁移，payload { channel, speaking, joint, atMs, msSinceOtherEdge }。 */
   speechEdge: "hint://speech-edge",
 } as const;

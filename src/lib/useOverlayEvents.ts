@@ -15,7 +15,11 @@ import type {
 } from "../overlay/types";
 import { isRecord, numberValue, pickText } from "./data";
 import { safeInvoke, safeListen } from "./tauri";
-import { normalizeOpacity, normalizeSettings } from "../settings/types";
+import {
+  normalizeFontScale,
+  normalizeOpacity,
+  normalizeSettings,
+} from "../settings/types";
 
 type OverlayListenerState = {
   transcript: TranscriptLine[];
@@ -61,6 +65,14 @@ function applyOverlayOpacity(value: number) {
   document.documentElement.style.setProperty("--overlay-alpha", String(value));
 }
 
+/** 浮层字号缩放：同样只改 CSS 变量，答案/转录/问题行按同一比例放大。 */
+function applyOverlayFontScale(value: number) {
+  document.documentElement.style.setProperty(
+    "--overlay-font-scale",
+    String(value),
+  );
+}
+
 /**
  * 浮层全部后端事件订阅集中在这里。
  * 事件不存在时保持初始状态，不抛异常、不白屏。
@@ -70,10 +82,12 @@ export function useOverlayEvents() {
   const nextId = useRef(1);
 
   useEffect(() => {
-    // 启动时读取已保存的不透明度；失败保持 CSS 默认值，不在浮层弹错误。
+    // 启动时读取已保存的不透明度与字号；失败保持 CSS 默认值，不在浮层弹错误。
     void safeInvoke<unknown>("get_settings").then((result) => {
       if (!result.ok) return;
-      applyOverlayOpacity(normalizeSettings(result.data).overlayOpacity);
+      const settings = normalizeSettings(result.data);
+      applyOverlayOpacity(settings.overlayOpacity);
+      applyOverlayFontScale(settings.overlayFontScale);
     });
   }, []);
 
@@ -331,6 +345,14 @@ export function useOverlayEvents() {
       const opacity = numberValue(payload.opacity ?? payload.value);
       if (opacity === null) return;
       applyOverlayOpacity(normalizeOpacity(opacity));
+    });
+
+    // 设置页保存字号后实时下发；浮层不用重开就能看清新字号。
+    register(HINT_EVENTS.overlayFontScale, (payload) => {
+      if (!isRecord(payload)) return;
+      const scale = numberValue(payload.scale ?? payload.value);
+      if (scale === null) return;
+      applyOverlayFontScale(normalizeFontScale(scale));
     });
 
     return () => {

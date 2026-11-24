@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_OVERLAY_FONT_SCALE,
   DEFAULT_OVERLAY_OPACITY,
   MAX_OVERLAY_OPACITY,
   MIN_OVERLAY_OPACITY,
@@ -72,6 +73,7 @@ describe("normalizeSettings", () => {
         micDevice: "",
         outputDevice: "",
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
+        overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
       });
     }
   });
@@ -97,6 +99,7 @@ describe("normalizeSettings", () => {
       micDevice: "mic-1",
       outputDevice: "spk-2",
       overlayOpacity: 0.5,
+      overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
     });
     expect(settings).toEqual({
       provider: "anthropic",
@@ -109,6 +112,7 @@ describe("normalizeSettings", () => {
       micDevice: "mic-1",
       outputDevice: "spk-2",
       overlayOpacity: 0.5,
+      overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
     });
   });
 

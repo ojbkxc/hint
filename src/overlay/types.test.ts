@@ -12,6 +12,7 @@ describe("HINT_EVENTS 事件契约", () => {
       notice: "hint://notice",
       queue: "hint://queue",
       overlayOpacity: "hint://overlay-opacity",
+      overlayFontScale: "hint://overlay-font-scale",
       speechEdge: "hint://speech-edge",
     });
   });

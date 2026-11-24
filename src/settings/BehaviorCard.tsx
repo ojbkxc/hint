@@ -1,7 +1,10 @@
 import type { AnswerStyle, Settings, TriggerMode } from "./types";
 import {
+  MAX_OVERLAY_FONT_SCALE,
   MAX_OVERLAY_OPACITY,
+  MIN_OVERLAY_FONT_SCALE,
   MIN_OVERLAY_OPACITY,
+  normalizeFontScale,
   normalizeOpacity,
 } from "./types";
 
@@ -12,6 +15,9 @@ type Props = {
 
 export default function BehaviorCard({ form, patch }: Props) {
   const opacityPercent = Math.round(normalizeOpacity(form.overlayOpacity) * 100);
+  const fontScalePercent = Math.round(
+    normalizeFontScale(form.overlayFontScale) * 100,
+  );
   return (
     <section className="settings-block">
       <div className="field-group">
@@ -88,6 +94,35 @@ export default function BehaviorCard({ form, patch }: Props) {
         <p className="muted small">
           浮层背景不透明度。视频面试时可调低以便看清画面；文字始终清晰。
           仅影响浮层，不改变窗口是否可见。修改后记得点「保存全部配置」。
+        </p>
+
+        <div className="field">
+          <label className="field-label" htmlFor="behavior-font-scale">
+            浮层字号
+          </label>
+          <div className="inline-row slider-row">
+            <input
+              id="behavior-font-scale"
+              className="slider"
+              type="range"
+              min={MIN_OVERLAY_FONT_SCALE * 100}
+              max={MAX_OVERLAY_FONT_SCALE * 100}
+              step={5}
+              value={fontScalePercent}
+              onChange={(event) =>
+                patch({
+                  overlayFontScale: normalizeFontScale(
+                    Number(event.target.value) / 100,
+                  ),
+                })
+              }
+            />
+            <span className="slider-value">{fontScalePercent}%</span>
+          </div>
+        </div>
+        <p className="muted small">
+          浮层里答案、转录与问题行的字号一起缩放（100% = 默认大小）。
+          看不清就调大；屏幕小怕挡画面就调小。修改后点「保存全部配置」立即生效，不用重开浮层。
         </p>
       </div>
 

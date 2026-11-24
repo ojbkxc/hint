@@ -75,6 +75,13 @@ pub fn save_settings(
         session::EVT_OVERLAY_OPACITY,
         json!({ "opacity": opacity }),
     );
+    // 字号缩放与不透明度同一条路径下发：浮层拿到后立刻改 CSS 变量，不用重开。
+    let font_scale = settings.overlay_font_scale.clamp(0.8, 1.6);
+    session::emit(
+        &app,
+        session::EVT_OVERLAY_FONT_SCALE,
+        json!({ "scale": font_scale }),
+    );
     Ok(())
 }
 
