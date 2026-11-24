@@ -76,6 +76,8 @@ describe("normalizeSettings", () => {
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
         overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        proxyMode: "direct",
+        proxyUrl: "",
       });
     }
   });
@@ -103,6 +105,8 @@ describe("normalizeSettings", () => {
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        proxyMode: "direct",
+        proxyUrl: "",
     });
     expect(settings).toEqual({
       provider: "anthropic",
@@ -117,6 +121,8 @@ describe("normalizeSettings", () => {
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        proxyMode: "direct",
+        proxyUrl: "",
     });
   });
 

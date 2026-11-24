@@ -2,6 +2,10 @@ export type Provider = "openai" | "anthropic" | "gemini";
 export type AnswerStyle = "concise" | "outline";
 export type TriggerMode = "auto" | "manual";
 
+/** 出网代理模式：直连 / 跟随系统 / 手填。 */
+export type ProxyMode = "direct" | "system" | "manual";
+export const PROXY_MODES: ProxyMode[] = ["direct", "system", "manual"];
+
 /** 设置页当前正在进行的操作，用于给对应按钮显示准确的阶段文案。 */
 export type FormAction = "" | "save" | "test" | "models";
 
@@ -22,6 +26,10 @@ export type Settings = {
   overlayFontScale: number;
   /** 浮层是否从屏幕捕获中排除（默认 true，共享屏幕时对方看不到）。 */
   overlayContentProtected: boolean;
+  /** 出网代理模式。装代理软件的用户要靠它连模型接口。 */
+  proxyMode: ProxyMode;
+  /** 手填代理地址（仅 manual 生效），如 http://127.0.0.1:7890。 */
+  proxyUrl: string;
 };
 
 export type ChatResponse = { text: string; model: string };
@@ -185,6 +193,8 @@ export const EMPTY_SETTINGS: Settings = {
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
   overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
   overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+  proxyMode: "direct",
+  proxyUrl: "",
 };
 
 /** 后端返回的 settings 可能还是 M0 形状，缺设备字段时补空。 */
@@ -215,6 +225,11 @@ export function normalizeSettings(raw: unknown): Settings {
     ),
     overlayContentProtected:
       (value.overlayContentProtected ?? value.overlay_content_protected) !== false,
+    proxyMode:
+      value.proxyMode === "system" || value.proxyMode === "manual"
+        ? value.proxyMode
+        : "direct",
+    proxyUrl: str("proxyUrl"),
   };
 }
 

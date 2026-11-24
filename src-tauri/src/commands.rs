@@ -501,6 +501,15 @@ impl Drop for PrepareGuard {
 #[tauri::command]
 pub async fn prepare_model(app: AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
+    // 代理在进入后台任务前算好：`System` 档要读注册表（子进程调用），
+    // 放进 async 上下文里做没意义；也让下载与模型接口共用同一份判定。
+    let proxy = {
+        let settings = hint_core::settings::Settings::load(&state.settings_path);
+        hint_core::proxy::effective_proxy_url(settings.proxy_mode, &settings.proxy_url)
+    };
+    if let Some(url) = &proxy {
+        tracing::info!(proxy_len = url.len(), "模型下载将使用代理");
+    }
     let cancel = {
         let mut slot = lock(&state.prepare_cancel);
         // 取消只置位、不腾槽：旧任务真正退出（PrepareGuard 析构）前，
@@ -535,6 +544,7 @@ pub async fn prepare_model(app: AppHandle) -> Result<bool, String> {
                 );
             },
             &cancel,
+            proxy.as_deref(),
         )
     })
     .await

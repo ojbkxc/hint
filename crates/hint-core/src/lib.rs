@@ -4,6 +4,7 @@ pub mod error;
 pub mod import;
 pub mod llm;
 pub mod pipeline;
+pub mod proxy;
 pub mod secret;
 pub mod session;
 pub mod settings;

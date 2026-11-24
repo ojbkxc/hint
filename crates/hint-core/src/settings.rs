@@ -95,6 +95,15 @@ pub struct Settings {
     /// 关：自己录屏留证时需要。底层 `WDA_EXCLUDEFROMCAPTURE`，Win10 2004+ 生效。
     #[serde(default = "default_overlay_content_protected")]
     pub overlay_content_protected: bool,
+    /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
+    ///
+    /// 装代理软件的用户不开这个连不上模型接口；但本地回环（IPC、STT worker）
+    /// 永不代理，见 [`crate::proxy::LOOPBACK_NO_PROXY`]。
+    #[serde(default)]
+    pub proxy_mode: crate::proxy::ProxyMode,
+    /// 手填代理地址（仅 `proxy_mode == Manual` 时使用），如 `http://127.0.0.1:7890`。
+    #[serde(default)]
+    pub proxy_url: String,
 }
 
 /// 浮层内容保护默认开：视频面试时不该把提词器共享给对方。
@@ -149,6 +158,8 @@ impl Default for Settings {
             overlay_opacity: default_overlay_opacity(),
             overlay_font_scale: default_overlay_font_scale(),
             overlay_content_protected: default_overlay_content_protected(),
+            proxy_mode: crate::proxy::ProxyMode::Direct,
+            proxy_url: String::new(),
         }
     }
 }

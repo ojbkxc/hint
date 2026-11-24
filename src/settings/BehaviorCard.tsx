@@ -1,4 +1,4 @@
-import type { AnswerStyle, Settings, TriggerMode } from "./types";
+import type { AnswerStyle, ProxyMode, Settings, TriggerMode } from "./types";
 import {
   MAX_OVERLAY_FONT_SCALE,
   MAX_OVERLAY_OPACITY,
@@ -138,6 +138,49 @@ export default function BehaviorCard({ form, patch }: Props) {
         <p className="muted small">
           不透明度只改背景（文字始终清晰，不影响窗口是否可见）；字号会把答案、转录与问题行一起缩放。
           改完点「保存全部配置」立即生效，不用重开浮层。
+        </p>
+      </div>
+
+      <div className="field-group">
+        <p className="field-group-title">出网代理</p>
+        <div className="field">
+          <label className="field-label" htmlFor="proxy-mode">
+            代理模式
+          </label>
+          <select
+            id="proxy-mode"
+            className="form-input"
+            value={form.proxyMode}
+            onChange={(event) =>
+              patch({ proxyMode: event.target.value as ProxyMode })
+            }
+          >
+            <option value="direct">直连（不代理）</option>
+            <option value="system">跟随系统（读取 Windows 代理设置）</option>
+            <option value="manual">手动指定</option>
+          </select>
+        </div>
+        {form.proxyMode === "manual" && (
+          <div className="field">
+            <label className="field-label" htmlFor="proxy-url">
+              代理地址
+            </label>
+            <input
+              id="proxy-url"
+              className="form-input"
+              type="text"
+              placeholder="http://127.0.0.1:7890"
+              value={form.proxyUrl}
+              onChange={(event) => patch({ proxyUrl: event.target.value })}
+              aria-label="代理地址"
+            />
+          </div>
+        )}
+        <p className="muted small">
+          装了代理软件（Clash / v2rayN 等）连不上模型时在这里配。「跟随系统」读的就是
+          Windows「Internet 选项」里的代理，代理软件开着「系统代理」时选它最省事。
+          本机回环（浮层通信、语音识别）永不走代理，不受影响。
+          {form.proxyMode === "system" && " 注意：切换后需重新点「测试连接」才会生效。"}
         </p>
       </div>
 

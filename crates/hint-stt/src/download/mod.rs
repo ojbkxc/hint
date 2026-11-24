@@ -215,10 +215,15 @@ impl ModelManager {
     /// * `cancel`：置为 true 后尽快返回，保留 `.part`。
     ///
     /// 已就绪的文件直接跳过。磁盘预检约 300MB；拿不到可用空间时跳过预检。
+    ///
+    /// `proxy` 是上层按设置算好的代理 URL（None = 直连）。放在这里而不是让
+    /// 本 crate 读设置：`hint-stt` 不依赖 `hint-core`，代理模式的判定
+    /// 只该有一处（`hint_core::proxy::effective_proxy_url`）。
     pub fn prepare(
         &self,
         on_progress: impl Fn(DownloadProgress) + Send + Sync,
         cancel: &AtomicBool,
+        proxy: Option<&str>,
     ) -> Result<()> {
         if self.is_ready() {
             return Ok(());
@@ -234,7 +239,7 @@ impl ModelManager {
         }
         let guard = DownloadingGuard(&self.downloading);
         self.store_progress(None);
-        let result = self.prepare_inner(on_progress, cancel);
+        let result = self.prepare_inner(on_progress, cancel, proxy);
         if let Err(error) = &result {
             if error.is_cancelled() {
                 // 用户主动取消不是失败：别按 ERROR 级落日志（旧日志会把
@@ -268,6 +273,7 @@ impl ModelManager {
         &self,
         on_progress: impl Fn(DownloadProgress) + Send + Sync,
         cancel: &AtomicBool,
+        proxy: Option<&str>,
     ) -> Result<()> {
         self.layout.ensure_dirs()?;
 
@@ -357,7 +363,7 @@ impl ModelManager {
                 }
             };
 
-            download_file(self.layout.clone(), file, report, cancel)?;
+            download_file(self.layout.clone(), file, report, cancel, proxy)?;
             completed += file.bytes;
         }
 
@@ -428,14 +434,18 @@ fn cancelled() -> SttError {
 
 /// 统一 Agent：不读环境代理变量（避免 hf.co 走错代理），30 秒读超时兜底。
 ///
-/// 未启用 `proxy-from-env`，`AgentBuilder` 不会自动读取 `HTTP(S)_PROXY`；
+/// 未启用 `proxy-from-env`，`AgentBuilder` 不会自动读取 `HTTP(S)_PROXY`——
+/// 这是**故意的**：模型源在境外、模型接口可能在国内，环境代理一把梭会把其中
+/// 一条带错。要走代理必须由用户显式选择（`proxy` 参数），与模型接口共用同一份
+/// 设置（见 [`hint_core::proxy::effective_proxy_url`]）。
+///
 /// 只启用 `native-tls` feature 时，`ureq` 不会自动选择 TLS 后端，必须显式注入
 /// 系统 TLS 连接器（Windows 上是 schannel，无需 C 工具链）。
 ///
 /// 连接超时设为 8 秒：连接层失败会立即换源（见 `FailureReason::Connect`），
 /// 每次 doomed 的连接尝试不必再干等 15 秒；8 秒足够覆盖正常握手，也避免
 /// 被墙时每个源白等太久。
-fn agent() -> Result<ureq::Agent> {
+fn agent(proxy: Option<&str>) -> Result<ureq::Agent> {
     let tls = ureq::native_tls::TlsConnector::new().map_err(|error| {
         SttError::network(
             FailureReason::Certificate,
@@ -443,12 +453,23 @@ fn agent() -> Result<ureq::Agent> {
             None,
         )
     })?;
-    Ok(ureq::AgentBuilder::new()
+    let mut builder = ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(tls))
         .timeout_connect(Duration::from_secs(8))
         .timeout_read(DEFAULT_IDLE_TIMEOUT)
-        .redirects(10)
-        .build())
+        .redirects(10);
+    if let Some(url) = proxy {
+        match ureq::Proxy::new(url) {
+            Ok(parsed) => {
+                builder = builder.proxy(parsed);
+            }
+            Err(error) => {
+                // 代理地址 ureq 不认：退回直连并留痕，不让下载直接失败。
+                tracing::warn!(%error, "模型下载的代理地址无法解析，本次按直连处理");
+            }
+        }
+    }
+    Ok(builder.build())
 }
 
 /// 下载单个文件。成功返回最终命中的源标签。
@@ -457,6 +478,7 @@ fn download_file<F>(
     file: &RemoteFile,
     progress: F,
     cancel: &AtomicBool,
+    proxy: Option<&str>,
 ) -> Result<()>
 where
     F: Fn(u64, Option<u64>, &str),
@@ -646,7 +668,7 @@ where
         return Ok(true);
     }
 
-    let request = agent()?.get(url).set("Accept-Encoding", "identity");
+    let request = agent(proxy)?.get(url).set("Accept-Encoding", "identity");
     let request = if offset > 0 {
         request.set("Range", &format!("bytes={offset}-"))
     } else {

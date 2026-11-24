@@ -241,24 +241,70 @@ fn status_advice(status: u16, settings: &Settings) -> String {
     }
 }
 
-fn client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()?)
+/// 按设置算出本次该用的代理（None = 直连）。
+fn proxy_for(settings: &Settings) -> Option<String> {
+    crate::proxy::effective_proxy_url(settings.proxy_mode, &settings.proxy_url)
+}
+
+/// 把代理挂到 reqwest 构建器上。
+///
+/// 三种情况必须分清，否则「系统有代理软件」这个场景会出各种怪事：
+/// - `Some(url)`：显式走这个代理；
+/// - `None`：**显式禁用一切代理**（含 `HTTP(S)_PROXY` 环境变量）。
+///   reqwest 默认会自动读环境变量，用户选了「直连」却仍被环境变量改道，
+///   表现就是「我明明设了直连，怎么还走代理/连不上」。
+/// - 地址无法被 reqwest 解析时退回直连并记 WARN——绝不能塞占位地址硬走
+///   代理，那会变成「所有请求必然失败」，比直连更糟。
+fn with_proxy(builder: reqwest::ClientBuilder, proxy: Option<&str>) -> reqwest::ClientBuilder {
+    let Some(url) = proxy else {
+        return builder.no_proxy();
+    };
+    match reqwest::Proxy::all(url) {
+        Ok(parsed) => builder.proxy(parsed),
+        Err(error) => {
+            tracing::warn!(%error, "代理地址无法被 reqwest 解析，本次按直连处理");
+            builder.no_proxy()
+        }
+    }
+}
+
+fn client(settings: &Settings) -> Result<reqwest::Client> {
+    let proxy = proxy_for(settings);
+    Ok(with_proxy(
+        reqwest::Client::builder().timeout(Duration::from_secs(60)),
+        proxy.as_deref(),
+    )
+    .build()?)
 }
 
 /// 流式调用使用的常驻客户端：复用连接，不设整体超时（由 [`STREAM_TIMEOUT`] 控制）。
-async fn stream_client() -> Result<&'static reqwest::Client> {
-    static CELL: tokio::sync::OnceCell<reqwest::Client> = tokio::sync::OnceCell::const_new();
-    CELL.get_or_try_init(|| async {
+///
+/// 缓存键里带上生效代理：用户改了代理设置后必须重建，否则会继续走旧代理
+/// （表现是「改了设置还是连不上」）。
+async fn stream_client(settings: &Settings) -> Result<reqwest::Client> {
+    use tokio::sync::Mutex;
+
+    static CACHE: Mutex<Option<(String, reqwest::Client)>> = Mutex::const_new(None);
+
+    let proxy = proxy_for(settings);
+    let key = proxy.clone().unwrap_or_else(|| "direct".to_string());
+    let mut guard = CACHE.lock().await;
+    if let Some((cached_key, cached)) = guard.as_ref()
+        && cached_key == &key
+    {
+        return Ok(cached.clone());
+    }
+    let built = with_proxy(
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(60))
-            .build()
-            .map_err(CoreError::from)
-    })
-    .await
+            .tcp_keepalive(Duration::from_secs(60)),
+        proxy.as_deref(),
+    )
+    .build()
+    .map_err(CoreError::from)?;
+    *guard = Some((key, built.clone()));
+    Ok(built)
 }
 
 /// 取字符串前 `max_chars` 个字符（按字符边界截断，避免切坏 UTF-8）。
@@ -349,7 +395,7 @@ pub async fn complete(
     api_key: &str,
     request: ChatRequest,
 ) -> Result<ChatResponse> {
-    let client = client()?;
+    let client = client(settings)?;
     match settings.provider {
         ProviderKind::OpenAi => openai(&client, settings, api_key, request).await,
         ProviderKind::Anthropic => anthropic(&client, settings, api_key, request).await,
@@ -366,7 +412,7 @@ pub async fn complete(
 /// 部分中转 / 自建网关不支持 `/models`（返回 404 或空列表）；空列表不算致命
 /// 错误，由前端提示用户手动填写模型名。
 pub async fn fetch_models(settings: &Settings, api_key: &str) -> Result<Vec<String>> {
-    let client = client()?;
+    let client = client(settings)?;
     match settings.provider {
         ProviderKind::OpenAi => openai_models(&client, settings, api_key).await,
         ProviderKind::Anthropic => anthropic_models(&client, settings, api_key).await,
@@ -807,7 +853,7 @@ pub async fn stream(
     mut on_delta: impl FnMut(&str),
 ) -> Result<ChatStats> {
     let started = Instant::now();
-    let client = stream_client().await?;
+    let client = stream_client(settings).await?;
     let emitted = AtomicUsize::new(0);
     let mut attempts = 0usize;
 
