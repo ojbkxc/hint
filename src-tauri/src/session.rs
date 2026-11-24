@@ -1141,6 +1141,37 @@ fn resolve_question(shared: &SessionShared) -> Option<String> {
 
 /// 重新生成最近一个问题的回答：取消正在生成的流、清空排队，把最新问题
 /// 以 `is_regenerate` 重新放到队首（等价于「现在就要最新问题的答案」）。
+/// 用用户手输的问题直接作答（不依赖语音识别）。
+///
+/// **为什么需要这个入口**：面试作答原本只能靠 STT 识别出的问题驱动——
+/// `regenerate` 走 `resolve_question`，而它只从「已识别的面试官文本」里取。
+/// 一旦识别不准（设备、噪声、口音都可能），用户就**完全没有办法**让产品产出
+/// 答案，而这个产品的全部价值就是给出答案。
+///
+/// 模型与流式链路本身是好的（截图问答走同一份 `stream_chat`，实测
+/// `ttft_ms=2494`、`chars=30` 正常返回），所以只要给一个能绕过 STT 的入口，
+/// 用户在任何识别条件下都还能拿到答案。
+pub(crate) fn ask_question(app: &AppHandle, question: &str) -> Result<(), String> {
+    let shared = current_shared(app)
+        .ok_or_else(|| "还没有开始面试会话，请先点「开始面试」或按 Ctrl+Shift+R。".to_string())?;
+    let text = question.trim().to_string();
+    if text.is_empty() {
+        return Err("请输入要回答的问题。".to_string());
+    }
+    // 纯标点/空白的输入会被入队判重静默丢弃，导致「点了没反应」——
+    // 这里先挡掉，给出明确原因。
+    if normalize_for_dedup(&text).is_empty() {
+        return Err("问题里没有可识别的文字内容，请重新输入。".to_string());
+    }
+    // 与 regenerate 一致：先取消当前流并清掉积压，让这次手输的问题优先作答。
+    if let Some(flag) = lock(&shared.answer_cancel).as_ref() {
+        flag.store(true, Ordering::SeqCst);
+    }
+    lock(&shared.answers).clear();
+    enqueue_question(app, &shared, text, None, true);
+    Ok(())
+}
+
 pub(crate) fn regenerate(app: &AppHandle) -> Result<(), String> {
     let shared = current_shared(app)
         .ok_or_else(|| "还没有开始面试会话，请先点「开始面试」或按 Ctrl+Shift+R。".to_string())?;

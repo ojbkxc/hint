@@ -1,6 +1,22 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+type InvokeHandler = (command: string, args: unknown) => Promise<unknown>;
+const backend = vi.hoisted(() => {
+  const calls: Array<{ command: string; args: unknown }> = [];
+  const state: { handler: InvokeHandler } = {
+    handler: () => Promise.resolve(null),
+  };
+  return { calls, state };
+});
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn((command: string, args: unknown) => {
+    backend.calls.push({ command, args });
+    return backend.state.handler(command, args);
+  }),
+}));
+
 import SessionCard, { SESSION_STATE_LABEL } from "./SessionCard";
 import type { SessionControl } from "./useSessionControl";
 
@@ -21,6 +37,20 @@ function makeControl(overrides: Partial<SessionControl> = {}): SessionControl {
     ...overrides,
   };
 }
+
+/** 直接渲染卡片并返回 command 调用记录。 */
+function renderCard(overrides: Partial<SessionControl> = {}) {
+  const utils = render(<SessionCard control={makeControl(overrides)} />);
+  return {
+    ...utils,
+    askCalls: () => backend.calls.filter((c) => c.command === "ask_question"),
+  };
+}
+
+beforeEach(() => {
+  backend.calls.length = 0;
+  backend.state.handler = () => Promise.resolve(null);
+});
 
 describe("SessionCard —— 状态文案四分支", () => {
   it("idle：未开始 / 设置页空闲 / 会话编号为破折号", () => {
@@ -180,5 +210,40 @@ describe("SessionCard —— 提示段落", () => {
     const { container } = render(<SessionCard control={makeControl()} />);
     expect(container.querySelector(".error-text")).toBeNull();
     expect(container.querySelector(".status-info")).toBeNull();
+  });
+});
+
+describe("SessionCard —— 手动提问（绕开语音识别的兜底）", () => {
+  it("会话进行中可以向 ask_question 提交问题", async () => {
+    // 这条路径的意义：面试作答原本只能由 STT 识别出的问题驱动，
+    // 识别不准时用户就完全没法让产品产出答案。ask_question 直接调模型，
+    // 不经过识别——模型与流式链路本身是好的（截图问答走同一份 stream_chat）。
+    const user = userEvent.setup();
+    const { askCalls } = renderCard({ state: "listening", running: true });
+
+    const input = screen.getByLabelText("要回答的问题");
+    await user.type(input, "请介绍一下你自己");
+    await user.click(screen.getByRole("button", { name: "提问" }));
+
+    const asked = askCalls();
+    expect(asked).toHaveLength(1);
+    expect(asked[0].args).toEqual({ question: "请介绍一下你自己" });
+  });
+
+  it("没开始面试时输入框与按钮都不可用", () => {
+    renderCard({ state: "idle", running: false });
+    expect(screen.getByLabelText("要回答的问题")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "提问" })).toBeDisabled();
+    expect(screen.getByText("开始面试后才能提问。")).toBeInTheDocument();
+  });
+
+  it("空白问题不发请求（避免白烧一次模型调用）", async () => {
+    const user = userEvent.setup();
+    const { askCalls } = renderCard({ state: "listening", running: true });
+    const input = screen.getByLabelText("要回答的问题");
+    await user.type(input, "   ");
+    // 按钮在空白输入时是禁用的，直接回车也应被前端拦住
+    await user.type(input, "{Enter}");
+    expect(askCalls()).toHaveLength(0);
   });
 });

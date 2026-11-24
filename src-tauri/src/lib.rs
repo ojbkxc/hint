@@ -362,6 +362,7 @@ pub fn run() {
             commands::toggle_overlay,
             commands::set_overlay_content_protected,
             commands::regenerate_answer,
+            commands::ask_question,
             commands::list_audio_devices,
             commands::prepare_model,
             commands::model_status,

@@ -430,6 +430,15 @@ pub async fn regenerate_answer(app: AppHandle) -> Result<(), String> {
     session::regenerate(&app)
 }
 
+/// 用用户手输的问题作答，不依赖语音识别。
+///
+/// 给一条绕过 STT 的兜底路径：识别不准时用户仍然能拿到答案（见
+/// `session::ask_question` 的说明）。
+#[tauri::command]
+pub async fn ask_question(app: AppHandle, question: String) -> Result<(), String> {
+    session::ask_question(&app, &question)
+}
+
 /// 打开日志目录，便于用户把 `hint.log` 发给支持。
 #[tauri::command(async)]
 pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
