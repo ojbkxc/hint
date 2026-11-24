@@ -270,8 +270,10 @@ mod tests {
     /// 保存前的必填项校验：空值必须拒绝（否则空值会覆盖用户已填好的配置）。
     #[test]
     fn missing_required_fields_rejects_empty_base_url() {
-        let mut settings = Settings::default();
-        settings.base_url = String::new();
+        let settings = Settings {
+            base_url: String::new(),
+            ..Default::default()
+        };
         let message = missing_required_fields(&settings).expect("应拒绝");
         assert!(message.contains("Base URL"), "错误里要点名字段：{message}");
         assert!(
@@ -282,8 +284,10 @@ mod tests {
 
     #[test]
     fn missing_required_fields_rejects_empty_model() {
-        let mut settings = Settings::default();
-        settings.model = String::new();
+        let settings = Settings {
+            model: String::new(),
+            ..Default::default()
+        };
         let message = missing_required_fields(&settings).expect("应拒绝");
         assert!(message.contains("模型名"), "错误里要点名字段：{message}");
         assert!(
@@ -294,9 +298,11 @@ mod tests {
 
     #[test]
     fn missing_required_fields_rejects_both_empty() {
-        let mut settings = Settings::default();
-        settings.base_url = String::new();
-        settings.model = String::new();
+        let settings = Settings {
+            base_url: String::new(),
+            model: String::new(),
+            ..Default::default()
+        };
         let message = missing_required_fields(&settings).expect("应拒绝");
         assert!(message.contains("Base URL"), "{message}");
         assert!(message.contains("模型名"), "{message}");
