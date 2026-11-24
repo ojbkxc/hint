@@ -439,6 +439,21 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<(), String
     session::ask_question(&app, &question)
 }
 
+/// 跑一次环境自检，把报告文本返回给设置页展示。
+///
+/// 与 `--doctor` 走同一个 `doctor::collect`：屏幕上看到的和写进报告文件的
+/// 完全一致，不维护第二份判据。用户在 GUI 里就能自查（版本、模型、配置、
+/// 会话库、音频设备、日志尾部的告警），不用记命令行参数。
+#[tauri::command(async)]
+pub fn doctor_report(state: State<'_, AppState>) -> Result<String, String> {
+    // collect 要 app_data_dir；settings_path 就在它下面，取父目录即可。
+    let app_data_dir = state
+        .settings_path
+        .parent()
+        .ok_or_else(|| "无法定位应用数据目录".to_string())?;
+    Ok(crate::doctor::collect(app_data_dir))
+}
+
 /// 打开日志目录，便于用户把 `hint.log` 发给支持。
 #[tauri::command(async)]
 pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {

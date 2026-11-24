@@ -2306,6 +2306,21 @@ button.mini.ghost {
   display: none;
 }
 
+/* 环境自检输出：等宽、可滚动、限高，避免长报告把设置页撑爆。 */
+.doctor-output {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  border-radius: 6px;
+}
+
 .settings-block {
   display: flex;
   flex-direction: column;

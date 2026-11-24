@@ -37,7 +37,10 @@ pub(crate) fn run(app_data_dir: &Path) -> i32 {
 }
 
 /// 收集全部诊断信息，返回可直接打印的文本。
-fn collect(app_data_dir: &Path) -> String {
+///
+/// pub(crate)：GUI 的「环境自检」也用它，保证屏幕上看到的内容与
+/// --doctor 写进报告的文件完全一致——两处各写一份判据是最容易漂的。
+pub(crate) fn collect(app_data_dir: &Path) -> String {
     let mut out = String::new();
     let mut blocking = 0usize;
 

@@ -373,6 +373,7 @@ pub fn run() {
             commands::finish_capture,
             commands::cancel_capture_answer,
             commands::open_log_dir,
+            commands::doctor_report,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

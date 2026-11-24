@@ -71,6 +71,9 @@ export default function Dashboard() {
   const [section, setSection] = useState<SectionId>("model");
   const [testAnswer, setTestAnswer] = useState("");
   const [banner, setBanner] = useState<Banner | null>(null);
+  // 环境自检：点按钮才跑（内部要探测模型、设备、日志尾部，不必每次进页面都跑）。
+  const [doctorText, setDoctorText] = useState("");
+  const [doctorBusy, setDoctorBusy] = useState(false);
   // 浮层可见性与切换中标志：徽章按钮据此显示「显示浮层 / 隐藏浮层」。
   // 初值 true 与 tauri.conf.json 的 overlay.visible 一致（1.0.10 起默认显示）。
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -124,6 +127,21 @@ export default function Dashboard() {
   const openLogDir = useCallback(async () => {
     const result = await safeInvoke("open_log_dir");
     if (!result.ok) setBanner({ level: "error", message: `打开日志目录失败：${result.error}` });
+  }, []);
+
+  /**
+   * 环境自检：与 `--doctor` 走同一个后端 collect，屏幕上看到的和报告文件一致。
+   * 用户在 GUI 里就能自查版本/模型/配置/会话库/音频设备/日志尾部告警。
+   */
+  const runDoctor = useCallback(async () => {
+    setDoctorBusy(true);
+    const result = await safeInvoke<string>("doctor_report");
+    setDoctorBusy(false);
+    if (!result.ok) {
+      setBanner({ level: "error", message: `环境自检失败：${result.error}` });
+      return;
+    }
+    setDoctorText(typeof result.data === "string" ? result.data : "");
   }, []);
 
   /**
@@ -459,6 +477,33 @@ export default function Dashboard() {
                           切换区块也不会丢，关闭窗口前记得保存。
                         </p>
                       </div>
+                      <div className="field-group">
+                        <p className="field-group-title">环境自检</p>
+                        <p className="muted small">
+                          跑一次本地诊断，把版本、语音模型、配置、会话数据库、音频设备与
+                          日志尾部的告警汇总出来。和命令行 `--doctor` 的报告内容完全一致。
+                          遇到问题时把这段贴出来，比截图更容易定位。
+                        </p>
+                        <div className="action-row">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => void runDoctor()}
+                            disabled={doctorBusy}
+                          >
+                            {doctorBusy ? "自检中…" : "运行环境自检"}
+                          </button>
+                        </div>
+                        {doctorText && (
+                          <pre
+                            className="settings-mono doctor-output"
+                            aria-label="环境自检结果"
+                          >
+                            {doctorText}
+                          </pre>
+                        )}
+                      </div>
+
                       <div className="field-group">
                         <p className="field-group-title">日志</p>
                         <div className="settings-kv">
