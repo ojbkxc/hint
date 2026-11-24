@@ -705,8 +705,9 @@ pub(crate) fn start_session(app: &AppHandle) -> Result<i64, String> {
     // **面试进行中**——用户已经开始共享屏幕、对方已经在说话，才发现点不出答案。
     // 与保存时的校验共用同一份判据（hint_core::settings::missing_required_fields），
     // 两处各写一套是最容易漂的形态。
-    if let Some(missing) = hint_core::settings::missing_required_fields(&settings) {
-        let message = format!("{missing}开始会话前请先在设置页补齐。");
+    let missing = hint_core::settings::missing_required_field_names(&settings);
+    if !missing.is_empty() {
+        let message = format!("开始会话前请先在设置页补齐：{}。", missing.join("、"));
         emit_status(app, "error", &message);
         return Err(message);
     }

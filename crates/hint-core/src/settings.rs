@@ -168,14 +168,24 @@ fn default_overlay_opacity() -> f64 {
 /// 空值保存会**覆盖掉用户已填好的配置**，而空配置下模型调用必然失败——
 /// 这是「配置被清空」事故的直接后果。返回 `Some(中文错误)` 时调用方必须
 /// 拒绝写盘，不能让它把空值落进文件。
-pub fn missing_required_fields(settings: &Settings) -> Option<String> {
-    let mut missing: Vec<&str> = Vec::new();
+pub fn missing_required_field_names(settings: &Settings) -> Vec<&'static str> {
+    let mut missing: Vec<&'static str> = Vec::new();
     if settings.base_url.trim().is_empty() {
         missing.push("Base URL");
     }
     if settings.model.trim().is_empty() {
         missing.push("模型名");
     }
+    missing
+}
+
+/// 保存前的错误串：强调「空值会覆盖已填好的配置」。
+///
+/// 这个语境只属于「保存」。开始会话用 missing_required_field_names 自己拼文案
+/// ——直接复用本函数会让用户读到「保存会覆盖已填好的配置…开始会话前请补齐」
+/// 这种前后不搭的句子（真机验证时抓到过）。
+pub fn missing_required_fields(settings: &Settings) -> Option<String> {
+    let missing = missing_required_field_names(settings);
     if missing.is_empty() {
         return None;
     }
