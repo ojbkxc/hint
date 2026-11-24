@@ -158,7 +158,7 @@ impl Default for Settings {
             overlay_opacity: default_overlay_opacity(),
             overlay_font_scale: default_overlay_font_scale(),
             overlay_content_protected: default_overlay_content_protected(),
-            proxy_mode: crate::proxy::ProxyMode::Direct,
+            proxy_mode: crate::proxy::ProxyMode::System,
             proxy_url: String::new(),
         }
     }

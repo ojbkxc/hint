@@ -17,13 +17,17 @@
 use serde::{Deserialize, Serialize};
 
 /// 代理模式。
+///
+/// 默认 **System**：装了代理软件的用户不用手动配就能连上（代理软件开「系统代理」
+/// 时会把地址写进注册表）；没装代理软件的机器上 `detect_system_proxy()` 返回
+/// `None`，实际行为与 `direct` 逐字节等价——所以这个默认值对两种机器都安全。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ProxyMode {
     /// 直连，不读系统代理也不用手填的代理。
-    #[default]
     Direct,
-    /// 跟随系统（Windows「Internet 选项」里的代理设置）。
+    /// 跟随系统（Windows「Internet 选项」里的代理设置）。**默认值。**
+    #[default]
     System,
     /// 手动指定。
     Manual,

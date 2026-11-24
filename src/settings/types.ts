@@ -193,7 +193,7 @@ export const EMPTY_SETTINGS: Settings = {
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
   overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
   overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
-  proxyMode: "direct",
+  proxyMode: "system",
   proxyUrl: "",
 };
 
@@ -225,10 +225,13 @@ export function normalizeSettings(raw: unknown): Settings {
     ),
     overlayContentProtected:
       (value.overlayContentProtected ?? value.overlay_content_protected) !== false,
+    // 默认跟随系统：装了代理软件的机器不用手动配就能连上。
+    // 只有显式 "direct" 才算直连；字段缺失（老配置）= 跟随系统，
+    // 而没装代理软件的机器上「跟随系统」探测不到代理，实际等价于直连。
     proxyMode:
-      value.proxyMode === "system" || value.proxyMode === "manual"
+      value.proxyMode === "direct" || value.proxyMode === "manual"
         ? value.proxyMode
-        : "direct",
+        : "system",
     proxyUrl: str("proxyUrl"),
   };
 }

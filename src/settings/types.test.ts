@@ -76,7 +76,7 @@ describe("normalizeSettings", () => {
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
         overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
-        proxyMode: "direct",
+        proxyMode: "system",
         proxyUrl: "",
       });
     }
@@ -105,7 +105,7 @@ describe("normalizeSettings", () => {
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
-        proxyMode: "direct",
+        proxyMode: "system",
         proxyUrl: "",
     });
     expect(settings).toEqual({
@@ -121,7 +121,7 @@ describe("normalizeSettings", () => {
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
-        proxyMode: "direct",
+        proxyMode: "system",
         proxyUrl: "",
     });
   });
@@ -215,5 +215,17 @@ describe("事件与容量契约", () => {
   it("不透明度边界常量与浮层契约一致", () => {
     expect(MIN_OVERLAY_OPACITY).toBe(0.2);
     expect(MAX_OVERLAY_OPACITY).toBe(1);
+  });
+
+  it("代理默认跟随系统；显式 direct / manual 仍然生效", () => {
+    // 默认 system：装了代理软件的机器不用手动配就能连上。
+    expect(normalizeSettings({}).proxyMode).toBe("system");
+    // 老配置里没有这个字段，同样按 system 处理。
+    expect(normalizeSettings({ provider: "openai" }).proxyMode).toBe("system");
+    // 显式选择必须被尊重——默认值改了不等于用户不能选直连。
+    expect(normalizeSettings({ proxyMode: "direct" }).proxyMode).toBe("direct");
+    expect(normalizeSettings({ proxyMode: "manual" }).proxyMode).toBe("manual");
+    // 非法值回落默认。
+    expect(normalizeSettings({ proxyMode: "bogus" }).proxyMode).toBe("system");
   });
 });
