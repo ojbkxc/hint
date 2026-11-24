@@ -113,3 +113,59 @@ describe("QuestionBar —— 浮层内手动提问", () => {
     expect(await screen.findByText("还没有开始面试会话")).toBeInTheDocument();
   });
 });
+
+describe("QuestionBar —— 方向键滚动答案区", () => {
+  /** 造一个可滚动的答案区，并记录 scrollBy 调用。 */
+  function mountWithScroller() {
+    const calls: Array<{ top: number }> = [];
+    const scroller = document.createElement("div");
+    scroller.className = "overlay-answer-body";
+    Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
+    scroller.scrollBy = ((opts: { top?: number }) => {
+      calls.push({ top: opts?.top ?? 0 });
+    }) as typeof scroller.scrollBy;
+    document.body.appendChild(scroller);
+
+    const utils = render(<QuestionBar running />);
+    return { ...utils, calls, cleanupDom: () => scroller.remove() };
+  }
+
+  it("输入框为空时方向键滚动答案区（焦点在输入框也不挡）", async () => {
+    // 输入框在会话开始时自动聚焦；焦点在 <input> 上时方向键只会移动光标，
+    // 不会滚动下方答案区。面试里答案常 150 字、浮层高度有限，往上翻看前文
+    // 是常见动作，每次都要先点一下答案区很打断节奏。
+    const user = userEvent.setup();
+    const { calls, cleanupDom } = mountWithScroller();
+
+    await user.type(screen.getByLabelText("手动提问"), "{ArrowDown}");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].top).toBeGreaterThan(0);
+
+    await user.type(screen.getByLabelText("手动提问"), "{ArrowUp}");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].top).toBeLessThan(0);
+
+    cleanupDom();
+  });
+
+  it("PageDown 一次翻约一屏", async () => {
+    const user = userEvent.setup();
+    const { calls, cleanupDom } = mountWithScroller();
+    await user.type(screen.getByLabelText("手动提问"), "{PageDown}");
+    expect(calls).toHaveLength(1);
+    // clientHeight 200 → 约 180
+    expect(calls[0].top).toBeGreaterThan(100);
+    cleanupDom();
+  });
+
+  it("输入框有内容时方向键不抢滚动（保持光标移动）", async () => {
+    const user = userEvent.setup();
+    const { calls, cleanupDom } = mountWithScroller();
+    const input = screen.getByLabelText("手动提问");
+    await user.type(input, "abc");
+    calls.length = 0;
+    await user.type(input, "{ArrowDown}");
+    expect(calls).toHaveLength(0);
+    cleanupDom();
+  });
+});

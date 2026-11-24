@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { safeInvoke } from "../lib/tauri";
 
+/** 输入框为空时用来滚动答案区的键。 */
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown"]);
+
 type Props = {
   /** 会话是否在跑；没跑时输入框禁用（后端 ask_question 会拒）。 */
   running: boolean;
@@ -69,6 +72,25 @@ export default function QuestionBar({ running }: Props) {
             event.preventDefault();
             event.stopPropagation();
             setText("");
+            return;
+          }
+          // 输入框为空时，方向键用来滚动答案区。
+          //
+          // 为什么要专门处理：输入框在会话开始时会自动聚焦（方便直接打字），
+          // 而焦点在 <input> 上时方向键只移动光标、不会滚动下方的答案区。
+          // 面试里答案通常 150 字、浮层高度有限，往上翻看前文是常见动作，
+          // 每次都要先点一下答案区很打断节奏。
+          if (text === "" && SCROLL_KEYS.has(event.key)) {
+            const scroller = document.querySelector(".overlay-answer-body");
+            if (scroller) {
+              event.preventDefault();
+              const page = scroller.clientHeight * 0.9;
+              const step =
+                event.key === "PageUp" || event.key === "PageDown" ? page : 48;
+              const direction =
+                event.key === "ArrowUp" || event.key === "PageUp" ? -1 : 1;
+              scroller.scrollBy({ top: direction * step, behavior: "smooth" });
+            }
           }
         }}
       />
