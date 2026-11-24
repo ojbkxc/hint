@@ -101,7 +101,15 @@ impl Layout {
     }
 }
 
-/// 读取清单。文件缺失、JSON 损坏或版本不符都返回空清单（等价于「未安装」）。
+/// 读取清单。文件缺失或 JSON 损坏返回空清单（等价于「未安装」）。
+///
+/// **不再按 `version` 字段硬性拒绝**：原先要求 `version == MANIFEST_VERSION`，
+/// 这意味着以后任何一次 bump（哪怕只是加一个字段）都会让所有用户的清单被
+/// 判为无效 → `all_installed` 返回 false → 重新下载 241 MB 模型。
+/// 兼容性由 serde 本身判断：`files` 能解析出来就说明结构兼容；具体文件是否
+/// 有效由 [`is_installed`] 的 sha256 + 大小二次校验兜底。
+///
+/// 读进来的 `version` 统一改写成当前常量，避免下游看到旧值。
 pub fn read_manifest(path: &Path) -> Manifest {
     let Ok(text) = fs::read_to_string(path) else {
         return Manifest::default();
@@ -109,9 +117,6 @@ pub fn read_manifest(path: &Path) -> Manifest {
     let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
         return Manifest::default();
     };
-    if manifest.version != MANIFEST_VERSION {
-        return Manifest::default();
-    }
     Manifest {
         version: MANIFEST_VERSION,
         files: manifest
@@ -318,8 +323,16 @@ mod tests {
         layout.ensure_dirs().unwrap();
         fs::write(&layout.manifest, "{not json").unwrap();
         assert_eq!(read_manifest(&layout.manifest), Manifest::default());
-        fs::write(&layout.manifest, r#"{"version":2,"files":[]}"#).unwrap();
-        assert_eq!(read_manifest(&layout.manifest), Manifest::default());
+        // 非 JSON / 缺 files 的清单回落空清单。
+        // 注意：这里**不再**用「version 不等于当前常量」来构造退化场景——
+        // 版本门控已移除（见 `stale_manifest_version_still_counts_as_installed`），
+        // 现在只有结构真的解析不出来才算无效。
+        fs::write(&layout.manifest, r#"{"version":99,"files":[]}"#).unwrap();
+        assert_eq!(
+            read_manifest(&layout.manifest),
+            Manifest::default(),
+            "空 files 等价于未安装"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -379,6 +392,38 @@ mod tests {
             }],
         };
         assert!(is_installed(&layout, &fresh, &file));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 清单的 `version` 字段不参与兼容判定：旧版本号 + 结构有效 = 仍然是已安装。
+    ///
+    /// 这条守住的是「升级不能触发 241 MB 重下」——旧实现只要 version 不相等
+    /// 就返回空清单，一次 MANIFEST_VERSION bump 就会让所有用户重下模型。
+    #[test]
+    fn stale_manifest_version_still_counts_as_installed() {
+        let root = temp_root("manifest-version");
+        let layout = Layout::new(&root);
+        layout.ensure_dirs().unwrap();
+        let file = assets::MODEL_FILES[1];
+        let path = layout.file_path(file.target);
+        fs::write(&path, vec![0u8; file.bytes as usize]).unwrap();
+
+        // 手写一份 version=99 的清单：结构完全合法，只有版本号对不上。
+        let stale = format!(
+            r#"{{"version":99,"files":[{{"name":"{}","bytes":{},"sha256":"{}"}}]}}"#,
+            file.target, file.bytes, file.sha256
+        );
+        fs::write(&layout.manifest, stale).unwrap();
+
+        let manifest = read_manifest(&layout.manifest);
+        assert_eq!(
+            manifest.version, MANIFEST_VERSION,
+            "读入后版本应被规整成当前常量"
+        );
+        assert!(
+            is_installed(&layout, &manifest, &file),
+            "版本号不同但结构有效时不得判为未安装"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

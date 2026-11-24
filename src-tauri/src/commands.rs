@@ -25,7 +25,20 @@ pub(crate) const CAPTURE_WINDOW: &str = "capture";
 
 #[tauri::command(async)]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    Ok(Settings::load(&state.settings_path))
+    let settings_path = &state.settings_path;
+    // 记「读到的是什么」比记「有没有文件」有用：配置看起来存不住时，
+    // 要么是文件没写成（看 save 日志），要么是读回来被回落成默认值
+    // （文件损坏会被改名成 .json.bad 并警告，这里能看到）。
+    let settings = Settings::load(settings_path);
+    tracing::info!(
+        path = %settings_path.display(),
+        exists = settings_path.exists(),
+        provider = settings.provider.as_str(),
+        base_url_filled = !settings.base_url.trim().is_empty(),
+        model_filled = !settings.model.trim().is_empty(),
+        "已读取配置"
+    );
+    Ok(settings)
 }
 
 #[tauri::command(async)]
@@ -34,9 +47,26 @@ pub fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    settings
-        .save(&state.settings_path)
-        .map_err(|error| format!("保存配置失败：{error}"))?;
+    // 保存成功/失败都要落日志：用户反馈「配置存不住」时，日志里
+    // 完全没有痕迹就没法判断到底是没点到、被拒绝，还是写盘失败。
+    settings.save(&state.settings_path).map_err(|error| {
+        tracing::error!(
+            %error,
+            path = %state.settings_path.display(),
+            "保存配置失败"
+        );
+        format!("保存配置失败：{error}")
+    })?;
+    // 只记与排障相关、且不含隐私的字段：协议/是否填了 Base URL 与模型名，
+    // 不记录内容本身（自建网关域名、模型名都可能是内部信息）。
+    tracing::info!(
+        path = %state.settings_path.display(),
+        provider = settings.provider.as_str(),
+        base_url_filled = !settings.base_url.trim().is_empty(),
+        model_filled = !settings.model.trim().is_empty(),
+        overlay_opacity = settings.overlay_opacity,
+        "配置已保存"
+    );
     // clamp 只用于事件值：手改配置文件写入越界值时，浮层也不会变成完全不可见。
     // 不回写配置文件，避免静默修改用户数据。
     let opacity = settings.overlay_opacity.clamp(0.2, 1.0);

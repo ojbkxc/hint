@@ -23,7 +23,11 @@ pub(crate) fn run(app_data_dir: &Path) -> i32 {
     let _ = attach_parent_console();
     print!("{report}");
     let path = app_data_dir.join(REPORT_NAME);
-    let saved = std::fs::write(&path, &report).is_ok();
+    // 全新机器（或刚被卸载重装、数据目录被清）上 app_data_dir 还不存在，
+    // 直接 write 会失败——而 `--doctor` 恰恰最该在这种机器上可用。
+    // 先建目录，失败才如实报错。
+    let dir_ready = std::fs::create_dir_all(app_data_dir).is_ok();
+    let saved = dir_ready && std::fs::write(&path, &report).is_ok();
     if saved {
         println!("\n报告已保存：{}", path.display());
     } else {
