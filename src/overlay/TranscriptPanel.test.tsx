@@ -95,7 +95,7 @@ describe("TranscriptPanel —— 空态", () => {
 });
 
 describe("TranscriptPanel —— 双通道行", () => {
-  it("面试官与我分别打上对应类名与中文标签", () => {
+  it("提问与我分别打上对应类名与中文标签", () => {
     const { container } = render(
       <TranscriptPanel
         lines={[
@@ -107,7 +107,7 @@ describe("TranscriptPanel —— 双通道行", () => {
     const rows = Array.from(container.querySelectorAll(".line"));
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveClass("line", "interviewer");
-    expect(rows[0].querySelector(".who")).toHaveTextContent("面试官");
+    expect(rows[0].querySelector(".who")).toHaveTextContent("提问");
     expect(rows[0].querySelector(".what")).toHaveTextContent("你为什么离职？");
     expect(rows[1]).toHaveClass("line", "me");
     expect(rows[1].querySelector(".who")).toHaveTextContent("我");

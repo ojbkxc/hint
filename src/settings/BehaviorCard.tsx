@@ -60,11 +60,11 @@ export default function BehaviorCard({ form, patch }: Props) {
 
         {form.triggerMode === "auto" ? (
           <p className="muted small">
-            自动模式：面试官说完一句话，只要被判定为问题就会立即生成答案。
+            自动模式：对方说完一句话，只要被判定为问题就会立即生成答案。
           </p>
         ) : (
           <p className="muted small">
-            手动模式：不会自动生成答案。面试官提问后按 Ctrl+Shift+A（或浮层里的「重新生成」）
+            手动模式：不会自动生成答案。对方提问后按 Ctrl+Shift+A（或浮层里的「重新生成」）
             才会生成。只有被识别为问题的话才会被记住，判断有遗漏时请直接用浮层的「重新生成」。
           </p>
         )}

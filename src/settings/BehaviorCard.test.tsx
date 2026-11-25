@@ -48,7 +48,7 @@ describe("BehaviorCard —— 触发方式", () => {
 
     const select = screen.getByLabelText("触发方式") as HTMLSelectElement;
     expect(select.value).toBe("auto");
-    expect(screen.getByText(/自动模式：面试官说完一句话/)).toBeInTheDocument();
+    expect(screen.getByText(/自动模式：对方说完一句话/)).toBeInTheDocument();
 
     await user.selectOptions(select, "manual");
     expect(patchLast()).toEqual({ triggerMode: "manual" });
@@ -57,7 +57,7 @@ describe("BehaviorCard —— 触发方式", () => {
   it("表单为 manual 时渲染手动模式说明与快捷键提示", () => {
     renderCard(makeForm({ triggerMode: "manual" }));
     expect(screen.getByText(/手动模式：不会自动生成答案/)).toBeInTheDocument();
-    expect(screen.queryByText(/自动模式：面试官说完一句话/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/自动模式：对方说完一句话/)).not.toBeInTheDocument();
   });
 });
 

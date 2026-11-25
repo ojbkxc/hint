@@ -83,7 +83,7 @@ describe("AnswerPanel —— 空态与占位文案分支", () => {
   it("没有答案、不在流式、没有错误时给默认引导文案", () => {
     renderPanel();
     expect(
-      screen.getByText(/检测到面试官提问后，答案会流式出现在这里/),
+      screen.getByText(/检测到提问后，答案会流式出现在这里/),
     ).toBeInTheDocument();
     // 无文本时「清空」按钮不该出现
     expect(screen.queryByRole("button", { name: "清空" })).not.toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("AnswerPanel —— 空态与占位文案分支", () => {
     renderPanel({ answer: makeAnswer({ streaming: true }) });
     expect(screen.getByText("正在等待模型输出…")).toBeInTheDocument();
     expect(
-      screen.queryByText(/检测到面试官提问后，答案会流式出现在这里/),
+      screen.queryByText(/检测到提问后，答案会流式出现在这里/),
     ).not.toBeInTheDocument();
   });
 

@@ -72,7 +72,7 @@ export default function DevicesCard({ form, loaded, patch, loadDevices }: Props)
 
         <div className="field">
           <label className="field-label" htmlFor="device-output">
-            系统输出（面试官声音）
+            系统输出（对方声音）
           </label>
           <select
             id="device-output"

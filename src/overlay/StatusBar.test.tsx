@@ -120,7 +120,7 @@ describe("StatusBar —— 说话人徽标", () => {
   });
 
   it.each([
-    ["interviewer", "面试官在说"],
+    ["interviewer", "对方在说"],
     ["me", "你在说"],
     ["both", "双方同时"],
   ] as const)("joint=%s 时显示「%s」并带对应类名", (joint, text) => {

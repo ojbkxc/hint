@@ -132,7 +132,7 @@ function AnswerPanel({
             <p className="placeholder">本次没有生成内容，可按上方提示处理后重试。</p>
           ) : (
             <p className="placeholder">
-              检测到面试官提问后，答案会流式出现在这里。
+              检测到提问后，答案会流式出现在这里。
               <br />
               也可以点「重新生成」对最新问题再要一次回答。
             </p>

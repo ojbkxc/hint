@@ -225,7 +225,7 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
                 key={segment.id}
                 className={`line ${segment.channel === "interviewer" ? "interviewer" : "me"}${segment.isEcho ? " echo" : ""}${segment.recovered ? " recovered" : ""}`}
               >
-                <span className="who">{segment.channel === "interviewer" ? "面试官" : "我"}</span>
+                <span className="who">{segment.channel === "interviewer" ? "提问" : "我"}</span>
                 <span className="what">
                   {segment.text}
                   {segment.isEcho && <em className="echo-tag">回声</em>}

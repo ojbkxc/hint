@@ -368,7 +368,7 @@ describe("useOverlayEvents —— 其他事件路径", () => {
     });
   });
 
-  it("reset 帧缺 question 时用最近的非回声面试官行兜底", async () => {
+  it("reset 帧缺 question 时用最近的非回声提问行兜底", async () => {
     const { result } = await mount();
     emit(HINT_EVENTS.transcript, {
       channel: "interviewer",

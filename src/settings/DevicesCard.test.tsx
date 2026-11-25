@@ -47,7 +47,7 @@ function micSelect(): HTMLSelectElement {
 }
 
 function outputSelect(): HTMLSelectElement {
-  return screen.getByLabelText("系统输出（面试官声音）") as HTMLSelectElement;
+  return screen.getByLabelText("系统输出（对方声音）") as HTMLSelectElement;
 }
 
 describe("DevicesCard —— 首次自动加载", () => {

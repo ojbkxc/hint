@@ -284,7 +284,7 @@ describe("Overlay —— 电平跳动不影响骨架", () => {
   it("说话人徽标跟随 speech-edge 事件切换", async () => {
     const { container } = await mount();
     emit(HINT_EVENTS.speechEdge, { joint: "interviewer" });
-    expect(container.querySelector(".speaking-badge")?.textContent).toBe("面试官在说");
+    expect(container.querySelector(".speaking-badge")?.textContent).toBe("对方在说");
 
     emit(HINT_EVENTS.speechEdge, { joint: "neither" });
     expect(container.querySelector(".speaking-badge")).toBeNull();

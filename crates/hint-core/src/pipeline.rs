@@ -32,7 +32,7 @@ pub const PROMPT_HISTORY_TURNS: usize = 6;
 /// 对话角色的中文标签（提示词与转录面板用）。
 pub fn role_label(role: TurnRole) -> &'static str {
     match role {
-        TurnRole::Interviewer => "面试官",
+        TurnRole::Interviewer => "提问",
         TurnRole::Me => "我",
     }
 }
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[test]
     fn role_labels_are_chinese() {
-        assert_eq!(role_label(TurnRole::Interviewer), "面试官");
+        assert_eq!(role_label(TurnRole::Interviewer), "提问");
         assert_eq!(role_label(TurnRole::Me), "我");
     }
 

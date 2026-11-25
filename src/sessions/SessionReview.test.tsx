@@ -261,7 +261,7 @@ describe("SessionReview —— 详情正文", () => {
     const rows = Array.from(container.querySelectorAll(".review-transcript .line"));
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveClass("interviewer");
-    expect(within(rows[0] as HTMLElement).getByText("面试官")).toBeInTheDocument();
+    expect(within(rows[0] as HTMLElement).getByText("提问")).toBeInTheDocument();
     expect(rows[1]).toHaveClass("me");
     expect(within(rows[1] as HTMLElement).getByText("我")).toBeInTheDocument();
     // 补录行带 recovered 类与「补录」标签（此前图例存在但数据链路断掉，永无此类行）。

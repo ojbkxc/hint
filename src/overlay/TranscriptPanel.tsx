@@ -34,7 +34,7 @@ function TranscriptPanel({ lines }: Props) {
 }
 
 function labelOf(channel: Channel): string {
-  return channel === "interviewer" ? "面试官" : "我";
+  return channel === "interviewer" ? "提问" : "我";
 }
 
 /** 电平事件约 30 fps，转录只在新增行时重渲染。 */

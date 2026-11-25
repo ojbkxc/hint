@@ -39,7 +39,7 @@ export default function StatusBar({ levels, model, ttftMs, streaming, speech }: 
 function jointText(joint: SpeechState["joint"]): string {
   switch (joint) {
     case "interviewer":
-      return "面试官在说";
+      return "对方在说";
     case "me":
       return "你在说";
     case "both":

@@ -132,7 +132,7 @@ pub(crate) fn run(
         if failures == DEGRADED_HINT_AFTER && !degraded_hinted {
             degraded_hinted = true;
             rt.warning(
-                "系统声通道反复失败，可能听不到面试官；请检查输出设备，\
+                "系统声通道反复失败，可能听不到对方；请检查输出设备，\
                  必要时结束会话后在设置页重新选择设备",
             );
         }
@@ -280,7 +280,7 @@ impl LoopbackSession {
                 {
                     self.default_at_open = None; // 只提醒一次
                     rt.warning(
-                        "系统默认输出设备已变更，当前会话仍在采集旧设备，可能听不到面试官；\
+                        "系统默认输出设备已变更，当前会话仍在采集旧设备，可能听不到对方；\
                          请结束会话，在设置中重新选择输出设备并重新开始",
                     );
                 }

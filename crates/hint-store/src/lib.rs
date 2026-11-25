@@ -166,10 +166,13 @@ impl Segment {
 }
 
 /// 通道名转中文标签；未知通道原样返回。
+///
+/// 系统声通道标签用「提问」而不是「面试官」：这是产品口径——界面上不出现
+/// 「面试官」这个暴露使用场景的词，导出与复盘里也一致。
 pub fn channel_label(channel: &str) -> &str {
     match channel {
         CHANNEL_MIC => "我",
-        CHANNEL_SYSTEM => "面试官",
+        CHANNEL_SYSTEM => "提问",
         other => other,
     }
 }
@@ -850,7 +853,7 @@ mod tests {
         assert!(detail.segments[1].is_echo);
         assert!(!detail.segments[2].is_echo);
         assert_eq!(detail.segments[2].id, a);
-        assert_eq!(detail.segments[0].speaker_label(), "面试官");
+        assert_eq!(detail.segments[0].speaker_label(), "提问");
         assert_eq!(detail.segments[2].speaker_label(), "我");
 
         assert_eq!(detail.answers.len(), 1);
@@ -1143,8 +1146,8 @@ mod tests {
         let markdown = store.export_markdown(session).expect("导出");
         let expected0 = format_clock(started_at);
         let expected1 = format_clock(started_at + 65_000);
-        assert!(markdown.contains(&format!("**面试官**（{expected0}）：零秒")));
-        assert!(markdown.contains(&format!("**面试官**（{expected1}）：一分零五秒")));
+        assert!(markdown.contains(&format!("**提问**（{expected0}）：零秒")));
+        assert!(markdown.contains(&format!("**提问**（{expected1}）：一分零五秒")));
         // 时间轴必须递增，不能出现错位。
         assert!(markdown.find("零秒").unwrap() < markdown.find("一分零五秒").unwrap());
     }
@@ -1234,7 +1237,7 @@ mod tests {
         assert!(markdown.contains("开始时间："));
         assert!(markdown.contains("模型：openai / deepseek-chat"));
         assert!(markdown.contains("备注：技术面"));
-        assert!(markdown.contains("**面试官**（"));
+        assert!(markdown.contains("**提问**（"));
         assert!(markdown.contains("你能说说这个项目的难点吗？"));
         assert!(markdown.contains("（回声，已排除）"));
         assert!(markdown.contains("**回答**（首字 0.4s · 总耗时 1.8s · tokens 300/80）"));
