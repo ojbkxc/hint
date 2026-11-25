@@ -446,7 +446,82 @@ fn show_overlay_window(window: &WebviewWindow) -> Result<(), String> {
     // 浮层平时不可聚焦；显示后再打开，Esc / 方向键才收得到。
     let _ = window.set_focusable(true);
     let _ = window.set_focus();
+    // 显示后立刻重新抢占 TOPMOST 层的第一位。
+    reassert_topmost(window);
     Ok(())
+}
+
+/// 把窗口重新压回 TOPMOST 层顶部的间隔。
+///
+/// 为什么要周期做：Windows 里**同一层内后创建的窗口在上面**，而 `alwaysOnTop`
+/// 只在建窗时设一次 `WS_EX_TOPMOST`，之后别的置顶窗口（会议软件的置顶小窗、
+/// 音乐播放器、甚至另一个工具）一出现就会盖在浮层上面，浮层自己不会回来。
+///
+/// 真机实测过：浮层 Z-order 位置从 22 被压到 25，手动 `SetWindowPos(HWND_TOPMOST)`
+/// 才回到 17。面试中浮层被盖住等于产品失效，所以这里做兜底。
+const TOPMOST_REASSERT: Duration = Duration::from_secs(2);
+
+/// 一次「重新置顶」：`SetWindowPos(HWND_TOPMOST, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)`。
+///
+/// 为什么不用 `WebviewWindow::set_always_on_top(true)`：tao 在 `apply_diff` 里
+/// 发现 `ALWAYS_ON_TOP` 标志没变化就直接 return，**已经是 TOPMOST 的窗口再设一次
+/// 是空操作**，Z-order 不会被提升。必须直接调 Win32。
+///
+/// `SWP_NOACTIVATE` 是关键：浮层平时不该抢焦点（否则会打断用户在会议里的输入），
+/// 这里只调整 Z-order，不激活窗口。
+fn reassert_topmost(window: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+        };
+
+        // tauri 的 hwnd() 给的是它内部 windows 版本的 HWND；用裸指针重新构造，
+        // 避免两个 windows crate 版本的类型不匹配。
+        let Ok(raw) = window.hwnd() else {
+            return;
+        };
+        let handle = HWND(raw.0 as *mut core::ffi::c_void);
+        // 失败只记 debug：置顶是尽力而为，个别环境（远程桌面、某些全屏独占程序）
+        // 会拒绝，不能因此报错打断用户操作。
+        let result = unsafe {
+            SetWindowPos(
+                handle,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+        };
+        if result.is_err() {
+            tracing::debug!("浮层重新置顶失败（忽略）");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+    }
+}
+
+/// 起一个后台线程，每 [`TOPMOST_REASSERT`] 检查一次：浮层可见就重新置顶。
+///
+/// 只在 `setup` 里起一次。线程随进程退出，不做额外生命周期管理。
+pub(crate) fn spawn_topmost_keeper(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(TOPMOST_REASSERT);
+            let Some(window) = app.get_webview_window("overlay") else {
+                continue;
+            };
+            // 只在可见时处理：隐藏状态下调整 Z-order 没有意义。
+            if window.is_visible().unwrap_or(false) {
+                reassert_topmost(&window);
+            }
+        }
+    });
 }
 
 fn hide_overlay_window(window: &WebviewWindow) -> Result<(), String> {

@@ -33,3 +33,12 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 pdf-extract = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 只用于「浮层周期性重新置顶」：tao 的 `set_always_on_top(true)` 在窗口已经是
+# TOPMOST 时是**空操作**（`apply_diff` 里 diff 为空直接 return），没法把被别的
+# 置顶窗口压下去的浮层重新拉回顶层，必须自己调 `SetWindowPos`。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }

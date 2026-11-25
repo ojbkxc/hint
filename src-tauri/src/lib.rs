@@ -526,6 +526,10 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
         }
         None => tracing::warn!("浮层窗口未创建，请检查 tauri.conf.json"),
     }
+    // 浮层周期性重新置顶：tao 的 `set_always_on_top(true)` 在窗口已经是 TOPMOST
+    // 时是空操作，别的置顶窗口（会议软件的置顶小窗等）一出现就会盖住浮层，
+    // 而浮层自己不会回来——面试中看不见浮层等于产品失效。详见 commands 里的说明。
+    commands::spawn_topmost_keeper(app.clone());
     Ok(())
 }
 
