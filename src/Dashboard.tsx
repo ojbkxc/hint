@@ -89,13 +89,27 @@ export default function Dashboard() {
   // 后端在 `AppState::new` 阶段就读配置（那时日志还没初始化），损坏的文件会被
   // 改名成 `settings.json.bad` 并回退默认值——用户的简历、项目资料、接口配置
   // **全部回到空**。不提示的话他只会在下次保存时发现"我填的东西没了"。
+  //
+  // 这里**直接拉命令、不等 `form.loaded`**：等 `form.loaded` 会引入时序依赖，
+  // 真机验证时新启动一轮就是「后端返回了 settings.json.bad、banner 却始终不出现」，
+  // 而手动 reload 后才出现——说明首次挂载那次状态更新被丢掉了（StrictMode 双挂载
+  // 时第一次 effect 的 `disposed` 会把 setState 拦掉）。命令本身没有副作用，
+  // 多点一次也没代价。
   useEffect(() => {
-    if (!form.loaded || !form.settingsCorrupted) return;
-    setBanner({
-      level: "error",
-      message: `配置文件损坏，已回退默认设置；原文件已备份为「${form.settingsCorrupted}」。简历与项目资料需要重新填写。`,
-    });
-  }, [form.loaded, form.settingsCorrupted]);
+    let active = true;
+    void (async () => {
+      const result = await safeInvoke<string>("config_corruption_notice");
+      if (!active || !result.ok) return;
+      if (typeof result.data !== "string" || !result.data) return;
+      setBanner({
+        level: "error",
+        message: `配置文件损坏，已回退默认设置；原文件已备份为「${result.data}」。简历与项目资料需要重新填写。`,
+      });
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 主窗口同样订阅后端提示：关闭窗口收进托盘等提示在浮层隐藏时只能在这里看到。
   useEffect(() => {
