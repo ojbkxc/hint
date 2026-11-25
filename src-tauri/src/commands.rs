@@ -477,12 +477,12 @@ fn reassert_topmost(window: &WebviewWindow) {
             HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
         };
 
-        // tauri 的 hwnd() 给的是它内部 windows 版本的 HWND；用裸指针重新构造，
-        // 避免两个 windows crate 版本的类型不匹配。
+        // tauri 的 hwnd() 返回的就是 windows 0.62 的 HWND 底层指针类型，
+        // 这里直接构造即可（多写一次 as *mut c_void 会被 clippy 判为无意义转换）。
         let Ok(raw) = window.hwnd() else {
             return;
         };
-        let handle = HWND(raw.0 as *mut core::ffi::c_void);
+        let handle = HWND(raw.0);
         // 失败只记 debug：置顶是尽力而为，个别环境（远程桌面、某些全屏独占程序）
         // 会拒绝，不能因此报错打断用户操作。
         let result = unsafe {
