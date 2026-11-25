@@ -65,6 +65,17 @@ pub fn config_corruption_notice(state: State<'_, AppState>) -> Option<String> {
     Some(backup)
 }
 
+/// 启动时会话数据库是否打不开、降级到了内存库。
+///
+/// 与 [`config_corruption_notice`] 同一套思路（前端主动拉，避免事件时序问题）：
+/// 降级意味着**历史面试记录读不出来了**，而且内存库只在本次运行有效、重启又是空的。
+/// 实测：数据库损坏时应用能正常启动、会话列表变成 0 条，但界面上一个字都没有——
+/// 用户只会以为「记录自己没了」。
+#[tauri::command]
+pub fn store_degraded_notice(state: State<'_, AppState>) -> bool {
+    state.store_degraded
+}
+
 #[tauri::command(async)]
 pub fn save_settings(
     app: AppHandle,

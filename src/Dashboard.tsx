@@ -119,6 +119,29 @@ export default function Dashboard() {
     };
   }, []);
 
+  // 会话数据库降级到内存库：历史面试记录读不出来了，必须告诉用户。
+  //
+  // 与上面同一条教训——后端在日志初始化之前就发现了这件事，只能由前端主动拉。
+  // 注意它和「配置损坏」可能同时发生（磁盘整个坏掉时），用两条独立 effect、
+  // 后到的覆盖先到的：数据库这条更严重（历史记录不可恢复），排在后面加载。
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const result = await safeInvoke<boolean>("store_degraded_notice");
+      if (!active || !result.ok) return;
+      if (result.data !== true) return;
+      setBanner({
+        level: "error",
+        sticky: true,
+        message:
+          "会话数据库打不开，已临时改用内存记录：历史面试记录无法读取，本次关闭后新记录也会清空。请检查磁盘空间或权限后重启。",
+      });
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // 主窗口同样订阅后端提示：关闭窗口收进托盘等提示在浮层隐藏时只能在这里看到。
   useEffect(() => {
     let active = true;

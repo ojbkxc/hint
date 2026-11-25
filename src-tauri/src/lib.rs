@@ -45,6 +45,13 @@ pub(crate) struct AppState {
     pub(crate) log_dir: PathBuf,
     /// 首次关闭主窗口的托盘提示只发一次。
     pub(crate) close_tip_shown: AtomicBool,
+    /// 启动时会话数据库是否打不开、降级到了内存库。
+    ///
+    /// 与 `settings_corrupted` 同一类问题：`Store::open` 失败时那条
+    /// `tracing::error!` 发生在 `logging::init` 之前，写不出去；用户看到的是
+    /// 「会话复盘里一条记录都没有」——历史面试记录已经在磁盘上坏掉了，而他不知道。
+    /// 内存库只在本次运行有效，重启后又是一个空库。
+    pub(crate) store_degraded: bool,
     /// 启动时配置文件是否损坏过（损坏的文件已被备份成 `settings.json.bad`）。
     ///
     /// 为什么记在这里：`Settings::load` 里的 `tracing::warn!` 发生在
@@ -407,14 +414,16 @@ impl AppState {
     fn new(data_dir: &std::path::Path) -> Result<Self, String> {
         std::fs::create_dir_all(data_dir).map_err(|error| format!("创建数据目录失败：{error}"))?;
         let db_path = data_dir.join("hint.db");
-        let store = match Store::open(&db_path) {
-            Ok(store) => store,
+        // 打不开就退回内存库，保证应用还能启动；同时记下「降级过」，
+        // 由壳层在日志就绪后告诉用户（此时日志还没初始化，这里打什么都写不出去）。
+        let (store, store_degraded) = match Store::open(&db_path) {
+            Ok(store) => (store, false),
             Err(error) => {
-                // 磁盘异常时退回内存库，保证应用仍能启动（重启后会话记录丢失）。
                 tracing::error!(%error, path = %db_path.display(), "打开会话数据库失败，改用内存库");
-                Store::open_in_memory().map_err(|fallback| {
+                let fallback = Store::open_in_memory().map_err(|fallback| {
                     format!("会话数据库不可用：{error}；内存库也失败：{fallback}")
-                })?
+                })?;
+                (fallback, true)
             }
         };
         // 保留最近 30 天的会话记录；清理失败不影响启动。
@@ -435,6 +444,7 @@ impl AppState {
             settings_path,
             log_dir: data_dir.join("logs"),
             settings_corrupted,
+            store_degraded,
             close_tip_shown: AtomicBool::new(false),
             overlay_bounds_gen: Arc::new(AtomicU64::new(0)),
             store: Mutex::new(store),
@@ -650,6 +660,15 @@ pub fn run() {
                     "启动时配置文件损坏，已回退默认值"
                 );
             }
+            // 会话数据库降级到内存库：这里才写得出日志（同上一段的时序原因）。
+            if let Some(state) = app.try_state::<AppState>()
+                && state.store_degraded
+            {
+                tracing::error!(
+                    path = %state.settings_path.parent().map(|dir| dir.join("hint.db").display().to_string()).unwrap_or_default(),
+                    "启动时会话数据库打不开，已降级为内存库（历史会话记录不可读，重启后清空）"
+                );
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -688,6 +707,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::config_corruption_notice,
+            commands::store_degraded_notice,
             commands::save_settings,
             commands::save_api_key,
             commands::has_api_key,
