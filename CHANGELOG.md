@@ -4,6 +4,59 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.20] - 2026-11-25
+
+### 修复：浮层被别的置顶窗口压下去后不会自己回来
+
+浮层是 `alwaysOnTop: true`，但 Windows 里**同一层内后创建的窗口在上面**。
+`WS_EX_TOPMOST` 只在建窗时设一次，之后任何置顶窗口（会议软件的置顶小窗、
+音乐播放器、别的工具）一出现就会盖住浮层，而浮层自己不会回来。
+
+真机实测（`GetWindow(GW_HWNDPREV)` 数 Z-order，数字越小越靠上）：
+
+```
+浮层初始位置: 22
+另一个 TOPMOST 窗口出现后: 25      ← 被压下去了
+手动 SetWindowPos(HWND_TOPMOST): 17  ← 能拉回来
+```
+
+面试中看不见浮层等于产品失效，必须兜底。
+
+### 关键：为什么不能用 set_always_on_top(true)
+
+第一版想用 Tauri 的 `WebviewWindow::set_always_on_top(true)` 周期重设。查 tao 0.37
+的实现，这条路是死的：
+
+```rust
+// tao/src/platform_impl/windows/window_state.rs: apply_diff
+let mut diff = old ^ new;
+if diff == WindowFlags::empty() {
+  return;            // 标志没变化直接返回，SetWindowPos 根本不会被调用
+}
+```
+
+窗口已经是 TOPMOST 时，再设一次是**空操作**，Z-order 不会提升。必须直接调 Win32。
+
+### 改法
+
+1. `src-tauri/Cargo.toml` 加 `[target.'cfg(windows)'.dependencies] windows = "0.62"`
+   （只启用 `Win32_Foundation` + `Win32_UI_WindowsAndMessaging`；版本与 lockfile 里
+   已有的 windows 0.62.2 一致，不引入新下载）。
+2. `commands::reassert_topmost`：直接 `SetWindowPos(hwnd, HWND_TOPMOST, ...
+   SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)`。`SWP_NOACTIVATE` 保证只调 Z-order、
+   不抢焦点（否则会打断用户在会议里的输入）。失败只记 debug——置顶是尽力而为。
+3. `commands::spawn_topmost_keeper`：后台线程每 2 秒检查一次，浮层可见就重新置顶。
+4. `show_overlay_window` 显示后立刻置顶一次，不等下一个周期。
+
+### 两次 CI 红的修正
+
+- `--locked` 报 `cannot update the lock file`：本机不能编译、没法让 cargo 更新
+  lockfile，手动在 `hint` 包的 dependencies 里补 `"windows"`（0.62.2 包块本来就在）。
+- clippy `unnecessary_cast`：`HWND(raw.0 as *mut c_void)` 里转换多余，tauri 的
+  `hwnd()` 返回的就是该类型，改成 `HWND(raw.0)`。
+
+533 用例全绿、tsc 0 错、rustfmt 干净、CI 全绿。
+
 ## [1.1.19] - 2026-11-25
 
 ### 修复：导出 Markdown 之前其实没存下文件
