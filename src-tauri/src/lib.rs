@@ -45,6 +45,14 @@ pub(crate) struct AppState {
     pub(crate) log_dir: PathBuf,
     /// 首次关闭主窗口的托盘提示只发一次。
     pub(crate) close_tip_shown: AtomicBool,
+    /// 启动时配置文件是否损坏过（损坏的文件已被备份成 `settings.json.bad`）。
+    ///
+    /// 为什么记在这里：`Settings::load` 里的 `tracing::warn!` 发生在
+    /// `logging::init` 之前（配置在 `AppState::new` 阶段就要读，而日志在
+    /// `.setup()` 里才初始化），那条警告**写不出去**。真机实测全日志里搜不到
+    /// 「配置文件损坏」，而用户的简历、项目资料、接口配置已经全部回到默认值——
+    /// 只会发现"我填的东西没了"，不知道被备份了、也不知道 `.bad` 在哪。
+    pub(crate) settings_corrupted: bool,
     /// 浮层几何防抖的「代数」：拖动时每来一个事件 +1，睡醒后代数变了就跳过。
     ///
     /// 用 `Arc<AtomicU64>` 是因为要移进保存线程里比对；`AppState` 本身不能
@@ -419,9 +427,14 @@ impl AppState {
                 tracing::warn!(%error, "清理旧会话记录失败");
             }
         }
+        // 这里就加载一次配置，把「是否损坏」记下来：日志系统此时还没初始化，
+        // 损坏警告只能延后到 setup 里发（见 `settings_corrupted` 的说明）。
+        let settings_path = data_dir.join("settings.json");
+        let (_, settings_corrupted) = Settings::load_reporting(&settings_path);
         Ok(Self {
-            settings_path: data_dir.join("settings.json"),
+            settings_path,
             log_dir: data_dir.join("logs"),
+            settings_corrupted,
             close_tip_shown: AtomicBool::new(false),
             overlay_bounds_gen: Arc::new(AtomicU64::new(0)),
             store: Mutex::new(store),
@@ -623,6 +636,32 @@ pub fn run() {
                 );
             }
             session::emit_status(app.handle(), "idle", "等待连接");
+
+            // 配置文件损坏的提示必须放在这里：`Settings::load` 在 `AppState::new`
+            // 阶段就要读配置，那时日志还没初始化（`logging::init` 就在上面几行），
+            // 它内部的 `warn!` 写不出去。用户实际遭遇的是「简历/项目/接口配置全部
+            // 回到默认」——必须明确告诉他已经备份到哪、原文件叫什么。
+            if let Some(state) = app.try_state::<AppState>()
+                && state.settings_corrupted
+            {
+                tracing::warn!(
+                    backup = %state.settings_path.with_extension("json.bad").display(),
+                    "启动时配置文件损坏，已回退默认值"
+                );
+                session::emit_notice(
+                    app.handle(),
+                    "error",
+                    format!(
+                        "配置文件损坏，已回退默认设置；原文件已备份为「{}」。简历与项目资料需要重新填写。",
+                        state
+                            .settings_path
+                            .with_extension("json.bad")
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "settings.json.bad".to_string())
+                    ),
+                );
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

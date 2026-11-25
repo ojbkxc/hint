@@ -294,16 +294,28 @@ impl Settings {
     /// 解析失败说明文件已损坏（例如上次写入中途断电）：把坏文件重命名为
     /// `settings.json.bad` 留证，再回退默认值，避免下次保存时静默覆盖用户资料。
     pub fn load(path: &Path) -> Self {
+        Self::load_reporting(path).0
+    }
+
+    /// 与 [`load`](Self::load) 相同，但**额外告诉你配置文件是否损坏过**。
+    ///
+    /// 为什么需要这个：`load` 在 `AppState::new` 里被调用，那时**日志还没初始化**
+    /// （`logging::init` 在 `.setup()` 里），所以「配置文件损坏」这件事在日志里
+    /// 完全看不到；而损坏的代价是用户的简历、项目资料、接口配置全部回到默认值。
+    /// 用户只会发现「我填的东西没了」，不知道是被备份了、也不知道 `.bad` 在哪。
+    ///
+    /// 壳层拿到 `true` 之后应该在日志就绪后给用户一条明确提示。
+    pub fn load_reporting(path: &Path) -> (Self, bool) {
         let raw = match std::fs::read_to_string(path) {
             Ok(raw) => raw,
-            Err(_) => return Self::default(),
+            Err(_) => return (Self::default(), false),
         };
         match serde_json::from_str::<Self>(&raw) {
-            Ok(settings) => settings.migrate(),
+            Ok(settings) => (settings.migrate(), false),
             Err(error) => {
                 tracing::warn!(%error, path = %path.display(), "配置文件损坏，已备份并回退默认值");
                 let _ = std::fs::rename(path, path.with_extension("json.bad"));
-                Self::default()
+                (Self::default(), true)
             }
         }
     }
