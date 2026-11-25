@@ -33,7 +33,7 @@ export type Settings = {
   outputDevice: string;
   /** 浮层背景不透明度，0.2–1.0（默认 0.88）。文字始终不透明。 */
   overlayOpacity: number;
-  /** 浮层字号缩放，0.8–3（默认 1.0）。答案、转录、问题行按同一比例放大。 */
+  /** 浮层字号缩放，0.8–3（默认 1.0）。只缩放答案（含历史答案），转录与问题行固定大小。 */
   overlayFontScale: number;
   /**
    * 浮层是否从屏幕捕获中排除（**默认 false**）。

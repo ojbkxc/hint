@@ -66,7 +66,7 @@ function applyOverlayOpacity(value: number) {
   document.documentElement.style.setProperty("--overlay-alpha", String(value));
 }
 
-/** 浮层字号缩放：同样只改 CSS 变量，答案/转录/问题行按同一比例放大。 */
+/** 浮层字号缩放：同样只改 CSS 变量，只有答案区（含历史答案）跟随缩放。 */
 function applyOverlayFontScale(value: number) {
   document.documentElement.style.setProperty(
     "--overlay-font-scale",

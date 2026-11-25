@@ -1574,16 +1574,18 @@ button.preset.active {
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+/* 空态提示属于辅助文字，不跟随「浮层字号」滑块（滑块只缩放答案）。 */
 .overlay-empty {
-  font-size: calc(12px * var(--overlay-font-scale, 1));
+  font-size: 12px;
   line-height: 1.6;
   color: var(--text-dim);
 }
 
+/* 转录行固定 12px：浮层字号滑块只作用于答案，转录不跟随缩放。 */
 .line {
   display: flex;
   gap: 8px;
-  font-size: calc(12px * var(--overlay-font-scale, 1));
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1737,7 +1739,8 @@ button.preset.active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(11px * var(--overlay-font-scale, 1));
+  /* 问题行固定 11px：浮层字号滑块只作用于答案，问题行不跟随缩放。 */
+  font-size: 11px;
   line-height: 1.5;
   color: var(--text-muted);
 }
@@ -1815,7 +1818,8 @@ button.mini.ghost {
   overflow-y: auto;
   overflow-x: hidden;
   /* 字号随「回答行为 → 浮层字号」滑块缩放：基准 15px × --overlay-font-scale。
-     用 calc 而不是改 px 值，答案/转录/问题行各自的比例关系保持不变。 */
+     只有答案区（含下面 .block-answer 的历史答案）跟随这个变量；转录行、
+     问题行与空态提示都是固定 px，不受滑块影响。 */
   font-size: calc(15px * var(--overlay-font-scale, 1));
   line-height: 1.75;
   /* 正文必须是实色：浮层不透明度只作用于背景，答案文字任何情况下不发灰。

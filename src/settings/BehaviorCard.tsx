@@ -137,7 +137,7 @@ export default function BehaviorCard({ form, patch }: Props) {
           更稳的做法：面试前按 Ctrl+Shift+H 直接隐藏浮层。
         </p>
         <p className="muted small">
-          不透明度只改背景（文字始终清晰，不影响窗口是否可见）；字号会把答案、转录与问题行一起缩放。
+          不透明度只改背景（文字始终清晰，不影响窗口是否可见）；字号只缩放答案（含历史答案），转录与问题行保持固定大小。
           改完点「保存全部配置」立即生效，不用重开浮层。
         </p>
       </div>
