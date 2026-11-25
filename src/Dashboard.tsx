@@ -15,6 +15,7 @@ import SessionReview from "./sessions/SessionReview";
 import { useSessions } from "./sessions/useSessions";
 import { isRecord, pickText } from "./lib/data";
 import { safeInvoke, safeListen } from "./lib/tauri";
+import { applyTheme } from "./lib/theme";
 
 type Tab = "settings" | "review";
 
@@ -116,6 +117,17 @@ export default function Dashboard() {
     );
     return () => window.clearTimeout(timer);
   }, [banner]);
+
+  /**
+   * 主题跟随表单值：读到已保存的配置、或用户在「回答行为」里改了主题，
+   * 配置页立刻换肤；点「保存全部配置」把值落盘，浮层由后端事件同步。
+   *
+   * 写在这里而不是保存回调里：首屏 get_settings 回来后也要应用，
+   * 否则重启后深色配置要等用户再动一次设置才生效。
+   */
+  useEffect(() => {
+    applyTheme(form.form.theme);
+  }, [form.form.theme]);
 
   async function handleTest() {
     setTestAnswer("");

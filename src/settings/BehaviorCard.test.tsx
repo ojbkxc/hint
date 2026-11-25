@@ -117,6 +117,48 @@ describe("BehaviorCard —— 不透明度滑块", () => {
   });
 });
 
+describe("BehaviorCard —— 界面主题", () => {
+  it("默认浅色；选深色时 patch theme", async () => {
+    const user = userEvent.setup();
+    const { patchLast } = renderCard();
+    const select = screen.getByLabelText("界面主题") as HTMLSelectElement;
+    expect(select.value).toBe("light");
+    // 文案直接写黑底/白底：只说「深色」时不同人理解不一致。
+    expect(
+      screen.getByRole("option", { name: "浅色（白底黑字）" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "深色（黑底白字）" }),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(select, "dark");
+    expect(patchLast()).toEqual({ theme: "dark" });
+  });
+
+  it("表单里是深色时下拉跟着显示深色", () => {
+    renderCard(makeForm({ theme: "dark" }));
+    expect((screen.getByLabelText("界面主题") as HTMLSelectElement).value).toBe(
+      "dark",
+    );
+  });
+
+  it("主题与不透明度/字号在同一张「浮层外观」卡片里", () => {
+    // 产品口径：主题属于浮层外观这一组，不该被塞进别的分组。
+    const { container } = renderCard();
+    const theme = container.querySelector("#behavior-theme");
+    const opacity = container.querySelector("#behavior-opacity");
+    const fontScale = container.querySelector("#behavior-font-scale");
+    expect(theme).not.toBeNull();
+    const group = theme?.closest(".field-group");
+    expect(group).not.toBeNull();
+    expect(group).toBe(opacity?.closest(".field-group"));
+    expect(group).toBe(fontScale?.closest(".field-group"));
+    expect(group?.querySelector(".field-group-title")?.textContent).toBe(
+      "浮层外观",
+    );
+  });
+});
+
 describe("BehaviorCard —— 热键清单", () => {
   it("列出全部快捷键，含截图问答", () => {
     renderCard();

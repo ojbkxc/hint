@@ -318,6 +318,27 @@ describe("useOverlayEvents —— 其他事件路径", () => {
     ).toBe("0.2");
   });
 
+  it("get_settings 带回深色主题时根元素写上 data-theme=dark", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValueOnce({ theme: "dark" });
+    await mount();
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("dark");
+    });
+  });
+
+  it("overlayTheme 事件切换主题；非法值按浅色处理（属性被删掉）", async () => {
+    await mount();
+    emit(HINT_EVENTS.overlayTheme, { theme: "dark" });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    emit(HINT_EVENTS.overlayTheme, { theme: "light" });
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    // 未知值不能把浮层停在半黑状态：一律回落浅色。
+    emit(HINT_EVENTS.overlayTheme, { theme: "dark" });
+    emit(HINT_EVENTS.overlayTheme, { theme: "午夜蓝" });
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+
   it("speechEdge 事件只接受四个合法 joint 值", async () => {
     const { result } = await mount();
     emit(HINT_EVENTS.speechEdge, { joint: "interviewer" });

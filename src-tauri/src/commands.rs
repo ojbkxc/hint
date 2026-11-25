@@ -100,6 +100,12 @@ pub fn save_settings(
         session::EVT_OVERLAY_FONT_SCALE,
         json!({ "scale": font_scale }),
     );
+    // 主题同样实时下发：浮层是独立窗口，不会继承主窗口的 data-theme。
+    session::emit(
+        &app,
+        session::EVT_OVERLAY_THEME,
+        json!({ "theme": settings.theme.as_str() }),
+    );
 
     // 内容保护（`WDA_EXCLUDEFROMCAPTURE`）必须在这里真正应用到窗口。
     //

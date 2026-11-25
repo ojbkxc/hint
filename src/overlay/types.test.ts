@@ -13,6 +13,9 @@ describe("HINT_EVENTS 事件契约", () => {
       queue: "hint://queue",
       overlayOpacity: "hint://overlay-opacity",
       overlayFontScale: "hint://overlay-font-scale",
+      // 新增事件：主题随保存实时下发给浮层（设置页与浮层共用一份配置，
+      // 浮层是独立窗口，收不到主窗口的 DOM 变更，只能走事件）。
+      overlayTheme: "hint://overlay-theme",
       speechEdge: "hint://speech-edge",
     });
   });

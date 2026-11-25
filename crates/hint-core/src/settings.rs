@@ -60,6 +60,28 @@ pub enum TriggerMode {
     Manual,
 }
 
+/// 界面主题：配置页与浮层共用一份设置。
+///
+/// 浅色 = 白底黑字（默认，与升级前的观感一致），深色 = 黑底白字。
+/// 默认浅色是产品口径，不跟随系统：同一份配置在任何机器上渲染结果一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeKind {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl ThemeKind {
+    /// 与前端 `Settings.theme` 的字面量保持一致。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeKind::Light => "light",
+            ThemeKind::Dark => "dark",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -105,6 +127,13 @@ pub struct Settings {
     /// 更可靠的替代：面试开始前按 `Ctrl+Shift+H` 隐藏浮层。
     #[serde(default = "default_overlay_content_protected")]
     pub overlay_content_protected: bool,
+    /// 界面主题（默认浅色）：配置页与浮层都跟随。
+    ///
+    /// 老配置里没有这个字段，靠 `#[serde(default)]` 补成 `Light`——不需要
+    /// bump `schema_version`：迁移只在「默认值不足以修正已落盘的值」时才需要，
+    /// 而这里缺失字段直接取默认值就是正确结果。
+    #[serde(default)]
+    pub theme: ThemeKind,
     /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
     ///
     /// 装代理软件的用户不开这个连不上模型接口；但本地回环（IPC、STT worker）
@@ -210,6 +239,8 @@ impl Default for Settings {
             overlay_opacity: default_overlay_opacity(),
             overlay_font_scale: default_overlay_font_scale(),
             overlay_content_protected: default_overlay_content_protected(),
+            // 默认浅色：与升级前的观感一致，也不跟随系统配色。
+            theme: ThemeKind::Light,
             proxy_mode: crate::proxy::ProxyMode::System,
             proxy_url: String::new(),
             stt_language: default_stt_language(),
@@ -581,6 +612,37 @@ mod tests {
         assert_eq!(json["overlayOpacity"], 0.4);
         let parsed: Settings = serde_json::from_value(json).expect("反序列化");
         assert_eq!(parsed.overlay_opacity, 0.4);
+    }
+
+    /// 主题默认浅色：老配置里没有 `theme` 字段，解析后必须是浅色，
+    /// 而不是解析失败或落到别的值。
+    #[test]
+    fn theme_defaults_to_light_when_missing() {
+        let parsed: Settings = serde_json::from_value(serde_json::json!({
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "answerStyle": "concise",
+            "triggerMode": "auto"
+        }))
+        .expect("缺 theme 字段也应解析");
+        assert_eq!(parsed.theme, ThemeKind::Light);
+        assert_eq!(Settings::default().theme, ThemeKind::Light);
+    }
+
+    /// 主题在 JSON 里是小写字面量：前端 `Settings.theme` 直接读这个值。
+    #[test]
+    fn theme_roundtrips_as_lowercase_literal() {
+        let settings = Settings {
+            theme: ThemeKind::Dark,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&settings).expect("序列化");
+        assert_eq!(json["theme"], "dark");
+        assert_eq!(ThemeKind::Dark.as_str(), "dark");
+        assert_eq!(ThemeKind::Light.as_str(), "light");
+        let parsed: Settings = serde_json::from_value(json).expect("反序列化");
+        assert_eq!(parsed.theme, ThemeKind::Dark);
     }
 
     #[test]

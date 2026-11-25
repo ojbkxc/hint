@@ -13,4 +13,4 @@ pub mod stt;
 
 pub use error::{CoreError, Result};
 pub use llm::{ChatRequest, ChatResponse};
-pub use settings::{AnswerStyle, ProviderKind, Settings, TriggerMode};
+pub use settings::{AnswerStyle, ProviderKind, Settings, ThemeKind, TriggerMode};

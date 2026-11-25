@@ -7,6 +7,15 @@ export type ProxyMode = "direct" | "system" | "manual";
 export const PROXY_MODES: ProxyMode[] = ["direct", "system", "manual"];
 
 /**
+ * 界面主题：配置页与浮层共用一份设置。
+ *
+ * 浅色 = 白底黑字（现状），深色 = 黑底白字。默认浅色：老配置里没有这个
+ * 字段，读到就按浅色渲染，观感与升级前完全一致。
+ */
+export type Theme = "light" | "dark";
+export const DEFAULT_THEME: Theme = "light";
+
+/**
  * 语音识别语言提示——**兼容字段，已不对用户暴露**。
  *
  * 实测该参数对 SenseVoice 基本无效：同一段中文音频，auto/zh/en/ja/ko/yue
@@ -42,6 +51,13 @@ export type Settings = {
    * 捕获方式完全拦不住，所以默认关；需要时由用户在设置页自行开启并先自测。
    */
   overlayContentProtected: boolean;
+  /**
+   * 界面主题：配置页与浮层都跟随（**默认 light**）。
+   *
+   * 浅色 = 白底黑字（升级前的观感），深色 = 黑底白字。浮层是透明置顶窗口，
+   * 两套主题各自给自己的底色与文字色，答案压在任何视频画面上都要能照着念。
+   */
+  theme: Theme;
   /** 出网代理模式。装代理软件的用户要靠它连模型接口。 */
   proxyMode: ProxyMode;
   /** 手填代理地址（仅 manual 生效），如 http://127.0.0.1:7890。 */
@@ -213,6 +229,16 @@ export function normalizeFontScale(raw: unknown): number {
   );
 }
 
+/**
+ * 主题归一：只认 `"light"` / `"dark"`，其余（含字段缺失）回落浅色。
+ *
+ * 这里不做「跟随系统」的猜测：默认值必须与 README 和产品负责人的口径一致，
+ * 系统偏好随时间变化会让同一份配置在两个窗口上渲染出不同主题。
+ */
+export function normalizeTheme(raw: unknown): Theme {
+  return raw === "dark" ? "dark" : DEFAULT_THEME;
+}
+
 export const EMPTY_SETTINGS: Settings = {
   provider: "openai",
   baseUrl: "",
@@ -226,6 +252,7 @@ export const EMPTY_SETTINGS: Settings = {
   overlayOpacity: DEFAULT_OVERLAY_OPACITY,
   overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
   overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+  theme: DEFAULT_THEME,
   proxyMode: "system",
   proxyUrl: "",
   sttLanguage: DEFAULT_STT_LANGUAGE,
@@ -260,6 +287,8 @@ export function normalizeSettings(raw: unknown): Settings {
     ),
     overlayContentProtected:
       (value.overlayContentProtected ?? value.overlay_content_protected) !== false,
+    // 主题字段缺失（老配置）= 浅色，与升级前的观感一致。
+    theme: normalizeTheme(value.theme),
     // 默认跟随系统：装了代理软件的机器不用手动配就能连上。
     // 只有显式 "direct" 才算直连；字段缺失（老配置）= 跟随系统，
     // 而没装代理软件的机器上「跟随系统」探测不到代理，实际等价于直连。

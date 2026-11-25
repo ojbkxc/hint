@@ -15,6 +15,7 @@ import type {
 } from "../overlay/types";
 import { isRecord, numberValue, pickText } from "./data";
 import { safeInvoke, safeListen } from "./tauri";
+import { applyTheme } from "./theme";
 import {
   normalizeFontScale,
   normalizeOpacity,
@@ -90,6 +91,8 @@ export function useOverlayEvents() {
       const settings = normalizeSettings(result.data);
       applyOverlayOpacity(settings.overlayOpacity);
       applyOverlayFontScale(settings.overlayFontScale);
+      // 主题必须与配置一起应用：浮层是独立窗口，没有主窗口可以继承。
+      applyTheme(settings.theme);
       // 记下配置的模型名：浮层底部要显示「当前用哪个模型」，
       // 只靠 answer.model（要答过题才有值）会让没答题时永远显示「未连接模型」。
       if (settings.model) {
@@ -368,6 +371,15 @@ export function useOverlayEvents() {
       const scale = numberValue(payload.scale ?? payload.value);
       if (scale === null) return;
       applyOverlayFontScale(normalizeFontScale(scale));
+    });
+
+    // 主题与不透明度/字号同一条路径下发：保存后浮层立刻换肤，不用重开。
+    register(HINT_EVENTS.overlayTheme, (payload) => {
+      if (!isRecord(payload)) return;
+      const theme = pickText(payload, ["theme"]);
+      // 空值/未知值一律按浅色处理（normalizeTheme 的口径），不会把浮层弄成半黑。
+      if (theme === "") return;
+      applyTheme(theme);
     });
 
     return () => {

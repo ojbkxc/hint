@@ -91,6 +91,8 @@ export const HINT_EVENTS = {
   overlayOpacity: "hint://overlay-opacity",
   /** 浮层字号缩放变化，payload { scale: number }（0.8–1.6，1.0 = 默认）。 */
   overlayFontScale: "hint://overlay-font-scale",
+  /** 主题变化（设置页保存后实时生效），payload { theme: "light" | "dark" }。 */
+  overlayTheme: "hint://overlay-theme",
   /** 双通道联合语音状态迁移，payload { channel, speaking, joint, atMs, msSinceOtherEdge }。 */
   speechEdge: "hint://speech-edge",
 } as const;

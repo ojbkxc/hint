@@ -68,5 +68,7 @@ if (typeof afterEach === "function") {
   afterEach(() => {
     // jsdom 下清掉可能被 applyOverlayOpacity 设置的 CSS 变量。
     document.documentElement.style.removeProperty("--overlay-alpha");
+    // 主题写在 data-theme 上（applyTheme）：不清会让深色用例污染后面的浅色断言。
+    delete document.documentElement.dataset.theme;
   });
 }

@@ -24,8 +24,8 @@
       {
         "label": "overlay",
         "title": "hint overlay",
-        "width": 460,
-        "height": 340,
+        "width": 640,
+        "height": 360,
         "minWidth": 320,
         "minHeight": 180,
         "resizable": true,

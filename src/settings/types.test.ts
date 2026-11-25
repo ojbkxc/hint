@@ -4,6 +4,7 @@ import {
   DEFAULT_STT_LANGUAGE,
   DEFAULT_OVERLAY_FONT_SCALE,
   DEFAULT_OVERLAY_OPACITY,
+  DEFAULT_THEME,
   MAX_OVERLAY_OPACITY,
   MIN_OVERLAY_OPACITY,
   normalizeBaseUrl,
@@ -77,6 +78,9 @@ describe("normalizeSettings", () => {
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
         overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        // 新增 theme 字段：期望对象必须补上，否则这条整对象断言会漏掉字段
+        // （toEqual 对多余属性会报错，是故意的——字段遗漏要能被抓到）。
+        theme: DEFAULT_THEME,
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
@@ -126,6 +130,8 @@ describe("normalizeSettings", () => {
       overlayOpacity: 0.5,
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        // 同上：新增字段后整对象断言必须同步，否则会报「多出 theme」。
+        theme: DEFAULT_THEME,
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
@@ -176,6 +182,20 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ overlayOpacity: null }).overlayOpacity).toBe(
       DEFAULT_OVERLAY_OPACITY,
     );
+  });
+
+  it("主题默认浅色，只认 light / dark", () => {
+    // 老配置里没有 theme 字段：必须回落浅色（不是深色、也不是空串）。
+    expect(normalizeSettings({}).theme).toBe("light");
+    expect(normalizeSettings({ provider: "openai" }).theme).toBe("light");
+    // 显式值必须被尊重——默认浅色不等于用户不能选深色。
+    expect(normalizeSettings({ theme: "dark" }).theme).toBe("dark");
+    expect(normalizeSettings({ theme: "light" }).theme).toBe("light");
+    // 脏值一律回落浅色，不能让浮层停在半黑状态。
+    expect(normalizeSettings({ theme: "midnight" }).theme).toBe("light");
+    expect(normalizeSettings({ theme: 1 }).theme).toBe("light");
+    expect(normalizeSettings({ theme: null }).theme).toBe("light");
+    expect(DEFAULT_THEME).toBe("light");
   });
 });
 

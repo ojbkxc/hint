@@ -1,4 +1,4 @@
-﻿import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -828,6 +828,32 @@ describe("Dashboard —— titlebar 技术值", () => {
     expect(container.querySelector(".settings-meta")?.textContent).toBe(
       "logs\\hint.log",
     );
+  });
+});
+
+describe("Dashboard —— 主题", () => {
+  it("表单里的深色主题会落到根元素 data-theme 上", async () => {
+    hooks.settings = makeForm({ form: { ...EMPTY_SETTINGS, theme: "dark" } });
+    await mount();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("浅色主题不写 data-theme（默认状态即浅色）", async () => {
+    hooks.settings = makeForm({ form: { ...EMPTY_SETTINGS, theme: "light" } });
+    await mount();
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+  });
+
+  it("表单值从浅色改成深色时配置页立即换肤（不用等保存）", async () => {
+    const utils = await mount();
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    // 模拟 useSettingsForm.patch：hook 返回值换成深色后再重渲染，
+    // 等价于用户在「回答行为」里选了深色但还没点保存。
+    hooks.settings = makeForm({ form: { ...EMPTY_SETTINGS, theme: "dark" } });
+    await act(async () => {
+      utils.rerender(<Dashboard />);
+    });
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
 });
 

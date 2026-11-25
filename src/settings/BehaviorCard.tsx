@@ -1,4 +1,4 @@
-import type { AnswerStyle, ProxyMode, Settings, TriggerMode } from "./types";
+import type { AnswerStyle, ProxyMode, Settings, Theme, TriggerMode } from "./types";
 import {
   MAX_OVERLAY_FONT_SCALE,
   MAX_OVERLAY_OPACITY,
@@ -6,6 +6,7 @@ import {
   MIN_OVERLAY_OPACITY,
   normalizeFontScale,
   normalizeOpacity,
+  normalizeTheme,
 } from "./types";
 
 type Props = {
@@ -71,6 +72,27 @@ export default function BehaviorCard({ form, patch }: Props) {
 
       <div className="field-group">
         <p className="field-group-title">浮层外观</p>
+        {/*
+          主题放在这一组的最前面：它同时管配置页与浮层，是不透明度/字号之外
+          唯一一件「看一眼就得改对」的事。选择框直接写黑底/白底，避免「深色」
+          这个词在不同人脑子里指不同东西。
+        */}
+        <div className="field">
+          <label className="field-label" htmlFor="behavior-theme">
+            界面主题
+          </label>
+          <select
+            id="behavior-theme"
+            className="form-input"
+            value={normalizeTheme(form.theme)}
+            onChange={(event) =>
+              patch({ theme: event.target.value as Theme })
+            }
+          >
+            <option value="light">浅色（白底黑字）</option>
+            <option value="dark">深色（黑底白字）</option>
+          </select>
+        </div>
         {/*
           两个滑块原本各占一个 field + 一段说明，加起来比可视区还高，
           真机实测「浮层字号」被底部固定栏挡在下面（top:602 / 可视 378px），
@@ -138,6 +160,7 @@ export default function BehaviorCard({ form, patch }: Props) {
         </p>
         <p className="muted small">
           不透明度只改背景（文字始终清晰，不影响窗口是否可见）；字号只缩放答案（含历史答案），转录与问题行保持固定大小。
+          主题对配置页与浮层同时生效：深色是黑底白字，浅色是白底黑字。
           改完点「保存全部配置」立即生效，不用重开浮层。
         </p>
       </div>

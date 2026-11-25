@@ -93,6 +93,103 @@ fn combo(code: Code) -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), code)
 }
 
+/// 浮层默认宽度占可用宽度（工作区，不含任务栏）的比例。
+const OVERLAY_WIDTH_RATIO: u32 = 3;
+/// 浮层高度占可用高度的比例。
+const OVERLAY_HEIGHT_RATIO: u32 = 3;
+/// 浮层默认宽度的逻辑像素下限：再窄就放不下答案与两路电平。
+const OVERLAY_MIN_WIDTH_LOGICAL: u32 = 420;
+/// 浮层默认宽度的逻辑像素上限：超宽屏上 1/3 仍有 1100+ 逻辑像素，
+/// 一行答案横跨半个屏反而难扫读，这里压回 900。
+const OVERLAY_MAX_WIDTH_LOGICAL: u32 = 900;
+
+/// 浮层默认几何（物理像素）：宽高各取可用区域的 1/3，水平居中、垂直贴顶。
+///
+/// 纯函数，只吃「显示器工作区 + 缩放比」，不读任何全局状态也不写死分辨率：
+/// - **工作区而不是整屏**：任务栏在顶部/侧边的机器上，整屏坐标会把浮层压到
+///   任务栏下面；`work_area` 已经是扣掉任务栏后的可用区域。
+/// - **宽度同时受下限约束**：4K 屏 1/3 宽 ≈ 1280px，答案行长会难读；
+///   1080p 屏 1/3 宽 ≈ 640px；超宽屏（如 3440）1/3 仍有 1146px，
+///   所以再按 `--overlay` 的实际用途给一个 900px 逻辑上限，避免一行字横跨半个屏。
+/// - **最小宽度按逻辑像素给**：高 DPI 下 420 逻辑像素要乘缩放比，
+///   否则 150% 缩放的机器上浮层会窄得放不下「重新生成 / 清空」两个按钮。
+/// - **垂直贴顶**：面试时视线在屏幕上方（摄像头附近），浮层贴顶最不容易被注意到；
+///   这里只留 0 边距，位置直接取工作区上沿。
+fn overlay_default_geometry(
+    work_area: (i32, i32, u32, u32),
+    scale_factor: f64,
+) -> (tauri::PhysicalSize<u32>, tauri::PhysicalPosition<i32>) {
+    let (origin_x, origin_y, available_width, available_height) = work_area;
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let min_width = (f64::from(OVERLAY_MIN_WIDTH_LOGICAL) * scale).round() as u32;
+    let max_width = (f64::from(OVERLAY_MAX_WIDTH_LOGICAL) * scale).round() as u32;
+    // 宽度：可用宽度 / 3 → 不超过上限 → 不小于下限 → 不超过可用宽度。
+    // 先钳上限再抬下限，保证「下限 > 上限」的怪异缩放比下仍以最小宽度为准；
+    // 最后再与可用宽度取小，极小屏（如 800×600 @100%）不会比屏幕还宽。
+    let width = (available_width / OVERLAY_WIDTH_RATIO)
+        .min(max_width)
+        .max(min_width)
+        .min(available_width)
+        .max(1);
+    let height = (available_height / OVERLAY_HEIGHT_RATIO).max(1);
+    // 水平居中：左右各留相同空白；余数为奇数时左边多 1px 也无明显偏差。
+    let x = origin_x + ((available_width.saturating_sub(width)) / 2) as i32;
+    let y = origin_y;
+    (
+        tauri::PhysicalSize::new(width, height),
+        tauri::PhysicalPosition::new(x, y),
+    )
+}
+
+/// 把浮层摆到主显示器的默认位置与尺寸。
+///
+/// **每次启动都应用**：项目目前没有浮层尺寸持久化（没有 window-state 插件），
+/// 也就没有「用户调过的尺寸」可尊重；按当前主显示器重算反而是对的——
+/// 换了外接屏或改了分辨率后，写到配置里的旧坐标会把浮层丢到屏幕外。
+///
+/// 失败只记日志：浮层摆歪不该让应用起不来，配置里的默认尺寸仍然可用。
+fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
+    let monitor = match window.primary_monitor() {
+        Ok(Some(monitor)) => monitor,
+        Ok(None) => {
+            tracing::warn!("取不到主显示器，浮层沿用配置里的默认尺寸");
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "读取主显示器失败，浮层沿用配置里的默认尺寸");
+            return;
+        }
+    };
+    let area = monitor.work_area();
+    let (size, position) = overlay_default_geometry(
+        (
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        ),
+        monitor.scale_factor(),
+    );
+    if let Err(error) = window.set_size(size) {
+        tracing::warn!(%error, width = size.width, height = size.height, "设置浮层尺寸失败");
+    }
+    if let Err(error) = window.set_position(position) {
+        tracing::warn!(%error, x = position.x, y = position.y, "设置浮层位置失败");
+    }
+    tracing::info!(
+        width = size.width,
+        height = size.height,
+        x = position.x,
+        y = position.y,
+        scale = monitor.scale_factor(),
+        "浮层默认尺寸与位置已应用（可用区域的 1/3，水平居中、贴顶）"
+    );
+}
+
 impl AppState {
     fn new(data_dir: &std::path::Path) -> Result<Self, String> {
         std::fs::create_dir_all(data_dir).map_err(|error| format!("创建数据目录失败：{error}"))?;
@@ -405,6 +502,10 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
     tray?;
     match app.get_webview_window("overlay") {
         Some(window) => {
+            // 默认尺寸/位置按主显示器算：高度 = 可用高度的 1/3，宽度 = 可用宽度的
+            // 1/3（不小于 420 逻辑像素），水平居中、贴屏幕顶部。必须在窗口已经
+            // 创建出来之后做（setup 阶段窗口由 tauri.conf.json 静态创建）。
+            apply_overlay_default_geometry(&window);
             // 浮层默认不进入屏幕捕获：腾讯会议 / 钉钉 / OBS 这类共享屏幕时，
             // 面试官看到的是桌面，看不到浮层与答案。
             // 底层是 Windows 的 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)
@@ -519,6 +620,70 @@ fn handle_pressed_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) {
         // 同一个命令），失败只提示不弹窗。
         if let Err(error) = commands::start_capture(app.clone()) {
             session::emit_notice(app, "error", format!("截图问答启动失败：{error}"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 1080p（工作区 1920×1040、任务栏 40px、100% 缩放）：
+    /// 高度 = 1040/3 = 346，宽度 = 1920/3 = 640（落在 420–900 之间），
+    /// 水平居中 x = (1920-640)/2 = 640，垂直贴工作区上沿 y = 0。
+    #[test]
+    fn overlay_geometry_uses_third_of_work_area_on_1080p() {
+        let (size, position) = overlay_default_geometry((0, 0, 1920, 1040), 1.0);
+        assert_eq!(size.width, 640);
+        assert_eq!(size.height, 346);
+        assert_eq!(position.x, 640);
+        assert_eq!(position.y, 0);
+    }
+
+    /// 竖直方向上「贴顶」用的是**工作区**原点：任务栏在顶部时原点 y 不是 0，
+    /// 浮层必须从工作区上沿开始，否则会被任务栏压住。
+    #[test]
+    fn overlay_geometry_anchors_to_work_area_origin() {
+        let (_, position) = overlay_default_geometry((0, 48, 1920, 1032), 1.0);
+        assert_eq!(position.y, 48, "任务栏在顶部时贴的是工作区上沿");
+    }
+
+    /// 宽度下限按逻辑像素给：1366×768 @150% 时可用宽度 1366/3 ≈ 455，
+    /// 但 420 逻辑像素 × 1.5 = 630 物理像素，必须抬到 630。
+    #[test]
+    fn overlay_width_respects_minimum_in_logical_pixels() {
+        let (size, _) = overlay_default_geometry((0, 0, 1366, 728), 1.5);
+        assert_eq!(size.width, 630);
+        assert_eq!(size.height, 242);
+    }
+
+    /// 超宽屏（3440×1400）：1/3 = 1146 超过 900 上限，按上限收窄；
+    /// 水平居中仍然相对可用区域算。
+    #[test]
+    fn overlay_width_is_capped_on_ultrawide_monitors() {
+        let (size, position) = overlay_default_geometry((0, 0, 3440, 1400), 1.0);
+        assert_eq!(size.width, 900);
+        assert_eq!(size.height, 466);
+        assert_eq!(position.x, (3440 - 900) / 2);
+    }
+
+    /// 极小屏（800×600）：1/3 = 266 低于下限 420，但屏幕只有 800 宽，
+    /// 允许取 420（仍小于屏幕宽度）；高度 200 保持 1/3。
+    #[test]
+    fn overlay_geometry_handles_small_screens() {
+        let (size, position) = overlay_default_geometry((0, 0, 800, 600), 1.0);
+        assert_eq!(size.width, 420);
+        assert_eq!(size.height, 200);
+        assert_eq!(position.x, (800 - 420) / 2);
+    }
+
+    /// 脏缩放比（0 / 负数 / NaN / 无穷）按 100% 处理，不能算出 0 宽窗口。
+    #[test]
+    fn overlay_geometry_falls_back_on_invalid_scale_factor() {
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let (size, _) = overlay_default_geometry((0, 0, 1920, 1040), scale);
+            assert_eq!(size.width, 640, "缩放比 {scale} 应按 100% 处理");
+            assert_eq!(size.height, 346);
         }
     }
 }
