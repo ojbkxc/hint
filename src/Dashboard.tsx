@@ -65,7 +65,14 @@ const SECTION_LABEL: Record<SectionId, string> = {
   save: "保存与日志",
 };
 
-type Banner = { level: "info" | "error"; message: string };
+/**
+ * 顶部提示条。
+ *
+ * `sticky` 表示**不自动消失**：需要用户动手处理的告警（例如配置文件损坏、
+ * 简历与项目资料被重置）必须留到他看见并关闭为止——10 秒后自己消失的提示，
+ * 对「你的数据没了」这种事实毫无用处。
+ */
+type Banner = { level: "info" | "error"; message: string; sticky?: boolean };
 
 export default function Dashboard() {
   const [tab, setTab] = useState<Tab>("settings");
@@ -103,6 +110,7 @@ export default function Dashboard() {
       if (typeof result.data !== "string" || !result.data) return;
       setBanner({
         level: "error",
+        sticky: true,
         message: `配置文件损坏，已回退默认设置；原文件已备份为「${result.data}」。简历与项目资料需要重新填写。`,
       });
     })();
@@ -138,6 +146,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!banner) return;
+    // sticky 的提示不排自动关闭：需要用户动手处理的告警（配置损坏、数据被重置）
+    // 不能 10 秒后自己消失——那等于没提示。
+    if (banner.sticky) return;
     const timer = window.setTimeout(
       () => setBanner(null),
       banner.level === "error" ? 10000 : 6000,
