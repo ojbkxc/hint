@@ -311,6 +311,41 @@ hint/
 
 CI 使用 `x86_64-pc-windows-msvc` 工具链，产出 `hint.exe` 与 NSIS 安装包。
 
+### 语音识别自检（`scripts/verify-stt.ps1`）
+
+验证「TTS 合成语音 → voice worker → 识别结果」这条链路是否正常，也用来确认改动没破坏识别：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-stt.ps1
+```
+
+它会合成三句中文（含中英混说）喂给 worker，比对识别结果并给出 PASS/FAIL。
+`-DumpDir <目录>` 可保留合成音频便于人工试听。
+
+**这个脚本存在的理由（踩过的坑）**：
+
+中文文本**不能**通过 stdin 传给 PowerShell。同一个字符串：
+
+| 传法 | 合成出的音频 | 识别结果 |
+|---|---|---|
+| 内嵌在命令里 | 正确 | 「大家好，我是候选人。」 |
+| 从 stdin 传 | **完全不同**（与正确音频相关系数 -0.0000） | 一串乱码 |
+
+原因是 UTF-8 字节被按 GBK 解释。这个假象曾让人误判「产品中文识别坏了」，
+在模型、VAD、重采样、噪声门、音效、采样率上白查十几轮——实际全是脚本自己的锅。
+脚本把中文写死在代码里，就是为了不再重犯。
+
+另外两个脚本内已处理的细节：
+
+- **WAV 头必须是规范 44 字节**：`System.Speech` 写出的头带额外 chunk，
+  worker 会拒收（`audio is not a canonical 44-byte-header WAV file`），
+  脚本里做了规范化。
+- **worker 的生命周期绑定 stdin EOF**：启动时 stdin 必须保持打开，
+  否则它启动后立刻退出，客户端看到的是「connection reset」。
+
+合成音频通过**不代表**真实采集通过：真实麦克风 / WASAPI loopback 是另一条路径，
+那要用 `HINT_DUMP_STT` 抓真实音频再分析。
+
 本地构建需要：
 
 1. Visual Studio Build Tools 2022（C++ 桌面开发工作负载）或等价的 MSVC 链接器
