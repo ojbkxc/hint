@@ -1,6 +1,6 @@
 [package]
 name = "hint-stt"
-version = "1.1.21"
+version = "1.1.22"
 edition = "2024"
 description = "hint 的本地语音识别：模型下载、sidecar worker、SenseVoice 推理"
 license = "MIT"
