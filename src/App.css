@@ -1448,6 +1448,38 @@ button.preset.active {
  * - 不使用 backdrop-filter：透明窗口上它采样不到桌面内容，
  *   且在部分 WebView2 版本上会触发整窗合成异常。
  */
+/* 渲染异常兜底：宁可显示一句人话，也不能让界面变一片空白。 */
+.crash-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  font-size: var(--font-sm, 12px);
+  color: var(--text, #14161a);
+  background: rgba(255, 245, 245, 0.96);
+  border: 1px solid rgba(200, 60, 60, 0.35);
+  border-radius: var(--radius-card, 10px);
+}
+
+.crash-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.crash-detail {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--text-muted, #555);
+}
+
+.crash-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .overlay-root {
   height: 100vh;
   display: flex;

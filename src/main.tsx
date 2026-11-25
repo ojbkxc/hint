@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import CaptureOverlay from "./CaptureOverlay";
+import ErrorBoundary from "./ErrorBoundary";
 import Dashboard from "./Dashboard";
 import Overlay from "./Overlay";
 import "./App.css";
@@ -22,9 +23,24 @@ function currentLabel(): string {
 const label = currentLabel();
 
 function Root() {
-  if (label === "overlay") return <Overlay />;
-  if (label === "capture") return <CaptureOverlay />;
-  return <Dashboard />;
+  // 每个窗口各自包一层：一个窗口崩了不该影响另一个，且要能提示「出了什么事」。
+  if (label === "overlay")
+    return (
+      <ErrorBoundary surface="overlay">
+        <Overlay />
+      </ErrorBoundary>
+    );
+  if (label === "capture")
+    return (
+      <ErrorBoundary surface="capture">
+        <CaptureOverlay />
+      </ErrorBoundary>
+    );
+  return (
+    <ErrorBoundary surface="dashboard">
+      <Dashboard />
+    </ErrorBoundary>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
