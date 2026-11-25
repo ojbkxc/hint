@@ -195,15 +195,18 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
     );
 }
 
-/// 按用户上次调整的位置/大小恢复浮层（逻辑像素 → 物理像素）。
+/// 按用户上次调整的位置/大小恢复浮层。
 ///
 /// 返回 `true` 表示已恢复；`false` 表示没有可用记录，调用方应回退到默认几何。
+///
+/// **单位**：配置里存的是逻辑像素，恢复时用 `LogicalSize` / `LogicalPosition`
+/// 交给 tauri 换算。
 ///
 /// 校验分两层：
 /// 1. `is_sane()` 挡掉 NaN / 非正尺寸；
 /// 2. **与当前显示器工作区求交**——换过显示器、拔掉副屏、改过分辨率之后，
 ///    上次的坐标可能整个落在屏幕外，那时用户既看不见浮层也拖不回来。
-///    完全不相交就当作没有记录，回到默认几何。
+///    交集不足 1/3 就当作没有记录，回到默认几何。
 fn apply_saved_overlay_geometry(
     window: &tauri::WebviewWindow,
     bounds: hint_core::OverlayBounds,
@@ -218,43 +221,47 @@ fn apply_saved_overlay_geometry(
     };
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
-    // 逻辑 → 物理。
-    let x = (bounds.x * scale).round() as i32;
-    let y = (bounds.y * scale).round() as i32;
-    let width = (bounds.width * scale).round() as u32;
-    let height = (bounds.height * scale).round() as u32;
-
-    // 与工作区求交：至少要有 1/3 的窗口面积落在屏幕内才恢复，否则回到默认位置。
-    let left = area.position.x;
-    let top = area.position.y;
-    let right = left + area.size.width as i32;
-    let bottom = top + area.size.height as i32;
-    let overlap_w = (x + width as i32).min(right) - x.max(left);
-    let overlap_h = (y + height as i32).min(bottom) - y.max(top);
-    let visible = overlap_w.max(0) as u64 * overlap_h.max(0) as u64;
-    let total = width as u64 * height as u64;
-    if total == 0 || visible * 3 < total {
+    // 求交在工作区坐标系里做：工作区是物理像素，所以把逻辑值换算过去比较。
+    let x_phys = bounds.x * scale;
+    let y_phys = bounds.y * scale;
+    let w_phys = bounds.width * scale;
+    let h_phys = bounds.height * scale;
+    let left = f64::from(area.position.x);
+    let top = f64::from(area.position.y);
+    let right = left + f64::from(area.size.width);
+    let bottom = top + f64::from(area.size.height);
+    let overlap_w = (x_phys + w_phys).min(right) - x_phys.max(left);
+    let overlap_h = (y_phys + h_phys).min(bottom) - y_phys.max(top);
+    let visible = overlap_w.max(0.0) * overlap_h.max(0.0);
+    let total = w_phys * h_phys;
+    if total <= 0.0 || visible * 3.0 < total {
         tracing::info!(
-            x,
-            y,
-            width,
-            height,
-            visible,
-            total,
+            x = bounds.x,
+            y = bounds.y,
+            width = bounds.width,
+            height = bounds.height,
             "上次的浮层位置几乎不在屏幕内，改用默认几何"
         );
         return false;
     }
 
-    if let Err(error) = window.set_size(tauri::PhysicalSize::new(width, height)) {
+    // 用 Logical*：给逻辑值，换算由框架负责（见函数注释里的单位说明）。
+    if let Err(error) = window.set_size(tauri::LogicalSize::new(bounds.width, bounds.height)) {
         tracing::warn!(%error, "恢复浮层尺寸失败");
         return false;
     }
-    if let Err(error) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
+    if let Err(error) = window.set_position(tauri::LogicalPosition::new(bounds.x, bounds.y)) {
         tracing::warn!(%error, "恢复浮层位置失败");
         return false;
     }
-    tracing::info!(x, y, width, height, scale, "已恢复上次的浮层位置与大小");
+    tracing::info!(
+        x = bounds.x,
+        y = bounds.y,
+        width = bounds.width,
+        height = bounds.height,
+        scale,
+        "已恢复上次的浮层位置与大小（逻辑像素）"
+    );
     true
 }
 
@@ -278,25 +285,29 @@ fn schedule_overlay_bounds_save(app: tauri::AppHandle, state: &AppState) {
         let Some(window) = app.get_webview_window("overlay") else {
             return;
         };
-        let (Ok(size), Ok(position), Ok(scale)) = (
-            window.inner_size(),
-            window.outer_position(),
-            window.scale_factor(),
-        ) else {
+        // 直接用 tauri 返回的值，**不除 scale**。
+        //
+        // 踩过的坑：`outer_position()` / `inner_size()` 的返回类型写着
+        // `PhysicalPosition` / `PhysicalSize`，但实测给的是**逻辑像素**
+        // （Win32 物理宽 750、dpr 1.25 时它返回 938）。按「物理」再去除一次
+        // scale，存进配置的值就偏小，恢复时窗口会明显缩小——而日志里打的是
+        // 自己算的值，看起来「设了」实际上没对上。
+        //
+        // 现在统一按逻辑值处理，恢复时用 `LogicalSize` / `LogicalPosition`。
+        let (Ok(size), Ok(position)) = (window.inner_size(), window.outer_position()) else {
             return;
         };
-        if size.width == 0 || size.height == 0 || scale <= 0.0 {
+        if size.width == 0 || size.height == 0 {
             return;
         }
         let Some(state) = app.try_state::<AppState>() else {
             return;
         };
-        // 物理 → 逻辑：跨显示器（不同缩放比）时逻辑尺寸才稳定。
         let bounds = hint_core::OverlayBounds {
-            x: f64::from(position.x) / scale,
-            y: f64::from(position.y) / scale,
-            width: f64::from(size.width) / scale,
-            height: f64::from(size.height) / scale,
+            x: f64::from(position.x),
+            y: f64::from(position.y),
+            width: f64::from(size.width),
+            height: f64::from(size.height),
         };
         let mut settings = Settings::load(&state.settings_path);
         // 与上次相同就不写盘（避免无意义的 IO 与文件时间戳变化）。
