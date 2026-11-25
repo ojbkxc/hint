@@ -1176,12 +1176,13 @@ pub(crate) fn ask_question(app: &AppHandle, question: &str) -> Result<(), String
     if normalize_for_dedup(&text).is_empty() {
         return Err("问题里没有可识别的文字内容，请重新输入。".to_string());
     }
-    // 与 regenerate 一致：先取消当前流并清掉积压，让这次手输的问题优先作答。
-    if let Some(flag) = lock(&shared.answer_cancel).as_ref() {
-        flag.store(true, Ordering::SeqCst);
-    }
-    lock(&shared.answers).clear();
-    enqueue_question(app, &shared, text, None, true);
+    // 不取消当前流、不清空积压：手输的问题是**新增一个问题**，应当进 FIFO 队列
+    // 按顺序作答——这是产品对「连续多问」的承诺（浮层要显示「排队 N」）。
+    //
+    // 之前这里照抄了 `regenerate` 的「取消并清空」逻辑，实测连发 3 个问题只会
+    // 回答最后一个（前两个被 clear 掉），排队提示永远不出现。
+    // 需要「打断并优先作答」语义的是 `regenerate`（Ctrl+Shift+A），不是这里。
+    enqueue_question(app, &shared, text, None, false);
     Ok(())
 }
 
