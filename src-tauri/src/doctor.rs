@@ -129,7 +129,12 @@ pub(crate) fn collect(app_data_dir: &Path) -> String {
 
     // —— 配置与凭据 ——
     let settings_path = app_data_dir.join("settings.json");
-    let settings = hint_core::settings::Settings::load(&settings_path);
+    // 用 load_reporting 而不是 load：`load` 在配置损坏时会**静默**把文件改名成
+    // `.json.bad` 并回退默认值，诊断报告里就只剩「协议：openai / Base URL：未填写」
+    // ——看起来像用户没配过，实际是他填的简历、项目、接口全被重置了。
+    // 这类「报告本身看不出异常」的情况必须显式点出来。
+    let (settings, settings_corrupted) =
+        hint_core::settings::Settings::load_reporting(&settings_path);
     let _ = writeln!(out, "【配置】");
     let _ = writeln!(
         out,
@@ -137,10 +142,19 @@ pub(crate) fn collect(app_data_dir: &Path) -> String {
         settings_path.display(),
         if settings_path.exists() {
             ""
+        } else if settings_corrupted {
+            "（损坏，已备份为 settings.json.bad，当前是默认值）"
         } else {
             "（不存在，使用默认值）"
         }
     );
+    if settings_corrupted {
+        let _ = writeln!(
+            out,
+            "  [阻塞] 配置文件损坏，已回退默认值；简历与项目资料需重新填写（原文件已备份为 settings.json.bad）"
+        );
+        blocking += 1;
+    }
     let provider = settings.provider.as_str();
     let _ = writeln!(out, "  协议：{provider}");
     let has_key = hint_core::secret::has(provider);
