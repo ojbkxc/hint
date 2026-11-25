@@ -34,6 +34,38 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # 发布说明从 CHANGELOG.md 抽当前 tag 的小节，不再写在 workflow 里。
+      # 手写版的毛病有实数：v1.1.20、v1.1.21 两次发版，workflow 里的正文标题
+      # 都还停在「## 1.1.19 更新」——写死的内容没人记得跟着版本改。
+      # 抽不到就叫它失败，而且放在构建之前：宁可 5 秒就红，
+      # 也不要构建完 6 分钟才发一份版本号对不上的说明。
+      - name: 生成发布说明（从 CHANGELOG.md 抽当前版本小节）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $lines = @(Get-Content CHANGELOG.md -Encoding UTF8)
+          $head = '^##\s*\[' + [regex]::Escape($version) + '\]'
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $head) { $start = $i; break }
+          }
+          if ($start -lt 0) { throw "CHANGELOG.md 里没有 [$version] 小节（tag=$tag），先补更新日志再发版" }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s*\[') { $end = $i; break }
+          }
+          $section = ($lines[$start..($end - 1)] -join "`n").TrimEnd()
+          $header = "hint 面试实时提词器（Windows 10/11 x64）`n`n"
+          $footer = "`n`n完整更新日志见 [CHANGELOG.md](https://github.com/ojbkxc/hint/blob/main/CHANGELOG.md)。"
+          $text = $header + $section + $footer
+          $out = Join-Path $PWD '.release-notes.md'
+          [System.IO.File]::WriteAllText($out, $text, (New-Object System.Text.UTF8Encoding $false))
+          $size = (Get-Item $out).Length
+          Write-Host "已生成发布说明：版本 $version，$size bytes"
+          if ($size -lt 100) { throw "发布说明过短（$size bytes），抽取可能失败" }
+
       - name: 安装 Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -91,30 +123,8 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: hint ${{ github.event.inputs.tag || github.ref_name }}
-          body: |
-            hint 面试实时提词器（Windows 10/11 x64）
-
-            ## 1.1.21 更新
-
-            ### 修复：手动提问连发多个时只回答最后一个
-
-            在浮层输入框连着问三个问题，以前**只有最后一个会被回答**，前面输入的全丢了，
-            「排队 N」提示也从不出现。
-
-            原因是手动提问照抄了「重新生成」的处理方式——先把积压的问题清空再入队。
-            「重新生成」需要这个语义（不要旧的了，现在就要最新问题的答案），但手动提问只是
-            **新增一个问题**，清空队列会把刚输入的问题一起丢掉。
-
-            现在手输的问题和其它问题一样按顺序排队，浮层会正常显示「排队 N」。
-
-            实测对比：
-
-            ```
-            修复前：问第三个问题 | pending=（空） | 历史 0 条
-            修复后：问第二个问题 | pending=排队 1 | 历史 1 条
-                    问第三个问题 | pending=（空） | 历史 2 条
-            ```
-          # 不用自动生成的 commit 列表：介绍只保留手写的最新版本内容，避免冗长。
+          body_path: .release-notes.md
+          # 不用自动生成的 commit 列表：正文是 CHANGELOG 里当前版本的小节，已经够详细。
           generate_release_notes: false
           fail_on_unmatched_files: true
           files: |
