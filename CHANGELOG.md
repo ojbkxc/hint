@@ -4,6 +4,44 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.17] - 2026-11-25
+
+### 新增：`scripts/verify-stt.ps1` 语音识别自检工具
+
+合成三句中文（含中英混说）喂给 voice worker，比对识别结果给 PASS/FAIL：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-stt.ps1
+```
+
+**为什么做成工具而不是写文档**：上一轮查出我历轮「中文识别乱码」的判断全是测试
+脚本的锅——中文经 stdin 传给 PowerShell 时 UTF-8 被按 GBK 解释，合成出的音频与
+目标文本毫无关系（相关系数 -0.0000）。这个假象让人在模型、VAD、重采样、噪声门、
+音效、采样率上白查十几轮。写文档记不住，做成一条命令才会被用起来。
+
+工具里固化三个坑：
+
+1. **中文必须内嵌，不能走 stdin**（上面那条）；
+2. **WAV 头必须是规范 44 字节**：`System.Speech` 写出的头带额外 chunk，worker 拒收
+   （`audio is not a canonical 44-byte-header WAV file`），脚本自己解析 RIFF 后重写；
+3. **worker 生命周期绑定 stdin EOF**：启动时 stdin 必须保持打开，否则它启动即退出，
+   客户端只看到「connection reset」。
+
+HTTP 请求用 `curl.exe` 而非 .NET `HttpWebRequest`：后者会被 worker 关闭连接。
+
+实测结果：
+
+```
+PASS  zh-short   -> 大家好，我是候选人。
+PASS  zh-long    -> 我在上一个项目里负责自动化测试工作。
+PASS  zh-mixed   -> 主要使用playwright和pyython做接口测试。
+=== 结果：3 通过 / 0 失败 ===
+```
+
+边界：合成音频通过**不代表**真实采集通过，后者要用 `HINT_DUMP_STT` 抓真实音频。
+
+532 用例全绿、tsc 0 错、eslint 0/0。
+
 ## [1.1.16] - 2026-11-25
 
 ### 修复：采集链路加去直流高通

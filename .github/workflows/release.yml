@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 tag（例如 v1.1.16）；手动补发时填写"
+        description: "已存在的 tag（例如 v1.1.17）；手动补发时填写"
         required: true
         type: string
 
@@ -85,7 +85,21 @@ jobs:
           body: |
             hint 面试实时提词器（Windows 10/11 x64）
 
-            ## 1.1.16 更新
+            ## 1.1.17 更新
+
+            ### 新增：语音识别自检工具
+
+            仓库里加了 `scripts/verify-stt.ps1`：合成三句中文（含中英混说）喂给识别引擎，比对结果给 PASS/FAIL。想确认「识别到底正不正常」时跑一条命令即可，不用再靠猜。
+
+            顺带把三个踩过的坑固化进脚本：
+
+            - **中文不能经 stdin 传给 PowerShell**——UTF-8 字节会被按 GBK 解释，合成出的音频与目标文本毫无关系。这个假象曾让人误判「中文识别坏了」，白查十几轮。
+            - **WAV 头必须是规范 44 字节**，`System.Speech` 写出的头会被拒收，脚本自己做规范化。
+            - **worker 的生命周期绑定 stdin EOF**，启动时 stdin 必须保持打开。
+
+            实测三句全部识别正确，包括「主要使用 playwright 和 pyython 做接口测试」。
+
+            ## 1.1.16 更新（历史）
 
             ### 修复：采集链路加去直流，避免设备偏置污染电平与识别
 
@@ -461,7 +475,7 @@ jobs:
 
             ## 安装方式
 
-            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.1.16_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
+            1. 下载下方附件中的 NSIS 安装包（形如 `hint_1.1.17_x64-setup.exe`）并运行，按向导完成安装（当前用户安装，无需管理员权限）。
             2. 启动 hint，在设置页选择协议、填写 Base URL 与模型名、粘贴 API Key，点「测试连接」确认可用后点底部「保存全部配置」。
             3. 热键：`Ctrl+Shift+H` 显示/隐藏浮层，`Ctrl+Shift+R` 开始/结束面试，`Ctrl+Shift+A` 对最新问题重新生成，`Ctrl+Shift+S` 截图问答（尚未启用），`Esc` 隐藏浮层。
 
