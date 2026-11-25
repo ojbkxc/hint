@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { safeInvoke } from "./lib/tauri";
 
 type Props = {
   children: ReactNode;
@@ -42,7 +43,9 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   private hideOverlay = async () => {
     try {
-      const { safeInvoke } = await import("./lib/tauri");
+      // 静态导入即可：tauri.ts 不导入本模块，没有循环依赖。
+      // （曾用 await import() 想按需加载，但 tauri.ts 本身被多处静态导入，
+      //   Vite 会报 INEFFECTIVE_DYNAMIC_IMPORT：拆不出 chunk，纯属噪声。）
       await safeInvoke("hide_overlay");
     } catch {
       // 隐藏失败也不能再抛：这里已经在异常路径上。
