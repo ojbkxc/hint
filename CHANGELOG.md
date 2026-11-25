@@ -4,6 +4,36 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.19] - 2026-11-25
+
+### 修复：导出 Markdown 之前其实没存下文件
+
+「导出 Markdown」原实现是浏览器 Blob 下载（`a.download` + `URL.createObjectURL`）。
+真机验证：
+
+- CDP 上 `Browser.downloadWillBegin` → `downloadProgress: completed`，文件名 `36.md`
+- 界面提示「已导出 Markdown 文件」
+- 但 `36.md` 在**用户下载目录、AppData、LocalAppData、Temp 全都不存在**
+
+即：界面说成功，实际什么都没存。用户以为导出好了，回头找不到文件。
+
+**改法**：
+
+1. 新增命令 `export_session_file(id, path)`：导出内容仍由 `hint-store` 生成（不经过
+   前端），直接原子写入用户选的路径——先写 `.tmp-export` 再 `rename`；rename 失败
+   （目标被占用）则退回直接写，不丢内容。
+2. 前端改用 `@tauri-apps/plugin-dialog` 的 `save()` 拿路径，再调上面的命令。
+3. 用户取消保存对话框 → 不提示成功、也不报错。
+
+**顺带清掉死代码**：`normalizeMarkdown` 与 `downloadMarkdown` 只有旧导出路径在用，
+一并删除；`types.ts` 里不再需要的 `textValue` import 也去掉（`textValue` 在 `data.ts`
+有独立测试，保留）。
+
+**测试**：导出相关用例重写 4 条 + 新增 2 条，覆盖新流程——选路径写盘、用户取消不提示、
+写盘失败显示原因、对话框报错可读、无选中会话不弹框。
+
+533 用例全绿、tsc 0 错、eslint 0/0。
+
 ## [1.1.18] - 2026-11-25
 
 ### 改文案：界面上的「面试官」统一改为「提问」
