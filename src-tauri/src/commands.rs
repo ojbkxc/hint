@@ -45,6 +45,26 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     Ok(settings)
 }
 
+/// 启动时配置文件是否损坏过；损坏返回备份文件名，让前端能在首屏提示用户。
+///
+/// **为什么不用事件推**：`setup()` 里 `emit_notice` 发得太早——前端首屏的
+/// `listen` 还没注册，事件不缓存，直接丢。真机验证时就是这样：日志里有了
+/// 「配置文件损坏」，界面上却什么都没有。改成前端首屏主动 `invoke` 拉，
+/// 就不存在时序问题。
+#[tauri::command]
+pub fn config_corruption_notice(state: State<'_, AppState>) -> Option<String> {
+    if !state.settings_corrupted {
+        return None;
+    }
+    let backup = state
+        .settings_path
+        .with_extension("json.bad")
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "settings.json.bad".to_string());
+    Some(backup)
+}
+
 #[tauri::command(async)]
 pub fn save_settings(
     app: AppHandle,

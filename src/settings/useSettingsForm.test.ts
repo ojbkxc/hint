@@ -774,3 +774,34 @@ describe("useSettingsForm —— loadDevices", () => {
     expect(devices.error).toBe("音频服务未启动");
   });
 });
+
+describe("useSettingsForm —— 配置文件损坏提示", () => {
+  it("后端报告配置损坏时把备份文件名带出来", async () => {
+    // 损坏意味着简历/项目/接口配置全部回到默认值，用户必须被告知。
+    // 用主动拉取而不是等事件：后端 setup 里发 notice 时前端 listen 还没注册，
+    // 事件不缓存会直接丢（真机验证时就是「日志有、界面没有」）。
+    route("config_corruption_notice", () => "settings.json.bad");
+    const { result } = await mount();
+
+    expect(result.current.settingsCorrupted).toBe("settings.json.bad");
+  });
+
+  it("没损坏时是空字符串（不误报）", async () => {
+    route("config_corruption_notice", () => null);
+    const { result } = await mount();
+
+    expect(result.current.settingsCorrupted).toBe("");
+  });
+
+  it("拉取损坏信息失败不影响配置加载", async () => {
+    route("config_corruption_notice", () => Promise.reject("boom"));
+    route("get_settings", () => ({ provider: "openai", model: "m1" }));
+    route("has_api_key", () => true);
+    const { result } = await mount();
+
+    // 主流程照样跑完：配置读到了、loaded 为 true。
+    expect(result.current.form.model).toBe("m1");
+    expect(result.current.settingsCorrupted).toBe("");
+    expect(result.current.loaded).toBe(true);
+  });
+});

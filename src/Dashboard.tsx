@@ -84,6 +84,19 @@ export default function Dashboard() {
   const model = useModelManager();
   const session = useSessionControl();
 
+  // 配置文件损坏：用 banner 明确告诉用户。
+  //
+  // 后端在 `AppState::new` 阶段就读配置（那时日志还没初始化），损坏的文件会被
+  // 改名成 `settings.json.bad` 并回退默认值——用户的简历、项目资料、接口配置
+  // **全部回到空**。不提示的话他只会在下次保存时发现"我填的东西没了"。
+  useEffect(() => {
+    if (!form.loaded || !form.settingsCorrupted) return;
+    setBanner({
+      level: "error",
+      message: `配置文件损坏，已回退默认设置；原文件已备份为「${form.settingsCorrupted}」。简历与项目资料需要重新填写。`,
+    });
+  }, [form.loaded, form.settingsCorrupted]);
+
   // 主窗口同样订阅后端提示：关闭窗口收进托盘等提示在浮层隐藏时只能在这里看到。
   useEffect(() => {
     let active = true;

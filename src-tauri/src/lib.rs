@@ -637,29 +637,17 @@ pub fn run() {
             }
             session::emit_status(app.handle(), "idle", "等待连接");
 
-            // 配置文件损坏的提示必须放在这里：`Settings::load` 在 `AppState::new`
-            // 阶段就要读配置，那时日志还没初始化（`logging::init` 就在上面几行），
-            // 它内部的 `warn!` 写不出去。用户实际遭遇的是「简历/项目/接口配置全部
-            // 回到默认」——必须明确告诉他已经备份到哪、原文件叫什么。
+            // 配置文件损坏：这里只记日志（日志与事件系统此时才就绪）。
+            //
+            // **不再在这里 emit_notice**：前端首屏的 listen 还没注册，事件不缓存，
+            // 直接丢——真机验证时就是这个现象：日志有了、界面什么都没有。
+            // 改由前端首屏主动 `invoke("config_corruption_notice")` 拉取。
             if let Some(state) = app.try_state::<AppState>()
                 && state.settings_corrupted
             {
                 tracing::warn!(
                     backup = %state.settings_path.with_extension("json.bad").display(),
                     "启动时配置文件损坏，已回退默认值"
-                );
-                session::emit_notice(
-                    app.handle(),
-                    "error",
-                    format!(
-                        "配置文件损坏，已回退默认设置；原文件已备份为「{}」。简历与项目资料需要重新填写。",
-                        state
-                            .settings_path
-                            .with_extension("json.bad")
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "settings.json.bad".to_string())
-                    ),
                 );
             }
             Ok(())
@@ -699,6 +687,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::config_corruption_notice,
             commands::save_settings,
             commands::save_api_key,
             commands::has_api_key,

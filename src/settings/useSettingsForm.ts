@@ -30,6 +30,13 @@ export function useSettingsForm() {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  /**
+   * 配置文件损坏时后端备份的文件名；`""` = 没损坏。
+   *
+   * 损坏意味着简历、项目资料、接口配置全部回到默认值——用户必须立刻知道，
+   * 否则只会发现「我填的东西没了」。
+   */
+  const [settingsCorrupted, setSettingsCorrupted] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<FormAction>("");
@@ -51,6 +58,16 @@ export function useSettingsForm() {
         setForm(normalizeSettings(settings.data));
       } else {
         setStatus(`读取配置失败：${settings.error}。已使用默认值。`);
+      }
+      // 配置文件损坏时后端已回退默认值（简历/项目/接口配置都回到空），
+      // 用户必须马上知道——否则只会发现"我填的东西没了"。
+      //
+      // 用主动拉取而不是等事件：后端 setup 里发 notice 时，这里的 listen 还没
+      // 注册，事件不缓存会直接丢（真机验证时就是这个现象：日志有、界面没有）。
+      const corruption = await safeInvoke<string>("config_corruption_notice");
+      if (disposed) return;
+      if (corruption.ok && typeof corruption.data === "string" && corruption.data) {
+        setSettingsCorrupted(corruption.data);
       }
       if (!disposed) setLoaded(true);
     })();
@@ -278,6 +295,7 @@ export function useSettingsForm() {
     setApiKey,
     keySaved,
     loaded,
+    settingsCorrupted,
     status,
     setStatus,
     busy,
