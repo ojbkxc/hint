@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ErrorBoundary from "./ErrorBoundary";
@@ -54,7 +54,12 @@ describe("ErrorBoundary —— 渲染异常兜底", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "隐藏浮层" }));
-    expect(backend.calls.some((c) => c.command === "hide_overlay")).toBe(true);
+    // 按钮走的是 `await import("./lib/tauri")` + safeInvoke 的异步链：
+    // click 返回时动态 import 还没结算完，直接断言会读到空的 calls。
+    // 这里只等异步链落地，判据（必须调用 hide_overlay）没有放宽。
+    await waitFor(() =>
+      expect(backend.calls.some((c) => c.command === "hide_overlay")).toBe(true),
+    );
   });
 
   it("设置页与选区窗口不给隐藏浮层按钮（不是它们的职责）", () => {
