@@ -1071,7 +1071,7 @@ mod tests {
         let history = vec![interviewer("聊聊你的项目"), me("我主要负责自动化测试。")];
         let prompt = build_user_prompt("这个项目的难点是什么", &history);
         assert!(prompt.contains("当前对话（最近 2 轮，按时间顺序）"));
-        assert!(prompt.contains("面试官：聊聊你的项目"));
+        assert!(prompt.contains("提问：聊聊你的项目"));
         assert!(prompt.contains("我：我主要负责自动化测试。"));
         assert!(prompt.contains("面试官刚刚问：这个项目的难点是什么"));
         assert!(prompt.contains("不要重复上一轮已说过的内容"));
