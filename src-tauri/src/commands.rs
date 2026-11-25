@@ -100,6 +100,27 @@ pub fn save_settings(
         session::EVT_OVERLAY_FONT_SCALE,
         json!({ "scale": font_scale }),
     );
+
+    // 内容保护（`WDA_EXCLUDEFROMCAPTURE`）必须在这里真正应用到窗口。
+    //
+    // 之前它只在启动时的 setup 里应用一次，保存时不生效也不报错——用户改完
+    // 开关点保存，界面显示已保存、文件也写了，但共享屏幕时行为没变，只能
+    // 重启才发现。`set_overlay_content_protected` 命令当时只有注册、零调用点。
+    //
+    // 失败不阻断保存：设置已经落盘，这里失败只记日志（窗口可能还没创建）。
+    if let Ok(window) = overlay_window(&app) {
+        match window.set_content_protected(settings.overlay_content_protected) {
+            Ok(()) => tracing::info!(
+                protected = settings.overlay_content_protected,
+                "保存后应用浮层内容保护"
+            ),
+            Err(error) => tracing::warn!(
+                %error,
+                protected = settings.overlay_content_protected,
+                "保存后应用浮层内容保护失败（设置已落盘）"
+            ),
+        }
+    }
     // 内容保护随保存立即生效：用户刚在设置里关掉/打开，不该等到下次启动。
     // 失败只记日志——它是「共享时不泄露」的加固，不该让整次保存失败。
     if let Some(window) = app.get_webview_window("overlay")
