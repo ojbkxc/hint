@@ -1936,6 +1936,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tracing",
  "tracing-subscriber",
+ "windows",
  "zip",
 ]
 
