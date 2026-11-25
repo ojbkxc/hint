@@ -14,10 +14,19 @@ on:
 permissions:
   contents: write
 
+# 发布**不能**取消在跑的作业：里面含「创建 Release + 上传安装包」，
+# 中途被杀会留下半个 Release（tag 已在、资产缺失），比慢更糟。
+# 同一 tag 重复触发时串行排队即可。
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: 构建并发布 Windows 安装包
     runs-on: windows-latest
+    # 正常 12 分钟、冷缓存约 26 分钟。给「真挂住」兜底，不靠 GitHub 默认的 360 分钟。
+    timeout-minutes: 45
     steps:
       - name: 检出代码
         uses: actions/checkout@v4

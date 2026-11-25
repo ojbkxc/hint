@@ -6,10 +6,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支 / 同一 PR 只保留最新一次运行。
+# 连续 push 时取消上一次还在跑的作业：windows-latest 正常 11~15 分钟，
+# 连推三次就会堆三个作业互相抢并发额度，界面上表现为「一直在排队 / 编译卡住」。
+# pull_request 事件按 PR 号分组，不同 PR 之间不会互相取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: 前端检查与核心库编译
     runs-on: windows-latest
+    # 正常 11 分钟、冷缓存约 26 分钟。上限不是性能设置，是给「真挂住」兜底：
+    # 不设的话作业要挂到 GitHub 默认的 360 分钟才会被杀，那才是真正的卡死。
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +74,9 @@ jobs:
         run: cargo test --locked -p hint-stt --no-default-features
 
       - name: 语音推理引擎编译（sherpa-onnx 预编译库，需联网）
+        # build.rs 要联网下载预编译静态库。单独设上限：网络卡住时让它尽快失败
+        # 重跑，而不是把整个作业挂到总超时、让排队中的其它运行一直等着。
+        timeout-minutes: 20
         run: cargo check --locked -p hint-stt
 
       - name: Clippy（语音与壳层）
@@ -71,9 +85,19 @@ jobs:
       - name: Tauri 集成编译检查
         run: cargo check --locked -p hint --bins
 
+      # 两个审计工具改成下载上游自己发布的 Windows 预编译二进制。
+      # 原来 `cargo install cargo-deny --locked` 每次现场编译，实测这一步 3.4 分钟，
+      # 占测试作业 11 分钟里的 31%；而且编译要先从 crates.io 取依赖，那段网络一旦
+      # 卡住，界面上就是「这一步一直不结束」。预编译版约 5 秒。
+      # 下载源仍是上游 Release（rustsec/rustsec、EmbarkStudios/cargo-deny），
+      # 与 cargo install 同源同版本，不引入第三方重新构建的产物。
+      - name: 安装审计工具（cargo-audit / cargo-deny）
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
       - name: 依赖安全审计（cargo-audit）
         run: |
-          rustup component add cargo-audit 2>$null || cargo install cargo-audit --locked || exit 0
           # RUSTSEC-2026-0592 (url) / 0594 (cookie)：tauri/wry 生态整体锁定的传递依赖。
           # url 的利用面是 Url::origin() 解析恶意 blob: URL（hint 不解析不可信 URL）；
           # cookie 的利用面是 fork 后 nonce 重复（hint 是桌面进程，不做 cookie 服务器）。
@@ -81,13 +105,13 @@ jobs:
           cargo audit --file Cargo.lock --ignore RUSTSEC-2026-0592 --ignore RUSTSEC-2026-0594
 
       - name: 许可证与依赖源检查（cargo-deny）
-        run: |
-          cargo install cargo-deny --locked
-          cargo deny --workspace check licenses bans sources
+        run: cargo deny --workspace check licenses bans sources
   build:
     name: 构建 Windows 安装包
     runs-on: windows-latest
     needs: test
+    # 正常 15 分钟、冷缓存约 26 分钟（Tauri 全量链接最重）。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
