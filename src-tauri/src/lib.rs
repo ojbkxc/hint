@@ -150,13 +150,16 @@ fn overlay_default_geometry(
     )
 }
 
-/// 把浮层摆到主显示器的默认位置与尺寸。
+/// 把浮层摆到主显示器的默认位置与尺寸（可用区域的 1/3、水平居中、贴顶）。
 ///
-/// **每次启动都应用**：项目目前没有浮层尺寸持久化（没有 window-state 插件），
-/// 也就没有「用户调过的尺寸」可尊重；按当前主显示器重算反而是对的——
-/// 换了外接屏或改了分辨率后，写到配置里的旧坐标会把浮层丢到屏幕外。
+/// **只在没有用户记录时调用**：用户拖动/改过大小之后走
+/// [`apply_saved_overlay_geometry`]；这里只在首次启动、记录不可用、
+/// 或记录已不在屏幕内时兜底。
 ///
-/// 失败只记日志：浮层摆歪不该让应用起不来，配置里的默认尺寸仍然可用。
+/// 用 Win32 `SetWindowPos` 摆（物理像素），与恢复路径同一套语义——
+/// tauri 的 `set_size` 在这台机器上会再乘一次 dpr，两侧不一致就永远对不齐。
+///
+/// 失败只记日志：浮层摆歪不该让应用起不来。
 fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
     let monitor = match window.primary_monitor() {
         Ok(Some(monitor)) => monitor,
@@ -179,11 +182,18 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
         ),
         monitor.scale_factor(),
     );
-    if let Err(error) = window.set_size(size) {
-        tracing::warn!(%error, width = size.width, height = size.height, "设置浮层尺寸失败");
-    }
-    if let Err(error) = window.set_position(position) {
-        tracing::warn!(%error, x = position.x, y = position.y, "设置浮层位置失败");
+    let bounds = hint_core::OverlayBounds {
+        x: f64::from(position.x),
+        y: f64::from(position.y),
+        width: f64::from(size.width),
+        height: f64::from(size.height),
+    };
+    if !set_overlay_physical_rect(window, bounds) {
+        tracing::warn!(
+            width = size.width,
+            height = size.height,
+            "设置浮层默认几何失败"
+        );
     }
     tracing::info!(
         width = size.width,
@@ -199,7 +209,8 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
 ///
 /// 返回 `true` 表示已恢复；`false` 表示没有可用记录，调用方应回退到默认几何。
 ///
-/// **单位**：配置里存的是逻辑像素，恢复时用 `LogicalSize` / `LogicalPosition`
+/// **单位**：配置里存的是**物理像素**（与 Win32 `GetWindowRect` 一致），恢复时
+/// 直接用 `SetWindowPos` 摆，不经过 tauri 的尺寸换算。
 /// 交给 tauri 换算。
 ///
 /// 校验分两层：
@@ -245,13 +256,10 @@ fn apply_saved_overlay_geometry(
         return false;
     }
 
-    // 用 Logical*：给逻辑值，换算由框架负责（见函数注释里的单位说明）。
-    if let Err(error) = window.set_size(tauri::LogicalSize::new(bounds.width, bounds.height)) {
-        tracing::warn!(%error, "恢复浮层尺寸失败");
-        return false;
-    }
-    if let Err(error) = window.set_position(tauri::LogicalPosition::new(bounds.x, bounds.y)) {
-        tracing::warn!(%error, "恢复浮层位置失败");
+    // 用 Win32 摆（物理像素）：与保存侧同一套语义，不经过 tauri 的换算。
+    let _ = scale; // 求交时已用过；这里只记录用
+    if !set_overlay_physical_rect(window, bounds) {
+        tracing::warn!("恢复浮层位置与大小失败");
         return false;
     }
     tracing::info!(
@@ -259,10 +267,85 @@ fn apply_saved_overlay_geometry(
         y = bounds.y,
         width = bounds.width,
         height = bounds.height,
-        scale,
-        "已恢复上次的浮层位置与大小（逻辑像素）"
+        "已恢复上次的浮层位置与大小（物理像素）"
     );
     true
+}
+
+/// 读窗口的位置与大小（**物理像素**，Win32 `GetWindowRect`）。
+///
+/// 为什么不用 tauri 的 `inner_size()` / `outer_position()`：真机实测这台机器上
+/// 它们返回的是**物理值再乘一次 dpr**（Win32 物理宽 750、dpr 1.25 时返回 938），
+/// 而 `set_size` 又把它除回去。读和写都带同一个偏差，看起来"能用"，但存进配置
+/// 的值跟真实几何对不上，换台 DPI 不同的机器就摆歪。
+/// 直接用 Win32 拿物理像素，语义唯一。
+#[cfg(windows)]
+fn overlay_physical_rect(window: &tauri::WebviewWindow) -> Option<hint_core::OverlayBounds> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let raw = window.hwnd().ok()?;
+    let handle = HWND(raw.0);
+    let mut rect = RECT::default();
+    // 失败返回非零 WIN32_ERROR；这里只关心成败。
+    if unsafe { GetWindowRect(handle, &mut rect) }.is_err() {
+        return None;
+    }
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    Some(hint_core::OverlayBounds {
+        x: f64::from(rect.left),
+        y: f64::from(rect.top),
+        width: f64::from(width),
+        height: f64::from(height),
+    })
+}
+
+#[cfg(not(windows))]
+fn overlay_physical_rect(_window: &tauri::WebviewWindow) -> Option<hint_core::OverlayBounds> {
+    None
+}
+
+/// 用 Win32 `SetWindowPos` 把窗口摆到指定**物理**位置与大小。
+#[cfg(windows)]
+fn set_overlay_physical_rect(
+    window: &tauri::WebviewWindow,
+    bounds: hint_core::OverlayBounds,
+) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos};
+
+    let Ok(raw) = window.hwnd() else {
+        return false;
+    };
+    let handle = HWND(raw.0);
+    let x = bounds.x.round() as i32;
+    let y = bounds.y.round() as i32;
+    let width = bounds.width.round() as i32;
+    let height = bounds.height.round() as i32;
+    unsafe {
+        SetWindowPos(
+            handle,
+            None,
+            x,
+            y,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    }
+    .is_ok()
+}
+
+#[cfg(not(windows))]
+fn set_overlay_physical_rect(
+    _window: &tauri::WebviewWindow,
+    _bounds: hint_core::OverlayBounds,
+) -> bool {
+    false
 }
 
 /// 浮层几何写盘前的静默窗口：拖动结束后等这么久再写。
@@ -285,29 +368,13 @@ fn schedule_overlay_bounds_save(app: tauri::AppHandle, state: &AppState) {
         let Some(window) = app.get_webview_window("overlay") else {
             return;
         };
-        // 直接用 tauri 返回的值，**不除 scale**。
-        //
-        // 踩过的坑：`outer_position()` / `inner_size()` 的返回类型写着
-        // `PhysicalPosition` / `PhysicalSize`，但实测给的是**逻辑像素**
-        // （Win32 物理宽 750、dpr 1.25 时它返回 938）。按「物理」再去除一次
-        // scale，存进配置的值就偏小，恢复时窗口会明显缩小——而日志里打的是
-        // 自己算的值，看起来「设了」实际上没对上。
-        //
-        // 现在统一按逻辑值处理，恢复时用 `LogicalSize` / `LogicalPosition`。
-        let (Ok(size), Ok(position)) = (window.inner_size(), window.outer_position()) else {
+        // 用 Win32 读物理像素（见 overlay_physical_rect 的说明：
+        // tauri 的 inner_size()/outer_position() 在这台机器上带 dpr 偏差）。
+        let Some(bounds) = overlay_physical_rect(&window) else {
             return;
         };
-        if size.width == 0 || size.height == 0 {
-            return;
-        }
         let Some(state) = app.try_state::<AppState>() else {
             return;
-        };
-        let bounds = hint_core::OverlayBounds {
-            x: f64::from(position.x),
-            y: f64::from(position.y),
-            width: f64::from(size.width),
-            height: f64::from(size.height),
         };
         let mut settings = Settings::load(&state.settings_path);
         // 与上次相同就不写盘（避免无意义的 IO 与文件时间戳变化）。
