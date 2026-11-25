@@ -82,6 +82,32 @@ impl ThemeKind {
     }
 }
 
+/// 浮层的位置与大小（**逻辑像素**）。
+///
+/// 存逻辑像素的理由：同一份配置可能在不同缩放比的显示器上启动，逻辑尺寸才能
+/// 保持用户当时的观感；物理像素换台机器就偏了。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl OverlayBounds {
+    /// 是否是一组可用的值（排除 NaN / 无穷 / 非正尺寸）。
+    ///
+    /// 手改配置文件、磁盘写坏、旧版本残留都可能塞进无效值；不校验的话会把浮层
+    /// 摆到屏幕外，用户既看不见也拖不回来。
+    pub fn is_sane(self) -> bool {
+        let finite = [self.x, self.y, self.width, self.height]
+            .iter()
+            .all(|v| v.is_finite());
+        finite && self.width >= 120.0 && self.height >= 80.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -134,6 +160,16 @@ pub struct Settings {
     /// 而这里缺失字段直接取默认值就是正确结果。
     #[serde(default)]
     pub theme: ThemeKind,
+    /// 用户调整过的浮层位置与大小（逻辑像素，`x, y, width, height`）。
+    ///
+    /// `None` = 用户没调整过，启动时按「屏幕可用区域的 1/3、水平居中、贴顶」算默认值。
+    /// 一旦用户拖过或改过大小就记下来，之后启动沿用——否则每次重启都把浮层摆回
+    /// 默认位置，用户白调一次。
+    ///
+    /// 存**逻辑像素**而不是物理像素：换到缩放比不同的显示器上，逻辑尺寸才对得上
+    /// 用户当时的观感。
+    #[serde(default)]
+    pub overlay_bounds: Option<OverlayBounds>,
     /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
     ///
     /// 装代理软件的用户不开这个连不上模型接口；但本地回环（IPC、STT worker）
@@ -244,6 +280,8 @@ impl Default for Settings {
             proxy_mode: crate::proxy::ProxyMode::System,
             proxy_url: String::new(),
             stt_language: default_stt_language(),
+            // 新建配置没有用户调整过的几何，按默认几何摆。
+            overlay_bounds: None,
             // 新建的配置已经是当前结构，不需要迁移。
             schema_version: SCHEMA_VERSION,
         }

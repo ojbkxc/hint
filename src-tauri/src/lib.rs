@@ -10,7 +10,7 @@ mod logging;
 mod session;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use hint_core::session::LifecycleQueue;
@@ -45,6 +45,11 @@ pub(crate) struct AppState {
     pub(crate) log_dir: PathBuf,
     /// 首次关闭主窗口的托盘提示只发一次。
     pub(crate) close_tip_shown: AtomicBool,
+    /// 浮层几何防抖的「代数」：拖动时每来一个事件 +1，睡醒后代数变了就跳过。
+    ///
+    /// 用 `Arc<AtomicU64>` 是因为要移进保存线程里比对；`AppState` 本身不能
+    /// 被线程捕获（它由 Tauri 托管）。
+    pub(crate) overlay_bounds_gen: Arc<AtomicU64>,
     /// 会话数据库；`hint_store::Store` 不是 `Sync`，统一用 `Mutex` 保护。
     pub(crate) store: Mutex<Store>,
     /// 语音模型管理器（内部状态全 `Arc` 共享，可克隆）。
@@ -190,6 +195,128 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
     );
 }
 
+/// 按用户上次调整的位置/大小恢复浮层（逻辑像素 → 物理像素）。
+///
+/// 返回 `true` 表示已恢复；`false` 表示没有可用记录，调用方应回退到默认几何。
+///
+/// 校验分两层：
+/// 1. `is_sane()` 挡掉 NaN / 非正尺寸；
+/// 2. **与当前显示器工作区求交**——换过显示器、拔掉副屏、改过分辨率之后，
+///    上次的坐标可能整个落在屏幕外，那时用户既看不见浮层也拖不回来。
+///    完全不相交就当作没有记录，回到默认几何。
+fn apply_saved_overlay_geometry(
+    window: &tauri::WebviewWindow,
+    bounds: hint_core::OverlayBounds,
+) -> bool {
+    if !bounds.is_sane() {
+        tracing::info!("配置里的浮层几何不可用，改用默认几何");
+        return false;
+    }
+    let Ok(Some(monitor)) = window.primary_monitor() else {
+        tracing::info!("取不到主显示器，跳过几何恢复");
+        return false;
+    };
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    // 逻辑 → 物理。
+    let x = (bounds.x * scale).round() as i32;
+    let y = (bounds.y * scale).round() as i32;
+    let width = (bounds.width * scale).round() as u32;
+    let height = (bounds.height * scale).round() as u32;
+
+    // 与工作区求交：至少要有 1/3 的窗口面积落在屏幕内才恢复，否则回到默认位置。
+    let left = area.position.x;
+    let top = area.position.y;
+    let right = left + area.size.width as i32;
+    let bottom = top + area.size.height as i32;
+    let overlap_w = (x + width as i32).min(right) - x.max(left);
+    let overlap_h = (y + height as i32).min(bottom) - y.max(top);
+    let visible = overlap_w.max(0) as u64 * overlap_h.max(0) as u64;
+    let total = width as u64 * height as u64;
+    if total == 0 || visible * 3 < total {
+        tracing::info!(
+            x,
+            y,
+            width,
+            height,
+            visible,
+            total,
+            "上次的浮层位置几乎不在屏幕内，改用默认几何"
+        );
+        return false;
+    }
+
+    if let Err(error) = window.set_size(tauri::PhysicalSize::new(width, height)) {
+        tracing::warn!(%error, "恢复浮层尺寸失败");
+        return false;
+    }
+    if let Err(error) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
+        tracing::warn!(%error, "恢复浮层位置失败");
+        return false;
+    }
+    tracing::info!(x, y, width, height, scale, "已恢复上次的浮层位置与大小");
+    true
+}
+
+/// 浮层几何写盘前的静默窗口：拖动结束后等这么久再写。
+const OVERLAY_BOUNDS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// 防抖保存浮层几何。
+///
+/// 实现：每次事件把 `pending` 计数 +1，然后起一个线程睡 [`OVERLAY_BOUNDS_DEBOUNCE`]；
+/// 醒来后如果计数没再变（说明用户停手了），才真正读窗口几何并写盘。计数变了就说明
+/// 还在拖，什么都不做——最后由最新那次线程负责保存。
+fn schedule_overlay_bounds_save(app: tauri::AppHandle, state: &AppState) {
+    let generation = state.overlay_bounds_gen.fetch_add(1, Ordering::AcqRel) + 1;
+    let generation_ref = state.overlay_bounds_gen.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(OVERLAY_BOUNDS_DEBOUNCE);
+        // 期间又有新事件 → 交给更新的那次线程处理。
+        if generation_ref.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let Some(window) = app.get_webview_window("overlay") else {
+            return;
+        };
+        let (Ok(size), Ok(position), Ok(scale)) = (
+            window.inner_size(),
+            window.outer_position(),
+            window.scale_factor(),
+        ) else {
+            return;
+        };
+        if size.width == 0 || size.height == 0 || scale <= 0.0 {
+            return;
+        }
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        // 物理 → 逻辑：跨显示器（不同缩放比）时逻辑尺寸才稳定。
+        let bounds = hint_core::OverlayBounds {
+            x: f64::from(position.x) / scale,
+            y: f64::from(position.y) / scale,
+            width: f64::from(size.width) / scale,
+            height: f64::from(size.height) / scale,
+        };
+        let mut settings = Settings::load(&state.settings_path);
+        // 与上次相同就不写盘（避免无意义的 IO 与文件时间戳变化）。
+        if settings.overlay_bounds == Some(bounds) {
+            return;
+        }
+        settings.overlay_bounds = Some(bounds);
+        match settings.save(&state.settings_path) {
+            Ok(()) => tracing::debug!(
+                x = bounds.x,
+                y = bounds.y,
+                w = bounds.width,
+                h = bounds.height,
+                "已记住浮层位置与大小"
+            ),
+            Err(error) => tracing::warn!(%error, "保存浮层几何失败"),
+        }
+    });
+}
+
 impl AppState {
     fn new(data_dir: &std::path::Path) -> Result<Self, String> {
         std::fs::create_dir_all(data_dir).map_err(|error| format!("创建数据目录失败：{error}"))?;
@@ -218,6 +345,7 @@ impl AppState {
             settings_path: data_dir.join("settings.json"),
             log_dir: data_dir.join("logs"),
             close_tip_shown: AtomicBool::new(false),
+            overlay_bounds_gen: Arc::new(AtomicU64::new(0)),
             store: Mutex::new(store),
             model: ModelManager::new(model_root(data_dir)),
             session: Mutex::new(None),
@@ -420,6 +548,20 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 记住用户对浮层的调整（拖动 / 改大小），下次启动沿用。
+            //
+            // 为什么在事件里做防抖：拖动时 Resized/Moved 每帧都会触发，直接写盘
+            // 会疯狂 IO。这里只在「最后一次变动之后 800ms」写一次。
+            if window.label() == "overlay"
+                && matches!(
+                    event,
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
+                )
+                && let Some(state) = window.try_state::<AppState>()
+            {
+                schedule_overlay_bounds_save(window.app_handle().clone(), &state);
+            }
+
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // 关闭窗口 = 收进托盘，不退出应用；所有窗口都拦，避免浮层 /
                 // 截图窗口被销毁后 `get_webview_window` 再也拿不到。
@@ -506,7 +648,20 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
             // 默认尺寸/位置按主显示器算：高度 = 可用高度的 1/3，宽度 = 可用宽度的
             // 1/3（不小于 420 逻辑像素），水平居中、贴屏幕顶部。必须在窗口已经
             // 创建出来之后做（setup 阶段窗口由 tauri.conf.json 静态创建）。
-            apply_overlay_default_geometry(&window);
+            //
+            // 但**用户调过的几何优先**：拖到别处或改过大小就沿用它，否则每次重启
+            // 都把浮层摆回默认位置，用户白调一次。没有记录（或记录已不可用）时才
+            // 用默认几何。
+            let saved_bounds = {
+                let state = app.state::<AppState>();
+                Settings::load(&state.settings_path).overlay_bounds
+            };
+            let restored = saved_bounds
+                .map(|bounds| apply_saved_overlay_geometry(&window, bounds))
+                .unwrap_or(false);
+            if !restored {
+                apply_overlay_default_geometry(&window);
+            }
             // 浮层默认不进入屏幕捕获：腾讯会议 / 钉钉 / OBS 这类共享屏幕时，
             // 面试官看到的是桌面，看不到浮层与答案。
             // 底层是 Windows 的 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)

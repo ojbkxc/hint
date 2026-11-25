@@ -1,3 +1,5 @@
+import { isRecord } from "../lib/data";
+
 export type Provider = "openai" | "anthropic" | "gemini";
 export type AnswerStyle = "concise" | "outline";
 export type TriggerMode = "auto" | "manual";
@@ -28,6 +30,14 @@ export const DEFAULT_STT_LANGUAGE: SttLanguage = "zh";
 
 /** 设置页当前正在进行的操作，用于给对应按钮显示准确的阶段文案。 */
 export type FormAction = "" | "save" | "test" | "models";
+
+/** 浮层位置与大小（逻辑像素）。与 Rust 侧 `OverlayBounds` 一一对应。 */
+export type OverlayBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type Settings = {
   provider: Provider;
@@ -71,6 +81,14 @@ export type Settings = {
    * 保存后版本变 0，下次加载会重新迁移一遍——用户手动打开的内容保护会被
    * 强行关掉（真机验证时发现过这个连带问题）。
    */
+  /**
+   * 用户调整过的浮层位置与大小（逻辑像素）。`null` = 没调整过，按默认几何摆。
+   *
+   * 前端只透传、不编辑：这是窗口层自己记的状态。但**必须带在类型与
+   * normalizeSettings 里**——否则保存配置时会被整体重建的对象丢掉，
+   * 用户调过的浮层位置下次启动就白丢了（`schemaVersion` 踩过同样的坑）。
+   */
+  overlayBounds: OverlayBounds | null;
   schemaVersion: number;
 };
 
@@ -215,6 +233,27 @@ export function normalizeOpacity(raw: unknown): number {
 }
 
 /** 浮层字号缩放归一：非法值回落 1.0，越界钳到 0.8–3。 */
+/**
+ * 把配置里的浮层几何归一成可用值。
+ *
+ * 与 Rust 侧 `OverlayBounds::is_sane()` 同一套判据：非有限数、尺寸过小都当作
+ * 「没有记录」。两边判据不一致会出现「Rust 认为可用、前端认为不可用」的漂移。
+ */
+export function normalizeOverlayBounds(raw: unknown): OverlayBounds | null {
+  if (!isRecord(raw)) return null;
+  const num = (key: string): number | null => {
+    const v = raw[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  const x = num("x");
+  const y = num("y");
+  const width = num("width");
+  const height = num("height");
+  if (x === null || y === null || width === null || height === null) return null;
+  if (width < 120 || height < 80) return null;
+  return { x, y, width, height };
+}
+
 export function normalizeFontScale(raw: unknown): number {
   const parsed =
     typeof raw === "number"
@@ -256,6 +295,7 @@ export const EMPTY_SETTINGS: Settings = {
   proxyMode: "system",
   proxyUrl: "",
   sttLanguage: DEFAULT_STT_LANGUAGE,
+  overlayBounds: null,
   schemaVersion: 1,
 };
 
@@ -304,6 +344,11 @@ export function normalizeSettings(raw: unknown): Settings {
     // 原样透传：丢了这个值，保存后后端会重新迁移一遍。
     schemaVersion:
       typeof value.schemaVersion === "number" ? value.schemaVersion : 1,
+    // 同样原样透传：这是窗口层记下的用户调整，前端不编辑，但**不能丢**——
+    // 保存配置时会用这个对象整体覆盖，丢了用户调过的浮层位置下次启动就白丢。
+    overlayBounds: normalizeOverlayBounds(
+      value.overlayBounds ?? value.overlay_bounds,
+    ),
   };
 }
 

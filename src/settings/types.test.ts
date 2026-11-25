@@ -78,6 +78,8 @@ describe("normalizeSettings", () => {
         overlayOpacity: DEFAULT_OVERLAY_OPACITY,
         overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
+        // 新增 overlayBounds 字段（窗口几何）：同样必须补上。
+        overlayBounds: null,
         // 新增 theme 字段：期望对象必须补上，否则这条整对象断言会漏掉字段
         // （toEqual 对多余属性会报错，是故意的——字段遗漏要能被抓到）。
         theme: DEFAULT_THEME,
@@ -110,6 +112,7 @@ describe("normalizeSettings", () => {
       micDevice: "mic-1",
       outputDevice: "spk-2",
       overlayOpacity: 0.5,
+      overlayBounds: { x: 100, y: 50, width: 600, height: 300 },
       overlayFontScale: DEFAULT_OVERLAY_FONT_SCALE,
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
         proxyMode: "system",
@@ -132,6 +135,8 @@ describe("normalizeSettings", () => {
         overlayContentProtected: DEFAULT_OVERLAY_CONTENT_PROTECTED,
         // 同上：新增字段后整对象断言必须同步，否则会报「多出 theme」。
         theme: DEFAULT_THEME,
+        // overlayBounds 也要原样透传（窗口几何由后端记，前端只搬运）。
+        overlayBounds: { x: 100, y: 50, width: 600, height: 300 },
         proxyMode: "system",
         proxyUrl: "",
         sttLanguage: DEFAULT_STT_LANGUAGE,
