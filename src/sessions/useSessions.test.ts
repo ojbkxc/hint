@@ -11,6 +11,21 @@ const backend = vi.hoisted(() => {
   return { calls, state };
 });
 
+const dialogState = vi.hoisted(() => ({
+  // save() 的返回值：路径字符串 = 用户选了位置；null = 用户取消
+  saveResult: "# 占位" as string | null,
+  saveShouldThrow: false,
+  saveCalls: [] as unknown[],
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: vi.fn((opts: unknown) => {
+    dialogState.saveCalls.push(opts);
+    if (dialogState.saveShouldThrow) return Promise.reject(new Error("dialog broken"));
+    return Promise.resolve(dialogState.saveResult);
+  }),
+}));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn((command: string, args: unknown) => {
     backend.calls.push({ command, args });
@@ -259,43 +274,20 @@ describe("useSessions —— 详情请求序号", () => {
 });
 
 describe("useSessions —— 导出 Markdown", () => {
-  it("后端已带「导出失败：」前缀时不重复拼接", async () => {
-    backend.state.handler = (command) => {
-      if (command === "export_session_markdown") return Promise.reject("导出失败：磁盘只读");
-      return Promise.resolve(null);
-    };
-    const { result } = renderHook(() => useSessions(false));
-    await act(async () => {
-      await result.current.open("s1");
-    });
-    await act(async () => {
-      await result.current.exportMarkdown();
-    });
-    expect(result.current.notice).toBe("导出失败：磁盘只读");
-    expect(result.current.notice).not.toContain("导出失败：导出失败：");
+  beforeEach(() => {
+    dialogState.saveResult = "# 转录\n内容";
+    dialogState.saveShouldThrow = false;
+    dialogState.saveCalls.length = 0;
   });
 
-  it("后端错误不带前缀时补上「导出失败：」", async () => {
+  it("先弹保存对话框，再把选中的路径交给后端写盘", async () => {
+    // 原实现用浏览器 Blob 下载，真机验证过 WebView2 里文件根本落不下来
+    // （下载事件走完 completed，但用户目录/AppData/Temp 全找不到），
+    // 所以改成「选路径 → 后端写盘」。
     backend.state.handler = (command) => {
-      if (command === "export_session_markdown") return Promise.reject("io error");
+      if (command === "export_session_file") return Promise.resolve(null);
       return Promise.resolve(null);
     };
-    const { result } = renderHook(() => useSessions(false));
-    await act(async () => {
-      await result.current.open("s1");
-    });
-    await act(async () => {
-      await result.current.exportMarkdown();
-    });
-    expect(result.current.notice).toBe("导出失败：io error");
-  });
-
-  it("成功时用清理过的文件名触发下载并提示", async () => {
-    backend.state.handler = (command) => {
-      if (command === "export_session_markdown") return Promise.resolve("# 转录\n内容");
-      return Promise.resolve(null);
-    };
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     const { result } = renderHook(() => useSessions(false));
     await act(async () => {
       await result.current.open("2026/01/01 10:00");
@@ -304,19 +296,17 @@ describe("useSessions —— 导出 Markdown", () => {
       await result.current.exportMarkdown();
     });
 
+    expect(dialogState.saveCalls).toHaveLength(1);
+    expect(lastArgsOf("export_session_file")).toEqual({
+      id: "2026/01/01 10:00",
+      path: "# 转录\n内容",
+    });
     expect(result.current.notice).toBe("已导出 Markdown 文件");
-    expect(lastArgsOf("export_session_markdown")).toEqual({ id: "2026/01/01 10:00" });
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    clickSpy.mockRestore();
   });
 
-  it("后端返回空内容时不下载，提示内容为空", async () => {
-    backend.state.handler = (command) => {
-      if (command === "export_session_markdown") return Promise.resolve({ markdown: "  " });
-      return Promise.resolve(null);
-    };
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  it("用户在对话框里取消：不发写盘命令、不提示成功", async () => {
+    dialogState.saveResult = null;
+    backend.state.handler = () => Promise.resolve(null);
     const { result } = renderHook(() => useSessions(false));
     await act(async () => {
       await result.current.open("s1");
@@ -324,18 +314,68 @@ describe("useSessions —— 导出 Markdown", () => {
     await act(async () => {
       await result.current.exportMarkdown();
     });
-    expect(result.current.notice).toBe("导出失败：后端返回内容为空");
-    expect(createObjectURL).not.toHaveBeenCalled();
-    expect(clickSpy).not.toHaveBeenCalled();
-    clickSpy.mockRestore();
+
+    expect(dialogState.saveCalls).toHaveLength(1);
+    expect(commandsCalled()).not.toContain("export_session_file");
+    expect(result.current.notice).toBe("");
   });
 
-  it("没有选中会话时导出直接返回，不发命令", async () => {
+  it("写盘失败时把原因显示出来（不谎报成功）", async () => {
+    backend.state.handler = (command) => {
+      if (command === "export_session_file") return Promise.reject("导出失败：磁盘只读");
+      return Promise.resolve(null);
+    };
+    const { result } = renderHook(() => useSessions(false));
+    await act(async () => {
+      await result.current.open("s1");
+    });
+    await act(async () => {
+      await result.current.exportMarkdown();
+    });
+
+    expect(result.current.notice).toBe("导出失败：磁盘只读");
+    expect(result.current.notice).not.toContain("导出失败：导出失败：");
+  });
+
+  it("后端错误不带前缀时补上「导出失败：」", async () => {
+    backend.state.handler = (command) => {
+      if (command === "export_session_file") return Promise.reject("io error");
+      return Promise.resolve(null);
+    };
+    const { result } = renderHook(() => useSessions(false));
+    await act(async () => {
+      await result.current.open("s1");
+    });
+    await act(async () => {
+      await result.current.exportMarkdown();
+    });
+
+    expect(result.current.notice).toBe("导出失败：io error");
+  });
+
+  it("对话框本身报错时也给出可读提示", async () => {
+    dialogState.saveShouldThrow = true;
+    backend.state.handler = () => Promise.resolve(null);
+    const { result } = renderHook(() => useSessions(false));
+    await act(async () => {
+      await result.current.open("s1");
+    });
+    await act(async () => {
+      await result.current.exportMarkdown();
+    });
+
+    expect(result.current.notice).toContain("导出失败");
+    expect(result.current.notice).toContain("保存对话框");
+    expect(commandsCalled()).not.toContain("export_session_file");
+  });
+
+  it("没有选中会话时导出直接返回，既不弹框也不发命令", async () => {
     const { result } = renderHook(() => useSessions(false));
     await act(async () => {
       await result.current.exportMarkdown();
     });
-    expect(commandsCalled()).not.toContain("export_session_markdown");
+    expect(dialogState.saveCalls).toHaveLength(0);
+    expect(commandsCalled()).not.toContain("export_session_file");
     expect(result.current.notice).toBe("");
   });
 });

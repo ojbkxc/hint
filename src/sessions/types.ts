@@ -1,4 +1,4 @@
-import { isRecord, pickNumber, pickText, textValue } from "../lib/data";
+import { isRecord, pickNumber, pickText } from "../lib/data";
 
 export type SessionSummary = {
   id: string;
@@ -94,27 +94,4 @@ export function normalizeSessionDetail(raw: unknown, id: string): SessionDetail 
   });
 
   return { id, summary, segments, answers };
-}
-
-/** 把导出结果（字符串或 {markdown}）统一成 Markdown 文本。 */
-export function normalizeMarkdown(raw: unknown): string {
-  if (typeof raw === "string") return raw;
-  if (isRecord(raw)) {
-    const markdown = pickText(raw, ["markdown", "content", "text"]);
-    if (markdown) return markdown;
-  }
-  const fallback = textValue(raw);
-  return fallback;
-}
-
-export function downloadMarkdown(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

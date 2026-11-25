@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { safeInvoke } from "../lib/tauri";
 import {
-  downloadMarkdown,
-  normalizeMarkdown,
   normalizeSessionDetail,
   normalizeSessions,
   type SessionDetail,
@@ -63,18 +62,32 @@ export function useSessions(enabled: boolean) {
   const exportMarkdown = useCallback(async () => {
     if (!selectedId) return;
     setNotice("");
-    const result = await safeInvoke<unknown>("export_session_markdown", { id: selectedId });
+
+    // 让用户先选保存位置，再由后端直接写盘。
+    //
+    // 为什么不用浏览器 Blob 下载（原实现）：真机验证过，WebView2 里
+    // `a.download` 会走完「开始 → completed」，但文件在用户下载目录、
+    // AppData、Temp 里**全都找不到**，而界面已经提示「已导出」——用户以为
+    // 存好了，实际什么都没有。改由后端写盘，成败都是确定的。
+    let target: string | null = null;
+    try {
+      target = await save({
+        title: "导出面试记录",
+        defaultPath: `${safeFilename(selectedId)}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+    } catch (error) {
+      setNotice(`导出失败：无法打开保存对话框（${String(error)}）`);
+      return;
+    }
+    // 用户取消：不提示成功，也不报错。
+    if (!target) return;
+
+    const result = await safeInvoke("export_session_file", { id: selectedId, path: target });
     if (!result.ok) {
-      // 后端错误已带「导出失败：」前缀，剥掉避免双重前缀。
       setNotice(`导出失败：${stripPrefix(result.error, "导出失败：")}`);
       return;
     }
-    const markdown = normalizeMarkdown(result.data);
-    if (!markdown.trim()) {
-      setNotice("导出失败：后端返回内容为空");
-      return;
-    }
-    downloadMarkdown(`${safeFilename(selectedId)}.md`, markdown);
     setNotice("已导出 Markdown 文件");
   }, [selectedId]);
 

@@ -452,6 +452,7 @@ pub fn run() {
             commands::list_sessions,
             commands::session_detail,
             commands::export_session_markdown,
+            commands::export_session_file,
             commands::delete_session,
             commands::delete_all_sessions,
             commands::hide_overlay,

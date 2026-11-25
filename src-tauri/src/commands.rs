@@ -353,6 +353,48 @@ pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result
         .map_err(|error| format!("导出失败：{error}"))
 }
 
+/// 导出会话到指定路径（用户通过保存对话框选的）。
+///
+/// **为什么不走浏览器的 Blob 下载**：真机验证过，WebView2 里 `a.download` 触发的
+/// 下载会「开始 → completed」但文件**哪儿都找不到**（用户下载目录、AppData、
+/// Temp 全都没有），而界面已经弹了「已导出 Markdown 文件」——用户以为存好了，
+/// 实际什么都没有。改由后端写盘，路径由用户自己选，成败都是确定的。
+#[tauri::command(async)]
+pub fn export_session_file(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    let session_id = parse_id(&id)?;
+    let markdown = {
+        let store = lock(&state.store);
+        store
+            .export_markdown(session_id)
+            .map_err(|error| format!("导出失败：{error}"))?
+    };
+    if markdown.trim().is_empty() {
+        return Err("导出失败：内容为空".to_string());
+    }
+    // 原子写：先写 `.tmp` 再 rename，避免中途失败留下半截文件。
+    let target = std::path::PathBuf::from(&path);
+    if let Some(dir) = target.parent() {
+        std::fs::create_dir_all(dir).map_err(|error| format!("创建目录失败：{error}"))?;
+    }
+    let tmp = target.with_extension("tmp-export");
+    std::fs::write(&tmp, markdown.as_bytes()).map_err(|error| format!("写入失败：{error}"))?;
+    match std::fs::rename(&tmp, &target) {
+        Ok(()) => {}
+        Err(error) => {
+            // rename 失败（目标被占用等）时退回直接写，别把内容丢掉。
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(&target, markdown.as_bytes())
+                .map_err(|error2| format!("写入失败：{error} / {error2}"))?;
+        }
+    }
+    tracing::info!(path = %target.display(), bytes = markdown.len(), "会话已导出");
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result<usize, String> {
     // 启动中的会话记录已经落库，但 state.session 仍为空；此时清空会把
