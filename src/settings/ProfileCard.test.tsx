@@ -331,3 +331,74 @@ describe("ProfileCard —— 档案事实的编辑与删除", () => {
     expect(screen.getByText("保存")).toBeDisabled();
   });
 });
+
+describe("ProfileCard —— 检索标签编辑", () => {
+  const profile: Settings["profile"] = {
+    organizedAt: 1,
+    sources: ["简历.md"],
+    facts: [
+      { kind: "basics", text: "李四 3年测试", tags: [] },
+      { kind: "project", text: "[X1] 内部系统 负责中间件选型", tags: ["kafka"] },
+    ],
+  };
+
+  it("非编辑态显示标签（可核对自己加了什么）", () => {
+    renderCard(makeForm({ profile }));
+    expect(screen.getByText(/kafka/)).toBeInTheDocument();
+  });
+
+  it("进入编辑时标签输入框带原值", async () => {
+    renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/负责中间件选型/));
+    const input = screen.getByLabelText("编辑第 2 条事实的标签") as HTMLInputElement;
+    expect(input.value).toBe("kafka");
+  });
+
+  it("改标签后保存，tags 更新", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/负责中间件选型/));
+    const input = screen.getByLabelText("编辑第 2 条事实的标签");
+    fireEvent.change(input, { target: { value: "kafka, 消息队列" } });
+    await userEvent.click(screen.getByText("保存"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts[1].tags).toEqual(["kafka", "消息队列"]);
+  });
+
+  it("中文逗号/顿号/空格都当分隔符", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/负责中间件选型/));
+    fireEvent.change(screen.getByLabelText("编辑第 2 条事实的标签"), {
+      target: { value: "中间件、选型，压测 kafka" },
+    });
+    await userEvent.click(screen.getByText("保存"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts[1].tags).toEqual(["中间件", "选型", "压测", "kafka"]);
+  });
+
+  it("清空标签得到空数组（不是保留旧值）", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/负责中间件选型/));
+    fireEvent.change(screen.getByLabelText("编辑第 2 条事实的标签"), {
+      target: { value: "   " },
+    });
+    await userEvent.click(screen.getByText("保存"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts[1].tags).toEqual([]);
+  });
+
+  it("只改标签不动正文", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/负责中间件选型/));
+    fireEvent.change(screen.getByLabelText("编辑第 2 条事实的标签"), {
+      target: { value: "kafka, mq" },
+    });
+    await userEvent.click(screen.getByText("保存"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts[1].text).toBe("[X1] 内部系统 负责中间件选型");
+    expect(next.profile?.facts[1].tags).toEqual(["kafka", "mq"]);
+  });
+});

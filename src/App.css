@@ -1631,6 +1631,28 @@ button.preset.active {
   border-radius: 3px;
 }
 
+.profile-fact-textwrap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 标签行：检索信号，比正文弱一档，不抢视线但可核对。 */
+.profile-fact-taglist {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+
+.profile-fact-tags {
+  flex: 1 1 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 .profile-fact-text:hover {
   background: var(--bg-hover);
   box-shadow: 0 0 0 3px var(--bg-hover);

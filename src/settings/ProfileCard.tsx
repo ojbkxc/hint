@@ -21,6 +21,21 @@ export default function ProfileCard({ form, patch }: Props) {
   const [organizeStatus, setOrganizeStatus] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [editingTags, setEditingTags] = useState("");
+
+  /**
+   * 把用户输入的标签串解析成数组。
+   *
+   * 中文逗号、顿号、空格都当分隔符：用户不会记得「必须英文逗号」，而漏分隔会让
+   * 整个「kafka 消息队列」变成一个永远匹配不上的标签。
+   */
+  function parseTags(raw: string): string[] {
+    return raw
+      .split(/[,，、\s]+/)
+      .map((tag) => tag.trim().toLowerCase())
+      .filter((tag) => tag.length > 0)
+      .slice(0, 20);
+  }
   const [previewQuestion, setPreviewQuestion] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState("");
@@ -318,11 +333,25 @@ export default function ProfileCard({ form, patch }: Props) {
                         autoFocus
                         aria-label={`编辑第 ${index + 1} 条事实`}
                       />
+                      {/* 标签是检索的主要信号（精确命中 +3，正文命中只有 +1）。
+                          正文里没写到的同义词得靠它，否则「用过 kafka 吗」这种问法
+                          永远命中不到只写了「中间件选型」的条目。 */}
+                      <input
+                        type="text"
+                        className="form-input profile-fact-tags"
+                        value={editingTags}
+                        onChange={(event) => setEditingTags(event.target.value)}
+                        placeholder="检索标签，英文逗号分隔（如 kafka,消息队列）"
+                        aria-label={`编辑第 ${index + 1} 条事实的标签`}
+                      />
                       <button
                         type="button"
                         className="ghost mini-import"
                         onClick={() => {
-                          updateFact(index, { text: editingText.trim() });
+                          updateFact(index, {
+                            text: editingText.trim(),
+                            tags: parseTags(editingTags),
+                          });
                           setEditingIndex(null);
                         }}
                         disabled={!editingText.trim()}
@@ -339,17 +368,25 @@ export default function ProfileCard({ form, patch }: Props) {
                     </span>
                   ) : (
                     <span className="profile-fact-body">
-                      <button
-                        type="button"
-                        className="profile-fact-text"
-                        onClick={() => {
-                          setEditingIndex(index);
-                          setEditingText(fact.text);
-                        }}
-                        title="点击修改这条"
-                      >
-                        {fact.text}
-                      </button>
+                      <span className="profile-fact-textwrap">
+                        <button
+                          type="button"
+                          className="profile-fact-text"
+                          onClick={() => {
+                            setEditingIndex(index);
+                            setEditingText(fact.text);
+                            setEditingTags(fact.tags.join(", "));
+                          }}
+                          title="点击修改这条（正文与检索标签）"
+                        >
+                          {fact.text}
+                        </button>
+                        {fact.tags.length > 0 && (
+                          <span className="profile-fact-taglist" aria-hidden="true">
+                            {fact.tags.join(" · ")}
+                          </span>
+                        )}
+                      </span>
                       <button
                         type="button"
                         className="profile-fact-remove"
