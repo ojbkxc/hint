@@ -27,6 +27,12 @@ const FATAL_GRACE: Duration = Duration::from_secs(15);
 /// 流稳定运行多久后清零失败计数。
 const HEALTHY_AFTER: Duration = Duration::from_secs(3);
 
+/// 连续失败超过致命阈值后，转入低频重试的间隔。
+///
+/// 为什么不是永久停止：麦克风被会议软件抢占后，对方释放时应该能自己恢复；
+/// 为什么不保持高频：设备真的不存在时会白烧 CPU 并刷满日志。
+const LOW_FREQ_RETRY_INTERVAL: Duration = Duration::from_secs(10);
+
 /// 麦克风「曾经打开成功、之后又失败」时的排查提示。
 ///
 /// 为什么要区分两种失败：真机日志（用户机器）显示
@@ -63,6 +69,8 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
     let mut failures: u32 = 0;
     // 本轮连续失败的起始时刻；成功稳定运行或判致命后清空。
     let mut first_failure_at: Option<Instant> = None;
+    // 已转入低频重试：只在首次进入时提示一次，避免每 10 秒刷一条同样的警告。
+    let mut low_freq_retry_active = false;
 
     loop {
         if rt.should_stop() {
@@ -132,6 +140,12 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
                         failures = 0;
                         first_failure_at = None;
                         healthy = true;
+                        // 恢复稳定运行：下次再失败要从「正常阈值」重新计数，
+                        // 不能因为上次进过低频重试就一直低频。
+                        if low_freq_retry_active {
+                            low_freq_retry_active = false;
+                            tracing::info!("麦克风采集已恢复（此前处于低频重试）");
+                        }
                     }
 
                     let open = queue.take(QUEUE_WAIT, &mut batch);
@@ -198,11 +212,36 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
             break;
         }
         if failures >= MAX_CONSECUTIVE_FAILURES && failure_grace_exceeded(first_failure_at) {
-            rt.error(format!(
-                "麦克风通道连续 {MAX_CONSECUTIVE_FAILURES} 次失败，采集引擎停止"
-            ));
-            rt.fatal();
-            break;
+            // 不直接判死，转成**低频重试**。
+            //
+            // 真机日志（用户机器）：麦克风用了约两分钟后「拒绝访问」，连续 5 次失败后
+            // 引擎停止——用户必须手动结束再开始会话才能恢复。而那台机器上是会议软件
+            // 抢占了麦克风：等它释放（几秒到几分钟）本该能自己恢复。
+            //
+            // 永久停止的代价太大：面试进行中丢麦，用户根本来不及去点「结束/开始」，
+            // 整场面试就废了。而无限高频重试的代价是白烧 CPU 与刷日志——用低频重试
+            // 折中：每 LOW_FREQ_RETRY_INTERVAL 试一次，恢复后自动继续采集。
+            //
+            // 只有「设备真的不存在」这类永久错误才会一直失败；那种情况下用户本来也
+            // 需要换设备，低频重试只是让日志安静些。
+            if !low_freq_retry_active {
+                low_freq_retry_active = true;
+                rt.error(format!(
+                    "麦克风通道连续 {MAX_CONSECUTIVE_FAILURES} 次失败，转为每 {} 秒重试一次\
+                     （恢复占用后会自动继续采集，不需要重开会话）",
+                    LOW_FREQ_RETRY_INTERVAL.as_secs()
+                ));
+            }
+            rt.finish_channel(Channel::Me);
+            // 低频等待期间仍要响应停止请求，所以按小片睡。
+            let deadline = Instant::now() + LOW_FREQ_RETRY_INTERVAL;
+            while Instant::now() < deadline && !rt.should_stop() {
+                rt.sleep_backoff(MAX_CONSECUTIVE_FAILURES);
+            }
+            if rt.should_stop() {
+                break;
+            }
+            continue;
         }
         // 断线期间该通道没有音频：先清电平、重置迟滞检测器并把联合状态标为
         // 静默。否则断开前若正在说话，重连后同向边会被状态机吸收，界面会
