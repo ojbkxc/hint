@@ -4,6 +4,61 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.51] - 2026-11-27
+
+### 修复：热键/托盘切换浮层不持久化（与设置页按钮行为不一致）
+
+#### 缺陷
+
+同一个「显示/隐藏浮层」开关，有两条入口，行为不同：
+
+| 入口 | 持久化 `overlay_visible` |
+|---|---|
+| 设置页按钮（`commands::toggle_overlay`）| ✅ 会 |
+| **热键 Ctrl+Shift+H / 托盘「浮层」菜单**（`lib.rs::toggle_overlay`）| ❌ **不会** |
+
+`lib.rs` 里那个只调 `window.hide()` / `show()`，没更新配置。后果：用户按
+Ctrl+Shift+H 收起浮层，下次启动它又自己弹出来盖住屏幕。
+
+而配置里的 `overlay_visible` 是「用户意图」的单一真相——`overlay_is_visible`
+命令的注释专门写了这一点（否则重启后按钮文案会与实际状态相反）。两条入口必须
+都更新它。
+
+#### 改法
+
+`lib.rs::toggle_overlay` 里先算出目标可见性，做完 show/hide 后调
+`commands::persist_overlay_visible`（从私有提升为 `pub(crate)`）。
+
+顺带把分支顺序理顺：原来先 hide 再 show，现在先算 `now_visible` 再动作，
+让「切换后的状态」是一个变量，两处不会漂。
+
+### 清理：删除 4 个注册了但零调用点的命令
+
+上轮靠「注释描述了不存在的功能」找到 `manifest.rs` 的缺口。这轮做了个**可自动化
+的同类检查**：扫描前端 `invoke` 的命令名 vs 后端 `generate_handler!` 注册列表。
+
+结果：**无未注册命令**（前端 43 个全都在后端）、事件名 14=14 完全一致。但发现
+**5 个后端注册、前端从不调用**的命令，逐个核实后：
+
+| 命令 | 结论 |
+|---|---|
+| `start_capture` | **保留**——由热键 Ctrl+Shift+S 调用（`lib.rs:976`）|
+| `show_overlay` | 删除——热键/托盘走 `lib.rs::toggle_overlay`，不经命令 |
+| `toggle_session` | 删除——托盘用 `session::spawn_start` / `spawn_stop` |
+| `export_session_markdown` | 删除——已被 `export_session_file` 取代（后者才是"用户选路径"的正路）|
+| `set_overlay_content_protected` | 删除——`save_settings` 里已直接应用（该处注释也承认「这个命令当时只有注册、零调用点」）|
+
+注册命令从 48 降到 44。删掉的理由不是洁癖：注册列表是 IPC 暴露面，而且
+`set_overlay_content_protected` 的存在会让人以为「内容保护靠调这个命令」，
+实际靠保存配置——这种误导上轮刚坑过一次（`manifest.rs` 的假注释）。
+
+### 顺手做的检查
+
+- 前端 invoke 的命令名全部在后端注册（0 缺失）；
+- 前端监听的 14 个事件名与后端发出的完全一致（无孤儿、无遗漏）。
+
+591 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.50] - 2026-11-27
 
 ### 新增：「校验文件完整性」按钮（`manifest.rs` 注释里描述的功能一直没实现）
