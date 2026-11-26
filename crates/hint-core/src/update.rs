@@ -14,7 +14,7 @@
 //! 实测过直连 GitHub 反而更快（11.9 秒下完 8.4 MB，走本地代理 120 秒超时）。
 //! 所以这里**默认直连**，代理只作为兜底尝试。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
@@ -29,7 +29,15 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(12);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// 发现的新版本。
-#[derive(Debug, Clone, PartialEq)]
+///
+/// 需要 `Serialize`：它直接作为 Tauri 命令的返回值过 IPC。字段统一 camelCase
+/// 以匹配前端（`installerUrl` / `installerName`）——两端命名不一致时前端会拿到
+/// `undefined` 却仍然「请求成功」，是最难查的一类错。
+///
+/// 同时需要 `Deserialize`：`download_update(info)` 要把前端传回的对象读回来。
+/// `rename_all` 对两个方向都生效，所以 derive 一次即可，不必手写 impl。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     /// 最新版本号（去掉前缀 `v`），如 `1.1.32`。
     pub version: String,
@@ -38,6 +46,7 @@ pub struct UpdateInfo {
     /// 安装包文件名（用于落盘）。
     pub installer_name: String,
     /// 该版本的发布说明（Markdown 原文）。
+    #[serde(default)]
     pub notes: String,
 }
 
