@@ -315,7 +315,11 @@ export default function ModelCard(props: Props) {
             </button>
           </div>
           <p className="muted small">
-            填好后点面板底部固定栏的「保存全部配置」一并保存；点「测试连接」会自动保存。
+            填好后点面板底部固定栏的「保存全部配置」一并保存。
+            <br />
+            点「测试连接」会用<strong>当前表单</strong>去连（没保存的地址和模型也能测），成功后只
+            自动保存 API Key——<strong>地址、模型、协议仍需点「保存全部配置」</strong>，
+            否则下次启动会回到旧值。
           </p>
         </div>
       </div>
