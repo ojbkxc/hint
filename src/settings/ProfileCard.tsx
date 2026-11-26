@@ -204,7 +204,7 @@ export default function ProfileCard({ form, patch }: Props) {
         <p className="field-group-title">简历</p>
         <div className="field">
           <div className="field-head">
-            <span className="field-label">面试官会围绕这里提问</span>
+            <span className="field-label">对方会围绕这里提问</span>
             <button
               type="button"
               className="ghost mini-import"

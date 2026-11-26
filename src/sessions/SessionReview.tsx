@@ -204,7 +204,7 @@ function SessionBody({ detail }: { detail: SessionDetail }) {
           <div className="legend" aria-label="转录颜色图例">
             <span className="legend-item">
               <i className="legend-swatch swatch-interviewer" aria-hidden="true" />
-              面试官
+              提问
             </span>
             <span className="legend-item">
               <i className="legend-swatch swatch-me" aria-hidden="true" />
