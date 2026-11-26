@@ -95,7 +95,13 @@ impl Fact {
 }
 
 /// 整份档案。
+///
+/// **必须用 camelCase**：这个结构会经 Tauri IPC 与 settings.json 往返，
+/// 前端读写的是 `organizedAt`。此前少了 `rename_all`，序列化出的键是
+/// `organized_at`，前端 `raw.organizedAt` 永远 undefined → 归一成 0 →
+/// 「上次整理于」永远不显示。真机对比 settings.json 才看出来（键名是下划线）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Profile {
     /// 整理时间（毫秒时间戳）。`0` 表示还没整理过。
     #[serde(default)]
@@ -832,6 +838,37 @@ mod tests {
             "稀有词那条应排第一：{:?}",
             r.matched_indices
         );
+    }
+
+    /// 档案经 IPC / settings.json 往返时必须是 camelCase 键。
+    ///
+    /// 真机缺陷：`Profile` 少了 `rename_all = "camelCase"`，序列化出的键是
+    /// `organized_at`，而前端读 `raw.organizedAt` → 永远 undefined → 归一成 0 →
+    /// 「上次整理于」永远不显示。对比 settings.json 的键名才发现。
+    #[test]
+    fn profile_serializes_with_camel_case_keys() {
+        let profile = Profile {
+            organized_at: 1_700_000_000_000,
+            sources: vec!["resume.md".into()],
+            facts: vec![Fact::new(FactKind::Project, "内容", vec!["p1".into()])],
+        };
+        let json = serde_json::to_value(&profile).expect("serialize");
+        assert!(
+            json.get("organizedAt").is_some(),
+            "序列化必须用 organizedAt（前端读这个名字）：{json}"
+        );
+        assert!(
+            json.get("organized_at").is_none(),
+            "不该出现下划线键名：{json}"
+        );
+        assert!(json.get("sources").is_some(), "{json}");
+        assert!(json.get("facts").is_some(), "{json}");
+
+        // 反序列化要能读回同一个结构（否则前端把 camelCase 发回来时会丢字段）
+        let back: Profile = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(back.organized_at, 1_700_000_000_000);
+        assert_eq!(back.sources, vec!["resume.md".to_string()]);
+        assert_eq!(back.facts.len(), 1);
     }
 
     /// 档案的主题词即使高频也必须能命中。
