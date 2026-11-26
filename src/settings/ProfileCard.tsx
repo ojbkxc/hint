@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { describeError, isTauri, safeInvoke } from "../lib/tauri";
-import type { Settings } from "./types";
+import type { ProfileRetrieval, Settings } from "./types";
 import { deriveStatusTone, statusToneClass } from "./statusTone";
 
 /** 与后端提示词截断保持一致：简历与项目资料各最多 6000 字。 */
@@ -21,6 +21,34 @@ export default function ProfileCard({ form, patch }: Props) {
   const [organizeStatus, setOrganizeStatus] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [previewQuestion, setPreviewQuestion] = useState("");
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [preview, setPreview] = useState<ProfileRetrieval | null>(null);
+
+  /** 跑一次检索预览。纯本地字符串运算，不调模型。 */
+  async function runPreview() {
+    const question = previewQuestion.trim();
+    if (!question) return;
+    setPreviewing(true);
+    setPreviewError("");
+    try {
+      const result = await safeInvoke<ProfileRetrieval>("profile_retrieve_preview", {
+        question,
+      });
+      if (!result.ok) {
+        setPreview(null);
+        setPreviewError(`预览失败：${result.error}`);
+        return;
+      }
+      setPreview(result.data);
+    } catch (error) {
+      setPreview(null);
+      setPreviewError(`预览失败：${describeError(error)}`);
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   /**
    * 改一条事实的正文。
@@ -336,6 +364,53 @@ export default function ProfileCard({ form, patch }: Props) {
                 </li>
               ))}
             </ul>
+
+            {/* 检索预览：验证「某个问题会发送哪几条」。
+                「按问题检索」是省 token 的核心机制，但此前是黑盒——关键词错了会
+                悄悄漏掉最该说的经历，用户无从判断。这里用**同一个**
+                Profile::retrieve，预览与实际发送不可能不一致。 */}
+            <div className="profile-preview">
+              <div className="profile-organize-row">
+                <input
+                  type="text"
+                  className="form-input profile-preview-input"
+                  value={previewQuestion}
+                  onChange={(event) => setPreviewQuestion(event.target.value)}
+                  placeholder="输入一个问题，看会命中哪几条（例如：介绍一下你的项目）"
+                  aria-label="检索预览问题"
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => void runPreview()}
+                  disabled={previewing || !previewQuestion.trim()}
+                >
+                  {previewing ? "检索中…" : "预览"}
+                </button>
+              </div>
+              {previewError && (
+                <p className={statusToneClass(deriveStatusTone(previewError))}>{previewError}</p>
+              )}
+              {preview && (
+                <div className="profile-preview-result">
+                  <p className="muted small">
+                    这个问题会发送{" "}
+                    <strong>
+                      {preview.matchedIndices.length +
+                        (preview.always ? 1 : 0)}{" "}
+                      条
+                    </strong>
+                    （常驻 {preview.always ? "1 段" : "无"} + 命中{" "}
+                    {preview.matchedIndices.length} 条），共{" "}
+                    {(preview.always.length + preview.matched.length).toLocaleString()} 字。
+                  </p>
+                  <pre className="profile-preview-text">
+                    {[preview.always, preview.matched].filter(Boolean).join("\n\n") ||
+                      "（没有命中任何事实：这个问题与档案内容没有共同关键词）"}
+                  </pre>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

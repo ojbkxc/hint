@@ -1664,6 +1664,37 @@ button.preset.active {
   color: var(--danger);
 }
 
+/* 检索预览：输入问题 → 看会发送哪几条。 */
+.profile-preview {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.profile-preview-input {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.profile-preview-result {
+  margin-top: 8px;
+}
+
+.profile-preview-text {
+  max-height: 220px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .overlay-status {
   display: flex;
   align-items: center;

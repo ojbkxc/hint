@@ -114,7 +114,8 @@ pub const ALWAYS_CHAR_BUDGET: usize = 600;
 pub const RETRIEVED_CHAR_BUDGET: usize = 2_000;
 
 /// 检索结果：拼好的两段文本，以及本次用到了哪些事实（便于界面/日志核对）。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Retrieval {
     /// 常驻段（基本信息 + 技能）。没有内容时为空串。
     pub always: String,

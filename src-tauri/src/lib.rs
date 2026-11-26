@@ -713,6 +713,7 @@ pub fn run() {
             commands::has_api_key,
             commands::test_llm,
             commands::organize_profile,
+            commands::profile_retrieve_preview,
             commands::fetch_models,
             commands::import_document_text,
             commands::start_session,

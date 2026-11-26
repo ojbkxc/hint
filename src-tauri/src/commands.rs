@@ -226,6 +226,30 @@ pub async fn test_llm(
     .map_err(|error| format!("模型连接失败：{error}"))
 }
 
+/// 检索预览：给定一个问题，返回**会实际发送给模型**的档案片段。
+///
+/// ## 为什么需要
+///
+/// 「按问题检索」是省 token 的核心机制，但它此前是个黑盒：用户看不到某个问题会
+/// 命中哪几条事实，也判断不了检索准不准（关键词错了就悄悄漏掉最该说的经历）。
+/// 排查「为什么这次答得偏」时也无从下手。
+///
+/// 返回的 `always` / `matched` 与 `system_prompt_for` 用的是**同一个**
+/// `Profile::retrieve`——预览与实际发送不可能不一致（否则预览就是假的）。
+#[tauri::command]
+pub fn profile_retrieve_preview(
+    state: State<'_, AppState>,
+    question: String,
+) -> Result<hint_core::Retrieval, String> {
+    let settings = Settings::load(&state.settings_path);
+    let Some(profile) = settings.profile.as_ref().filter(|p| !p.is_empty()) else {
+        return Err(
+            "还没有整理过面试档案：先在「简历与项目资料」里点「选择文档并整理」。".to_string(),
+        );
+    };
+    Ok(profile.retrieve(&question))
+}
+
 /// 整理面试档案：把多份文档交给模型压成可检索的事实列表。
 ///
 /// ## 为什么单独做一步

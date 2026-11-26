@@ -53,6 +53,13 @@ export type Profile = {
   facts: ProfileFact[];
 };
 
+/** 检索预览结果（与 Rust 侧 `profile::Retrieval` 对应）。 */
+export type ProfileRetrieval = {
+  always: string;
+  matched: string;
+  matchedIndices: number[];
+};
+
 export type Settings = {
   provider: Provider;
   baseUrl: string;
