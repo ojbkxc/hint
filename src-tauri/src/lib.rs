@@ -118,6 +118,18 @@ const OVERLAY_WIDTH_RATIO: u32 = 3;
 /// 浮层高度占可用高度的比例。
 const OVERLAY_HEIGHT_RATIO: u32 = 3;
 /// 浮层默认宽度的逻辑像素下限：再窄就放不下答案与两路电平。
+/// 浮层窗口的最小尺寸（逻辑像素），与 `tauri.conf.json` 的 `minWidth` / `minHeight`
+/// 保持一致。
+///
+/// 为什么代码里要再写一遍：恢复几何用的是 Win32 `SetWindowPos`（物理像素），
+/// 它**绕过**了 tauri 建窗时设的最小尺寸约束。真机实测：配置里写 320×180 物理、
+/// dpr 1.25 时窗口变成 256×144 CSS——比设计最小值还小，各区块被压到勉强可用。
+///
+/// 改 tauri.conf 时这里必须同步改（两处都是「窗口能小到什么程度」的唯一真相）。
+const OVERLAY_WINDOW_MIN_WIDTH_LOGICAL: f64 = 320.0;
+const OVERLAY_WINDOW_MIN_HEIGHT_LOGICAL: f64 = 180.0;
+
+/// 浮层默认几何里宽度的下限（比窗口最小宽度更宽：默认值要好看，最小尺寸只保证可用）。
 const OVERLAY_MIN_WIDTH_LOGICAL: u32 = 420;
 /// 浮层默认宽度的逻辑像素上限：超宽屏上 1/3 仍有 1100+ 逻辑像素，
 /// 一行答案横跨半个屏反而难扫读，这里压回 900。
@@ -247,19 +259,33 @@ fn apply_saved_overlay_geometry(
     };
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
-    // 求交在工作区坐标系里做：工作区是物理像素，所以把逻辑值换算过去比较。
-    let x_phys = bounds.x * scale;
-    let y_phys = bounds.y * scale;
-    let w_phys = bounds.width * scale;
-    let h_phys = bounds.height * scale;
+
+    // 逻辑最小尺寸：与 tauri.conf.json 的 minWidth/minHeight 对齐（320×180 逻辑像素）。
+    //
+    // 为什么需要单独判：恢复用的是 Win32 `SetWindowPos`（物理像素），它**绕过**了
+    // tauri 建窗时设的最小尺寸约束。真机实测：配置里写 320×180 物理、dpr 1.25 时
+    // 窗口变成 256×144 CSS——比设计的最小值还小，各区块被压到勉强可用。
+    let min_w = OVERLAY_WINDOW_MIN_WIDTH_LOGICAL * scale;
+    let min_h = OVERLAY_WINDOW_MIN_HEIGHT_LOGICAL * scale;
+    let width_phys = bounds.width.max(min_w);
+    let height_phys = bounds.height.max(min_h);
+
+    // 求交：`bounds` 已经是**物理**像素（保存侧用的 Win32 GetWindowRect），
+    // 与工作区同一坐标系，**不要再乘 scale**。
+    //
+    // 这里曾经乘过一次——那是几何还按「逻辑像素」存储时的写法；改成 Win32 物理像素
+    // 之后没跟着改，会把尺寸放大 1/dpr 倍参与求交，在多显示器或贴边位置误判成
+    // 「不在屏幕内」而白白丢弃用户的调整。
+    let x_phys = bounds.x;
+    let y_phys = bounds.y;
     let left = f64::from(area.position.x);
     let top = f64::from(area.position.y);
     let right = left + f64::from(area.size.width);
     let bottom = top + f64::from(area.size.height);
-    let overlap_w = (x_phys + w_phys).min(right) - x_phys.max(left);
-    let overlap_h = (y_phys + h_phys).min(bottom) - y_phys.max(top);
+    let overlap_w = (x_phys + width_phys).min(right) - x_phys.max(left);
+    let overlap_h = (y_phys + height_phys).min(bottom) - y_phys.max(top);
     let visible = overlap_w.max(0.0) * overlap_h.max(0.0);
-    let total = w_phys * h_phys;
+    let total = width_phys * height_phys;
     if total <= 0.0 || visible * 3.0 < total {
         tracing::info!(
             x = bounds.x,
@@ -272,8 +298,14 @@ fn apply_saved_overlay_geometry(
     }
 
     // 用 Win32 摆（物理像素）：与保存侧同一套语义，不经过 tauri 的换算。
-    let _ = scale; // 求交时已用过；这里只记录用
-    if !set_overlay_physical_rect(window, bounds) {
+    // 尺寸先抬到逻辑最小值（见上），位置保持用户原样。
+    let target = hint_core::OverlayBounds {
+        x: bounds.x,
+        y: bounds.y,
+        width: width_phys,
+        height: height_phys,
+    };
+    if !set_overlay_physical_rect(window, target) {
         tracing::warn!("恢复浮层位置与大小失败");
         return false;
     }
