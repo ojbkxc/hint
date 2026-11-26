@@ -3202,3 +3202,9 @@ button.mini.ghost {
   background: var(--surface-sunken);
   word-break: break-word;
 }
+
+/* 慢响应提示：等超过 10 秒还没首字时出现。
+   用次要警示色而不是红色——这不是错误，只是提醒「在等，不是卡死」。 */
+.placeholder.slow-hint {
+  color: var(--overlay-warn-text, #e8b84b);
+}

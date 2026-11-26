@@ -1,6 +1,14 @@
 import { memo, useEffect, useRef } from "react";
 import type { AnswerHistoryEntry, AnswerState } from "./types";
 import { useAutoScroll } from "./useAutoScroll";
+import { useWaitSeconds } from "./useWaitSeconds";
+
+/** 等这么久还没首字就提示「响应较慢」。
+ *
+ * 取 10 秒的依据：真机正常会话 ttft 在 1.7～3.4 秒，而慢的那场从 8.4 秒起步。
+ * 10 秒落在两者之间——正常会话永远不会看到这条提示，异常时才出现。
+ */
+const SLOW_HINT_SECONDS = 10;
 
 type Props = {
   answer: AnswerState;
@@ -22,6 +30,7 @@ function AnswerPanel({
 }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const { onScroll } = useAutoScroll(bodyRef, answer);
+  const waitSeconds = useWaitSeconds(answer);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -121,7 +130,18 @@ function AnswerPanel({
               {answer.streaming && <span className="caret" />}
             </p>
           ) : answer.streaming ? (
-            <p className="placeholder">正在等待模型输出…</p>
+            // 显示秒数：真机有过连续 19 条 ttft 在 8～69 秒的面试，只写「正在等待」
+            // 的话用户分不清是在等还是卡死了，而面试中他只有几秒决定要不要放弃。
+            <p className={waitSeconds >= SLOW_HINT_SECONDS ? "placeholder slow-hint" : "placeholder"}>
+              正在等待模型输出
+              {waitSeconds > 0 ? `（已等待 ${waitSeconds} 秒）` : "…"}
+              {waitSeconds >= SLOW_HINT_SECONDS && (
+                <>
+                  <br />
+                  模型响应较慢，通常与网络或服务端排队有关；可以再等一会，或点「重新生成」。
+                </>
+              )}
+            </p>
           ) : answer.muted ? (
             <p className="placeholder">
               本轮答案已清空，模型后续生成的内容不再显示。
