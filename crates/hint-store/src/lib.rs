@@ -363,9 +363,18 @@ impl Store {
     /// `note` 传空串等于清除备注（回落到时间戳）。返回是否真的更新到记录
     /// （false 说明 id 不存在——调用方要能区分「清空成功」与「这个会话没了」）。
     pub fn set_session_note(&self, id: i64, note: &str) -> Result<bool> {
+        // 空串存 NULL 而不是空字符串：`note` 列是 `Option<String>`，语义上
+        // 「没有备注」应该只有**一种**表示。存成 `Some("")` 会让读侧多一条分支
+        // （空串也要当没有），而且列表标题的回落逻辑会先命中空串再落到时间戳。
+        let trimmed = note.trim();
+        let value: Option<&str> = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
         let changed = self.conn.execute(
             "UPDATE sessions SET note = ?1 WHERE id = ?2",
-            params![note.trim(), id],
+            params![value, id],
         )?;
         Ok(changed > 0)
     }
@@ -765,25 +774,36 @@ fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn session_note_can_be_set_and_cleared() {
-    let store = Store::open_in_memory().expect("open");
-    let id = store.create_session("openai", "m", None).expect("create");
-    // 初次写入
-    assert!(store.set_session_note(id, "字节二面").expect("set"));
-    assert_eq!(store.get_session(id).expect("get").note, "字节二面");
-    // 首尾空格会被 trim —— 列表标题不该带多余空白
-    assert!(store.set_session_note(id, "  腾讯一面  ").expect("set"));
-    assert_eq!(store.get_session(id).expect("get").note, "腾讯一面");
-    // 空串等于清除
-    assert!(store.set_session_note(id, "").expect("set"));
-    assert_eq!(store.get_session(id).expect("get").note, "");
-    // 不存在的 id 返回 false（调用方据此提示「会话已删除」）
-    assert!(!store.set_session_note(id + 999, "x").expect("set"));
-}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 备注：写入 / trim / 清除 / 不存在的 id。
+    ///
+    /// `note` 列是 `Option<String>`：空串必须存成 NULL 而不是 `Some("")`，
+    /// 否则「没有备注」会有两种表示，列表标题的回落逻辑要先命中空串才落到时间戳。
+    #[test]
+    fn session_note_can_be_set_and_cleared() {
+        let store = Store::open_in_memory().expect("open");
+        let id = store.create_session("openai", "m", None).expect("create");
+        // 初次写入
+        assert!(store.set_session_note(id, "字节二面").expect("set"));
+        assert_eq!(
+            store.get_session(id).expect("get").note.as_deref(),
+            Some("字节二面")
+        );
+        // 首尾空格会被 trim —— 列表标题不该带多余空白
+        assert!(store.set_session_note(id, "  腾讯一面  ").expect("set"));
+        assert_eq!(
+            store.get_session(id).expect("get").note.as_deref(),
+            Some("腾讯一面")
+        );
+        // 空串等于清除：存成 None，读侧只有一种「没有备注」
+        assert!(store.set_session_note(id, "   ").expect("set"));
+        assert_eq!(store.get_session(id).expect("get").note, None);
+        // 不存在的 id 返回 false（调用方据此提示「会话已删除」）
+        assert!(!store.set_session_note(id + 999, "x").expect("set"));
+    }
 
     /// 构造一个内存库并开好会话。
     fn store_with_session() -> (Store, i64) {
