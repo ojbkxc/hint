@@ -175,6 +175,32 @@ export function useSessions(enabled: boolean) {
   }, [sessions, refresh]);
 
   /**
+   * 保存会话备注（空串 = 清除，回落到时间戳）。
+   *
+   * 需要同时更新两处，否则界面会不一致：
+   * - `sessions`：列表标题优先取 note，不改列表就还是旧标题；
+   * - `detail`：详情页的输入框绑的是它，不改会被 useEffect 回滚成旧值。
+   *
+   * 失败时**抛出**而不是吞掉：输入框要把原因显示出来（保存失败静默回滚会让用户
+   * 以为已经存上了）。
+   */
+  const rename = useCallback(async (id: string, note: string) => {
+    const result = await safeInvoke("rename_session", { id, note });
+    if (!result.ok) {
+      throw new Error(result.error || "保存备注失败");
+    }
+    const trimmed = note.trim();
+    setSessions((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, note: trimmed } : item)),
+    );
+    setDetail((prev) =>
+      prev && prev.summary.id === id
+        ? { ...prev, summary: { ...prev.summary, note: trimmed } }
+        : prev,
+    );
+  }, []);
+
+  /**
    * 界面上实际显示的会话：没搜索时是全部，搜索时按命中 id 过滤（保持原顺序）。
    *
    * 用 `matchedIds === null` 判断「不在搜索」，而不是「命中集为空」——
@@ -206,6 +232,7 @@ export function useSessions(enabled: boolean) {
     exportMarkdown,
     remove,
     removeAll,
+    rename,
   };
 }
 

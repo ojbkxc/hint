@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveStatusTone, statusToneClass } from "../settings/statusTone";
 import type { SessionDetail, SessionSummary } from "./types";
 
@@ -23,6 +24,8 @@ type Props = {
   onExport: () => void;
   onDelete: () => void;
   onDeleteAll: () => void;
+  /** 保存会话备注：空串表示清除，回落到时间戳。 */
+  onRename: (id: string, note: string) => Promise<void>;
 };
 
 const SKELETON_KEYS = ["skeleton-1", "skeleton-2", "skeleton-3"];
@@ -47,6 +50,7 @@ export default function SessionReview(props: Props) {
     onExport,
     onDelete,
     onDeleteAll,
+    onRename,
   } = props;
 
   return (
@@ -189,7 +193,7 @@ export default function SessionReview(props: Props) {
               ))}
             </>
           ) : detail ? (
-            <SessionBody detail={detail} />
+            <SessionBody detail={detail} onRename={onRename} />
           ) : (
             !detailError && <EmptyState text="没有可显示的内容。" />
           )}
@@ -220,9 +224,111 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-function SessionBody({ detail }: { detail: SessionDetail }) {
+/**
+ * 会话备注输入。
+ *
+ * 交互取舍：
+ * - 失焦或按回车才提交，**不做逐字保存**——备注是偶尔改一次的东西，逐字写盘
+ *   既浪费又会在打字中途产生一堆半截内容；
+ * - 提交后与 props 里的 note 比较，没变就不调用后端；
+ * - 保存失败把后端原因显示出来（而不是静默回滚——用户会以为存上了）。
+ */
+function SessionNoteInput({
+  id,
+  note,
+  onRename,
+}: {
+  id: string;
+  note: string;
+  onRename: (id: string, note: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(note);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  /**
+   * 「这次 blur 是 Esc 触发的，别保存」。
+   *
+   * 必须在 blur 之前置位、在 commit 里消费：`onKeyDown` 里调 `blur()` 会同步触发
+   * `onBlur → commit`，而 commit 拿到的是**闭包里的旧 draft**（setDraft 还没生效）。
+   * 只写 setDraft(note) + blur() 会让 Esc 变成「保存我刚才想放弃的内容」——
+   * 这条是测试抓出来的，不是推演。
+   */
+  const cancelNextBlur = useRef(false);
+
+  // 切换会话时同步草稿：否则会把上一条的备注文本留在框里。
+  useEffect(() => {
+    setDraft(note);
+    setError("");
+  }, [id, note]);
+
+  const commit = useCallback(async () => {
+    if (cancelNextBlur.current) {
+      cancelNextBlur.current = false;
+      setDraft(note);
+      return;
+    }
+    const next = draft.trim();
+    if (next === note.trim()) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onRename(id, next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, note, id, onRename]);
+
+  return (
+    <div className="session-note">
+      <input
+        type="text"
+        className="form-input session-note-input"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.blur();
+          }
+          if (event.key === "Escape") {
+            // 置位后 blur：commit 会消费这个标志跳过保存（见 cancelNextBlur 注释）。
+            cancelNextBlur.current = true;
+            event.currentTarget.blur();
+          }
+        }}
+        placeholder="给这次面试起个名字（如「字节二面」）"
+        aria-label="会话备注"
+        disabled={saving}
+      />
+      {saving && <span className="session-note-state">保存中…</span>}
+      {error && (
+        <span className="session-note-state error-text" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SessionBody({
+  detail,
+  onRename,
+}: {
+  detail: SessionDetail;
+  onRename: (id: string, note: string) => Promise<void>;
+}) {
   return (
     <div className="review-body">
+      {/* 备注是列表标题的首选显示名（note > startedAt > id）：没有它，41 条会话在
+          界面上全是时间戳，想标「字节二面」做不到。 */}
+      <SessionNoteInput
+        id={detail.summary.id}
+        note={detail.summary.note}
+        onRename={onRename}
+      />
       <p className="muted small">
         {detail.summary.startedAt || "开始时间未知"}
         {detail.summary.endedAt ? ` → ${detail.summary.endedAt}` : ""}

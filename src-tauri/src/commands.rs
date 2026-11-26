@@ -283,6 +283,29 @@ pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 给会话写备注（列表标题的首选显示名）。
+///
+/// 备注是列表标题的**首选**（note > started_at > id），但此前没有任何写入入口——
+/// 41 条会话在界面上全是时间戳，用户想标「字节二面」「腾讯一面」做不到。
+///
+/// 传空串等于清除备注（回落到时间戳）。id 不存在时返回错误而不是静默成功：
+/// 前端据此提示「这个会话已被删除」。
+#[tauri::command(async)]
+pub fn rename_session(state: State<'_, AppState>, id: String, note: String) -> Result<(), String> {
+    let parsed: i64 = id
+        .trim()
+        .parse()
+        .map_err(|_| format!("会话 id 无效：{id}"))?;
+    let store = lock(&state.store);
+    let updated = store
+        .set_session_note(parsed, &note)
+        .map_err(|error| format!("保存备注失败：{error}"))?;
+    if !updated {
+        return Err("该会话已不存在（可能刚被删除）".to_string());
+    }
+    Ok(())
+}
+
 /// 按转录内容搜索会话，返回命中的会话 id 列表。
 ///
 /// 会话攒到几十条后，列表只能按时间倒序翻——用户记得的是「问过 kafka 的那次」，

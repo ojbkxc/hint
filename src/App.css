@@ -3167,3 +3167,25 @@ button.mini.ghost {
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* 会话备注：详情页顶部给这次面试起个名字。
+   备注是列表标题的首选（note > startedAt > id），没有它列表全是时间戳。 */
+.session-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.session-note-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.session-note-state {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}

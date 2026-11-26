@@ -763,6 +763,7 @@ export default function Dashboard() {
           onExport={() => void sessions.exportMarkdown()}
           onDelete={() => void sessions.remove()}
           onDeleteAll={() => void sessions.removeAll()}
+          onRename={sessions.rename}
         />
         </div>
       )}

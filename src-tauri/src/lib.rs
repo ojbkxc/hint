@@ -745,6 +745,7 @@ pub fn run() {
             commands::has_api_key,
             commands::test_llm,
             commands::organize_profile,
+            commands::rename_session,
             commands::search_sessions,
             commands::check_update,
             commands::download_update,

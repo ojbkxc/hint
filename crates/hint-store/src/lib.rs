@@ -354,6 +354,22 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// 给会话写备注（显示名）。
+    ///
+    /// 备注是列表标题的**首选**（`note > started_at > id`），但此前没有任何写入
+    /// 入口——41 条会话在界面上全是「2026-11-26 15:37:30」这种时间戳，用户想标
+    /// 「字节二面」「腾讯一面」做不到，只能靠记时间。
+    ///
+    /// `note` 传空串等于清除备注（回落到时间戳）。返回是否真的更新到记录
+    /// （false 说明 id 不存在——调用方要能区分「清空成功」与「这个会话没了」）。
+    pub fn set_session_note(&self, id: i64, note: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE sessions SET note = ?1 WHERE id = ?2",
+            params![note.trim(), id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// 读取单个会话。
     pub fn get_session(&self, id: i64) -> Result<Session> {
         self.conn
@@ -749,6 +765,22 @@ fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn session_note_can_be_set_and_cleared() {
+    let store = Store::open_in_memory().expect("open");
+    let id = store.create_session("openai", "m", None).expect("create");
+    // 初次写入
+    assert!(store.set_session_note(id, "字节二面").expect("set"));
+    assert_eq!(store.get_session(id).expect("get").note, "字节二面");
+    // 首尾空格会被 trim —— 列表标题不该带多余空白
+    assert!(store.set_session_note(id, "  腾讯一面  ").expect("set"));
+    assert_eq!(store.get_session(id).expect("get").note, "腾讯一面");
+    // 空串等于清除
+    assert!(store.set_session_note(id, "").expect("set"));
+    assert_eq!(store.get_session(id).expect("get").note, "");
+    // 不存在的 id 返回 false（调用方据此提示「会话已删除」）
+    assert!(!store.set_session_note(id + 999, "x").expect("set"));
+}
 #[cfg(test)]
 mod tests {
     use super::*;
