@@ -234,7 +234,9 @@ pub async fn test_llm(
 /// 代理：默认直连。更新源是 github.com，与模型接口不同路径；用户装 Clash 之类通常
 /// 只代理模型域名，实测直连 GitHub 更快（11.9 秒下完 8.4 MB，走本地代理 120 秒超时）。
 #[tauri::command]
-pub async fn check_update(state: State<'_, AppState>) -> Option<hint_core::UpdateInfo> {
+pub async fn check_update(
+    state: State<'_, AppState>,
+) -> Result<Option<hint_core::UpdateInfo>, String> {
     let current = env!("CARGO_PKG_VERSION");
     let cache_path = state.settings_path.with_file_name("update-check.json");
     let now = chrono::Utc::now().timestamp_millis();
@@ -254,7 +256,8 @@ pub async fn check_update(state: State<'_, AppState>) -> Option<hint_core::Updat
             tracing::info!(latest = %cache.latest, "缓存显示有新版本，仍需查询安装包地址");
         } else {
             tracing::info!(latest = %cache.latest, "更新检查命中缓存（6 小时内）");
-            return None;
+            // 命中缓存且已是最新：返回 Ok(None)，前端据此直接放行。
+            return Ok(None);
         }
     }
 
@@ -274,12 +277,15 @@ pub async fn check_update(state: State<'_, AppState>) -> Option<hint_core::Updat
             {
                 tracing::warn!(%error, "写入更新检查缓存失败（不影响使用）");
             }
-            info
+            Ok(info)
         }
         Err(error) => {
             // 失败**不写缓存**：一次网络抖动不该让用户 6 小时内都不再检查。
+            //
+            // 这里返回 Ok(None) 而不是 Err：命令挂在启动路径上，前端对 Ok(None)
+            // 的处理就是「直接放行进设置页」。错误详情已经在日志里，不必再抛。
             tracing::warn!(%error, "检查更新失败（不影响使用）");
-            None
+            Ok(None)
         }
     }
 }
