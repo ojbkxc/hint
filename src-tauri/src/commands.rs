@@ -673,7 +673,15 @@ pub fn export_all_sessions(state: State<'_, AppState>, dir: String) -> Result<St
             .list_sessions(10_000)
             .map_err(|error| format!("读取会话列表失败：{error}"))?;
         let mut items = Vec::new();
+        let mut empty = 0usize;
         for summary in sessions {
+            // 用**段数与答案数**判断是否真的有内容，不能用 `markdown.trim().is_empty()`：
+            // `export_markdown` 对空会话返回的是一份带标题的模板（「本次会话没有
+            // 转录内容」），永远非空。真机验证过——41 条导出里混进了空壳文件。
+            if summary.segment_count == 0 && summary.answer_count == 0 {
+                empty += 1;
+                continue;
+            }
             let markdown = match store.export_markdown(summary.session.id) {
                 Ok(text) => text,
                 Err(error) => {
@@ -681,11 +689,11 @@ pub fn export_all_sessions(state: State<'_, AppState>, dir: String) -> Result<St
                     continue;
                 }
             };
-            if markdown.trim().is_empty() {
-                continue;
-            }
             let name = session_file_name(&summary.session);
             items.push((summary.session.id, name, markdown));
+        }
+        if empty > 0 {
+            tracing::info!(empty, "没有转录也没有答案的会话已跳过");
         }
         items
     };
