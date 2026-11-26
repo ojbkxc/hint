@@ -386,6 +386,22 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// 这个会话有没有任何内容（转录或答案）。
+    ///
+    /// 用途：会话结束时要判断「该不该留下这条记录」。用户点了开始又立刻结束、
+    /// 或麦克风没权限导致一句都没识别到时，留一条空记录只会在历史里变成噪声。
+    ///
+    /// 用 `EXISTS` 而不是 count：只要知道有没有，不需要数多少，命中一条就能返回。
+    pub fn session_has_content(&self, id: i64) -> Result<bool> {
+        let found: i64 = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM segments WHERE session_id = ?1)
+                 OR EXISTS(SELECT 1 FROM answers  WHERE session_id = ?1)",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(found != 0)
+    }
+
     /// 会话总数。
     ///
     /// 列表接口有上限（当前 200 条），超过之后**必须**能告诉用户「还有更多」——
@@ -839,6 +855,36 @@ mod tests {
             .add_answer(a, None, "kafka 的用法是这样", "m", AnswerMetrics::default())
             .expect("ans2");
         assert_eq!(store.search_sessions("kafka", 10).expect("search"), vec![a]);
+    }
+
+    /// 空会话识别：转录或答案任一存在就算有内容。
+    ///
+    /// 会话结束时会用它决定「这条记录该不该留」——判错两个方向后果不同：
+    /// 误判有内容 → 历史里留下空壳（真机攒过 33 条）；
+    /// 误判没内容 → **删掉用户真实的面试记录**（更严重）。
+    #[test]
+    fn session_has_content_detects_segments_and_answers() {
+        let store = Store::open_in_memory().expect("open");
+        let fresh = store.create_session("openai", "m", None).expect("create");
+        // 刚建的空会话
+        assert!(!store.session_has_content(fresh).expect("check"));
+
+        // 只有转录
+        let seg_only = store.create_session("openai", "m", None).expect("create");
+        store
+            .add_segment(seg_only, "interviewer", 0, 1000, "你好", false, false)
+            .expect("seg");
+        assert!(store.session_has_content(seg_only).expect("check"));
+
+        // 只有答案
+        let ans_only = store.create_session("openai", "m", None).expect("create");
+        store
+            .add_answer(ans_only, None, "答案", "m", AnswerMetrics::default())
+            .expect("ans");
+        assert!(store.session_has_content(ans_only).expect("check"));
+
+        // 不存在的会话：EXISTS 两个子查询都查不到，返回 false 而不是报错
+        assert!(!store.session_has_content(999_999).expect("check"));
     }
 
     /// 备注：写入 / trim / 清除 / 不存在的 id。

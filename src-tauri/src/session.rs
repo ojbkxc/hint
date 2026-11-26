@@ -1090,8 +1090,34 @@ pub(crate) fn stop_session(app: &AppHandle) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         let store = lock(&state.store);
-        if let Err(error) = store.end_session(shared.session_id) {
-            tracing::warn!(%error, "结束会话记录失败");
+        // 一句都没识别到就结束的会话不留痕：用户点了开始又立刻结束、或麦克风没
+        // 权限导致从未采集到时，这条记录只会在历史里变成噪声（真机上一次攒了
+        // 33 条空记录，占列表 80%）。
+        //
+        // 判断放在 end_session **之前**：先结束再删会让「已结束」的状态白写一次。
+        match store.session_has_content(shared.session_id) {
+            Ok(false) => match store.delete_session(shared.session_id) {
+                Ok(_) => {
+                    tracing::info!(
+                        session_id = shared.session_id,
+                        "会话没有任何内容，已丢弃记录"
+                    );
+                }
+                Err(error) => tracing::warn!(%error, "删除空会话记录失败"),
+            },
+            Ok(true) => {
+                if let Err(error) = store.end_session(shared.session_id) {
+                    tracing::warn!(%error, "结束会话记录失败");
+                }
+            }
+            // 查询失败时保守处理：照常结束，不删——宁可留一条空记录，也不能因为
+            // 一次查询失败把用户可能有内容的记录删掉。
+            Err(error) => {
+                tracing::warn!(%error, "检查会话内容失败，按有内容处理");
+                if let Err(error) = store.end_session(shared.session_id) {
+                    tracing::warn!(%error, "结束会话记录失败");
+                }
+            }
         }
     }
 
