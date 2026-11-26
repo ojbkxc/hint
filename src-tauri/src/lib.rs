@@ -781,7 +781,15 @@ pub fn run() {
             commands::clean_legacy_model_dir,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .unwrap_or_else(|error| {
+            // 走到这里说明窗口/托盘/资源加载有致命问题，程序没法继续。
+            // `expect` 会 panic——那时栈信息全走 stderr，而这是 GUI 子系统程序，
+            // 用户双击启动时**根本看不到 stderr**，只会觉得「点了没反应」。
+            // 改成显式记日志（此时 logging 已在 setup 之前初始化过）再退出。
+            tracing::error!(%error, "构建 Tauri 应用失败，无法启动");
+            eprintln!("hint 启动失败：{error}");
+            std::process::exit(1);
+        })
         .run(move |app, event| match event {
             RunEvent::Ready => {
                 if let Err(error) = setup_after_ready(app) {
