@@ -1,6 +1,6 @@
 [package]
 name = "hint-store"
-version = "1.1.32"
+version = "1.1.33"
 edition = "2024"
 description = "hint 的本地会话存储：SQLite"
 license = "MIT"
