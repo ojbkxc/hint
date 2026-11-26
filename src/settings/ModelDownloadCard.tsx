@@ -14,6 +14,8 @@ type Props = {
   onDownload: () => void;
   onCancel: () => void;
   onRemove: () => void;
+  /** 重算 sha256（真校验）。`prepare_model` 只比大小，查不出「同大小但内容坏了」。 */
+  onVerify: () => void;
 };
 
 export default function ModelDownloadCard({
@@ -23,6 +25,7 @@ export default function ModelDownloadCard({
   onDownload,
   onCancel,
   onRemove,
+  onVerify,
 }: Props) {
   return (
     <section className="settings-block">
@@ -84,9 +87,14 @@ export default function ModelDownloadCard({
             </button>
           )}
           {view.phase === "ready" && (
-            <button type="button" className="danger" onClick={onRemove} disabled={busy}>
-              删除模型
-            </button>
+            <>
+              <button type="button" className="secondary" onClick={onVerify} disabled={busy}>
+                校验文件完整性
+              </button>
+              <button type="button" className="danger" onClick={onRemove} disabled={busy}>
+                删除模型
+              </button>
+            </>
           )}
         </div>
 
@@ -102,7 +110,10 @@ function ReadyBody({ view }: { view: ModelView }) {
     <div className="model-ready">
       <p className="muted small">
         删除前请先结束正在进行的面试；删除后需要重新下载约 {formatBytes(view.totalBytes)} 才能恢复语音识别。
-        「检查模型文件」只核对文件是否存在、大小是否一致，不会重新下载。
+        「检查模型文件」只核对文件是否存在、大小是否一致，不会重新下载——但它
+        查不出「大小一样、内容坏了」的情况。真怀疑模型损坏（识别总是失败、换设备也
+        一样）时点「校验文件完整性」，它会重算三个文件的 sha256（约几秒），不一致
+        会报错，届时删除后重新下载即可。
       </p>
     </div>
   );

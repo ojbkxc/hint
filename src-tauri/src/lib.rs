@@ -774,6 +774,7 @@ pub fn run() {
             commands::ask_question,
             commands::list_audio_devices,
             commands::prepare_model,
+            commands::verify_model_files,
             commands::model_status,
             commands::cancel_prepare,
             commands::remove_model,

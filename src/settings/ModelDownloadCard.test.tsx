@@ -28,6 +28,7 @@ function renderCard(props: CardProps = {}) {
       notice={props.notice ?? ""}
       onDownload={onDownload}
       onCancel={onCancel}
+      onVerify={vi.fn()}
       onRemove={onRemove}
     />,
   );

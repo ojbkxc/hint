@@ -605,6 +605,7 @@ export default function Dashboard() {
                       onDownload={() => void model.download()}
                       onCancel={() => void model.cancel()}
                       onRemove={() => void model.remove()}
+                      onVerify={() => void model.verify()}
                     />
                   </div>
 

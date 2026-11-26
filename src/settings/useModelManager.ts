@@ -152,5 +152,30 @@ export function useModelManager() {
     await refresh();
   }, [refresh]);
 
-  return { view, busy, notice, download, cancel, remove, refresh };
+  /**
+   * 重算三个模型文件的 sha256（真校验）。
+   *
+   * 与 `download()` 的区别：`prepare_model` 走快路径，只比对 verified.json 里的
+   * 摘要 + 文件大小，**不重算 sha256**。真机验证过：把 model.int8.onnx 中间 4KB
+   * 改成垃圾、大小不变，`model_status` 仍报 ready —— 界面会说「可以开始面试」，
+   * 而识别实际会失败。
+   *
+   * 这个动作只在用户怀疑模型损坏时用（240MB 重算约几秒，不适合每次启动跑）。
+   */
+  const verify = useCallback(async () => {
+    setNotice("");
+    setBusy(true);
+    const result = await safeInvoke<unknown>("verify_model_files");
+    setBusy(false);
+    if (disposed.current) return;
+    if (!result.ok) {
+      setNotice(`模型文件校验未通过：${result.error}`);
+      await refresh();
+      return;
+    }
+    setNotice("模型文件校验通过（sha256 一致）。");
+    await refresh();
+  }, [refresh]);
+
+  return { view, busy, notice, download, cancel, remove, refresh, verify };
 }

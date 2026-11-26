@@ -1212,6 +1212,30 @@ impl Drop for PrepareGuard {
     }
 }
 
+/// 重算三个模型文件的 sha256 并刷新 verified.json。
+///
+/// ## 为什么需要这个入口
+///
+/// `ModelManager::is_ready()` 走的是**快路径**：比对 `verified.json` 里记录的摘要 +
+/// 文件大小，**不重算 sha256**（240MB 每次启动都算一遍太慢）。
+///
+/// 真机验证过这个缺口：把 model.int8.onnx 中间 4KB 改成垃圾、**大小保持不变**，
+/// `model_status` 仍返回 `ready`、`prepare_model` 仍返回 `true`——界面会说
+/// 「模型文件检查完成，可以开始面试」，而语音识别实际会失败。用户只会在面试中
+/// 才发现「识别不出东西」。
+///
+/// `manifest.rs` 的注释早就写着「用户手动点「校验文件」（上层调用 verify_files）」，
+/// 但**这个入口一直没实现**。这里补上：用户怀疑模型坏了（识别总是失败、换设备也
+/// 一样）时可以主动校验，几秒钟换一个确定答案。
+#[tauri::command]
+pub async fn verify_model_files(state: State<'_, AppState>) -> Result<(), String> {
+    let manager = state.model.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.verify())
+        .await
+        .map_err(|error| format!("校验任务失败：{error}"))?
+        .map_err(|error| format!("{error}"))
+}
+
 #[tauri::command]
 pub async fn prepare_model(app: AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
