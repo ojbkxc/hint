@@ -34,6 +34,7 @@ function renderReview(props: Props = {}) {
     onExport: vi.fn(),
     onDelete: vi.fn(),
     onDeleteAll: vi.fn(),
+    onRename: vi.fn(async () => {}),
   };
   const utils = render(
     <SessionReview
