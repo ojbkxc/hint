@@ -278,6 +278,32 @@ pub async fn download_installer(
 mod tests {
     use super::*;
 
+    /// 缓存必须能经 JSON 往返——写盘用 camelCase，读盘也必须是 camelCase。
+    ///
+    /// 真机现象：缓存文件已经写出（`{"checkedAt":...,"latest":"..."}`），但下次启动
+    /// 仍然真实请求了 api.github.com，日志里没有「命中缓存」。两侧 rename 不一致
+    /// 是最可能的原因，这条测试把它钉死。
+    #[test]
+    fn cache_roundtrips_through_json() {
+        let original = UpdateCheckCache {
+            checked_at: 1_795_727_419_699,
+            latest: "1.1.46".into(),
+        };
+        let text = serde_json::to_string(&original).expect("serialize");
+        assert!(
+            text.contains("checkedAt"),
+            "写盘键名必须是 checkedAt（camelCase）：{text}"
+        );
+        assert!(!text.contains("checked_at"), "不该出现下划线键名：{text}");
+
+        let back: UpdateCheckCache = serde_json::from_str(&text).expect("deserialize");
+        assert_eq!(back, original, "往返后必须完全相同");
+        assert!(
+            back.is_fresh(original.checked_at + 1000),
+            "刚写的缓存应新鲜"
+        );
+    }
+
     /// 缓存只在 TTL 内新鲜；未来时间戳当作过期。
     ///
     /// 依据：GitHub 匿名接口限流每小时 60 次，本命令每次启动都跑。真机日志里
