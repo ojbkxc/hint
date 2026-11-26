@@ -14,6 +14,24 @@ type Props = {
 
 type ImportField = "resume" | "projects";
 
+/**
+ * 把 `organizedAt` 渲染成「上次整理于 …」。
+ *
+ * `organizedAt` 的语义是 **0 = 未知**（旧档案没有这个字段时前端归一成 0），
+ * 不是「1970 年整理」。所以 0 时返回空串，调用方据此不显示这一行——
+ * 显示「整理于 1970 年」会让用户以为档案是坏的。
+ */
+function organizedLabel(organizedAt: number): string {
+  if (!Number.isFinite(organizedAt) || organizedAt <= 0) return "";
+  const when = new Date(organizedAt);
+  if (Number.isNaN(when.getTime())) return "";
+  const days = Math.floor((Date.now() - organizedAt) / 86_400_000);
+  const stamp = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
+  if (days <= 0) return `上次整理于今天（${stamp}）`;
+  if (days === 1) return `上次整理于昨天（${stamp}）`;
+  return `上次整理于 ${days} 天前（${stamp}）`;
+}
+
 export default function ProfileCard({ form, patch }: Props) {
   const [importing, setImporting] = useState<ImportField | "">("");
   const [status, setStatus] = useState("");
@@ -313,6 +331,12 @@ export default function ProfileCard({ form, patch }: Props) {
         {form.profile && form.profile.facts.length > 0 && (
           <div className="profile-facts">
             <p className="muted small">
+              {organizedLabel(form.profile.organizedAt) !== "" && (
+                <>
+                  {organizedLabel(form.profile.organizedAt)}
+                  <br />
+                </>
+              )}
               共 {form.profile.facts.length} 条事实
               {form.profile.sources.length > 0 &&
                 `，基于 ${form.profile.sources.join("、")}`}
