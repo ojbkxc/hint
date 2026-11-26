@@ -771,6 +771,31 @@ fn format_started_at(ms: i64) -> String {
     }
 }
 
+/// 清理没有任何内容的会话，返回删除条数。
+///
+/// 用途：麦克风故障/权限被拒时会攒下一批「点了开始但一句都没识别到」的记录。
+/// 1.1.43 起这类会话在结束时就自动丢弃，但**存量**的历史记录还在，需要一个入口。
+///
+/// 先数再删：界面要能问「确定清理 N 条吗」，盲删用户不知道会丢多少。
+#[tauri::command(async)]
+pub fn clean_empty_sessions(state: State<'_, AppState>) -> Result<usize, String> {
+    let store = lock(&state.store);
+    let removed = store
+        .delete_empty_sessions()
+        .map_err(|error| format!("清理空会话失败：{error}"))?;
+    tracing::info!(removed, "已清理空会话");
+    Ok(removed)
+}
+
+/// 空会话条数：界面据此决定要不要显示「清理」按钮。
+#[tauri::command(async)]
+pub fn count_empty_sessions(state: State<'_, AppState>) -> Result<i64, String> {
+    let store = lock(&state.store);
+    store
+        .count_empty_sessions()
+        .map_err(|error| format!("统计空会话失败：{error}"))
+}
+
 #[tauri::command(async)]
 pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result<usize, String> {
     // 启动中的会话记录已经落库，但 state.session 仍为空；此时清空会把

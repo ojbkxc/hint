@@ -402,6 +402,35 @@ impl Store {
         Ok(found != 0)
     }
 
+    /// 没有任何内容的会话条数（转录与答案都为空）。
+    ///
+    /// 与 [`Self::session_has_content`] 同一判据的集合版本：删之前先数，界面才能
+    /// 问「确定清理 N 条吗」而不是盲删。
+    pub fn count_empty_sessions(&self) -> Result<i64> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions s
+             WHERE NOT EXISTS(SELECT 1 FROM segments WHERE session_id = s.id)
+               AND NOT EXISTS(SELECT 1 FROM answers  WHERE session_id = s.id)",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// 删除全部空会话，返回删除条数。
+    ///
+    /// 判据与 [`Self::count_empty_sessions`] 逐字一致（同样两个 NOT EXISTS）——
+    /// 两处写不同判据的话，「数出来 33 条、删掉 30 条」这种不一致会让用户以为
+    /// 有 3 条删不掉。
+    pub fn delete_empty_sessions(&self) -> Result<usize> {
+        let changed = self.conn.execute(
+            "DELETE FROM sessions
+             WHERE NOT EXISTS(SELECT 1 FROM segments WHERE session_id = sessions.id)
+               AND NOT EXISTS(SELECT 1 FROM answers  WHERE session_id = sessions.id)",
+            [],
+        )?;
+        Ok(changed)
+    }
+
     /// 会话总数。
     ///
     /// 列表接口有上限（当前 200 条），超过之后**必须**能告诉用户「还有更多」——
@@ -885,6 +914,44 @@ mod tests {
 
         // 不存在的会话：EXISTS 两个子查询都查不到，返回 false 而不是报错
         assert!(!store.session_has_content(999_999).expect("check"));
+    }
+
+    /// 空会话的统计与删除必须用**同一个判据**。
+    ///
+    /// 两处判据不一致时会出现「数出来 33 条、删掉 30 条」——用户会以为有 3 条
+    /// 删不掉，而实际是判据差了几个字节。
+    #[test]
+    fn empty_sessions_are_counted_and_deleted() {
+        let store = Store::open_in_memory().expect("open");
+
+        // 两条空会话
+        store.create_session("openai", "m", None).expect("empty1");
+        store.create_session("openai", "m", None).expect("empty2");
+        // 一条有转录
+        let with_seg = store.create_session("openai", "m", None).expect("seg");
+        store
+            .add_segment(with_seg, "interviewer", 0, 1000, "有内容", false, false)
+            .expect("add seg");
+        // 一条只有答案
+        let with_ans = store.create_session("openai", "m", None).expect("ans");
+        store
+            .add_answer(with_ans, None, "有答案", "m", AnswerMetrics::default())
+            .expect("add ans");
+
+        assert_eq!(store.count_empty_sessions().expect("count"), 2);
+
+        let removed = store.delete_empty_sessions().expect("delete");
+        // 数的和删的必须相等
+        assert_eq!(removed, 2);
+
+        // 有内容的两个都还在
+        assert_eq!(store.count_sessions().expect("total"), 2);
+        assert!(store.session_has_content(with_seg).expect("check"));
+        assert!(store.session_has_content(with_ans).expect("check"));
+
+        // 再清理一次：没有空会话了
+        assert_eq!(store.count_empty_sessions().expect("count"), 0);
+        assert_eq!(store.delete_empty_sessions().expect("delete"), 0);
     }
 
     /// 备注：写入 / trim / 清除 / 不存在的 id。

@@ -28,6 +28,10 @@ type Props = {
   onDeleteAll: () => void;
   /** 批量导出全部会话到一个目录。 */
   onExportAll: () => void;
+  /** 空会话条数（0 表示不需要显示清理入口）。 */
+  emptyCount: number;
+  /** 清理空会话。 */
+  onCleanEmpty: () => void;
   /** 保存会话备注：空串表示清除，回落到时间戳。 */
   onRename: (id: string, note: string) => Promise<void>;
 };
@@ -56,6 +60,8 @@ export default function SessionReview(props: Props) {
     onDelete,
     onDeleteAll,
     onExportAll,
+    emptyCount,
+    onCleanEmpty,
     onRename,
   } = props;
 
@@ -68,6 +74,16 @@ export default function SessionReview(props: Props) {
             <button type="button" className="ghost" onClick={onRefresh} disabled={loading}>
               {loading ? "加载中…" : "刷新"}
             </button>
+            {emptyCount > 0 && (
+              <button
+                type="button"
+                className="ghost"
+                onClick={onCleanEmpty}
+                title={`删除 ${emptyCount} 条「没有转录也没有答案」的会话记录`}
+              >
+                清理空会话（{emptyCount}）
+              </button>
+            )}
             <button
               type="button"
               className="ghost"

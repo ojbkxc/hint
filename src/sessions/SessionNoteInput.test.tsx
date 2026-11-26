@@ -48,6 +48,8 @@ function renderWithNote(note: string, onRename = vi.fn(async () => {})) {
       onDeleteAll={vi.fn()}
       onRename={onRename}
       onExportAll={vi.fn()}
+      emptyCount={0}
+      onCleanEmpty={vi.fn()}
     />,
   );
   return { onRename };

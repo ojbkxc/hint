@@ -747,6 +747,8 @@ pub fn run() {
             commands::organize_profile,
             commands::rename_session,
             commands::export_all_sessions,
+            commands::clean_empty_sessions,
+            commands::count_empty_sessions,
             commands::search_sessions,
             commands::check_update,
             commands::download_update,

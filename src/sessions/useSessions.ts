@@ -200,6 +200,42 @@ export function useSessions(enabled: boolean) {
     await refresh();
   }, [sessions, refresh]);
 
+  /** 空会话条数：界面据此决定要不要显示「清理空会话」按钮。 */
+  const [emptyCount, setEmptyCount] = useState(0);
+
+  const refreshEmptyCount = useCallback(async () => {
+    const result = await safeInvoke<number>("count_empty_sessions");
+    setEmptyCount(result.ok && typeof result.data === "number" ? result.data : 0);
+  }, []);
+
+  useEffect(() => {
+    if (enabled) void refreshEmptyCount();
+  }, [enabled, refreshEmptyCount]);
+
+  /**
+   * 清理没有任何内容的会话。
+   *
+   * 先问条数再删：用户要知道会丢多少。
+   */
+  const cleanEmpty = useCallback(async () => {
+    if (emptyCount <= 0) return;
+    if (!window.confirm(`确定清理 ${emptyCount} 条没有任何内容的会话吗？\n只删除「没有转录也没有答案」的记录，有内容的不会动。`)) {
+      return;
+    }
+    setNotice("");
+    const result = await safeInvoke<number>("clean_empty_sessions");
+    if (!result.ok) {
+      setNotice(`清理失败：${result.error}`);
+      return;
+    }
+    const removed = typeof result.data === "number" ? result.data : 0;
+    setNotice(`已清理 ${removed} 条空会话`);
+    setDetail(null);
+    setSelectedId("");
+    await refresh();
+    await refreshEmptyCount();
+  }, [emptyCount, refresh, refreshEmptyCount]);
+
   /**
    * 把全部会话导出到一个目录（批量备份）。
    *
@@ -286,6 +322,8 @@ export function useSessions(enabled: boolean) {
     removeAll,
     rename,
     exportAllSessions,
+    emptyCount,
+    cleanEmpty,
   };
 }
 
