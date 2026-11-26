@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+// 别名避开同名冲突：本文件里 `open` 已经是「打开某个会话详情」的 useCallback，
+// 直接用 dialog 的 `open` 会被它遮蔽——调到的其实是打开会话。
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { safeInvoke } from "../lib/tauri";
 import {
   normalizeSessionDetail,
@@ -175,6 +177,30 @@ export function useSessions(enabled: boolean) {
   }, [sessions, refresh]);
 
   /**
+   * 把全部会话导出到一个目录（批量备份）。
+   *
+   * 与单条导出的区别：只选**一次目录**，由后端一次写完。前端循环调单条导出会让
+   * 用户点几十次保存框——备份是「一次性把能拿的都拿走」的场景。
+   */
+  const exportAllSessions = useCallback(async () => {
+    setNotice("");
+    let dir: string | null = null;
+    try {
+      dir = await openDialog({ directory: true, multiple: false, title: "选择导出目录" });
+    } catch (reason) {
+      setNotice(`导出失败：${String(reason)}`);
+      return;
+    }
+    if (!dir || typeof dir !== "string") return;
+    const result = await safeInvoke<string>("export_all_sessions", { dir });
+    if (!result.ok) {
+      setNotice(`导出失败：${result.error}`);
+      return;
+    }
+    setNotice(result.data);
+  }, []);
+
+  /**
    * 保存会话备注（空串 = 清除，回落到时间戳）。
    *
    * 需要同时更新两处，否则界面会不一致：
@@ -233,6 +259,7 @@ export function useSessions(enabled: boolean) {
     remove,
     removeAll,
     rename,
+    exportAllSessions,
   };
 }
 

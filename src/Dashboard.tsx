@@ -764,6 +764,7 @@ export default function Dashboard() {
           onDelete={() => void sessions.remove()}
           onDeleteAll={() => void sessions.removeAll()}
           onRename={sessions.rename}
+          onExportAll={() => void sessions.exportAllSessions()}
         />
         </div>
       )}

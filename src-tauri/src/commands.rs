@@ -649,6 +649,108 @@ pub fn export_session_file(
     Ok(())
 }
 
+/// 把全部会话导出成一个目录下的多个 `.md`（批量备份）。
+///
+/// 为什么不是前端循环调 `export_session_file`：那样每导一条都要弹一次保存框，
+/// 41 条会话 = 41 次点击。备份是「一次性把能拿的都拿走」的场景，应该只选一次目录。
+///
+/// 返回实际导出的条数与跳过的条数，而不是简单的 Ok：
+/// - 内容为空的会话（只有开头没有转录）跳过，不该让整批失败；
+/// - 写单个文件失败也跳过并计数，最后一起报——中途某条被占用不该毁掉整次备份。
+///
+/// 文件名用 `{id}-{备注或时间}.md`：备注优先（用户自己起的名字最有辨识度），
+/// 没有备注就用开始时间；两者都转义掉 Windows 非法字符。
+#[tauri::command(async)]
+pub fn export_all_sessions(state: State<'_, AppState>, dir: String) -> Result<String, String> {
+    let target_dir = std::path::PathBuf::from(&dir);
+    std::fs::create_dir_all(&target_dir).map_err(|error| format!("创建目录失败：{error}"))?;
+
+    // 先把要导出的 (id, 文件名, markdown) 全取出来，再统一写盘：
+    // 锁只持有到取数据为止，不在持锁期间做文件 IO。
+    let items: Vec<(i64, String, String)> = {
+        let store = lock(&state.store);
+        let sessions = store
+            .list_sessions(10_000)
+            .map_err(|error| format!("读取会话列表失败：{error}"))?;
+        let mut items = Vec::new();
+        for summary in sessions {
+            let markdown = match store.export_markdown(summary.session.id) {
+                Ok(text) => text,
+                Err(error) => {
+                    tracing::warn!(id = summary.session.id, %error, "会话导出跳过");
+                    continue;
+                }
+            };
+            if markdown.trim().is_empty() {
+                continue;
+            }
+            let name = session_file_name(&summary.session);
+            items.push((summary.session.id, name, markdown));
+        }
+        items
+    };
+
+    let total = items.len();
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    for (id, name, markdown) in items {
+        let path = target_dir.join(format!("{name}.md"));
+        if std::fs::write(&path, markdown.as_bytes()).is_ok() {
+            written += 1;
+        } else {
+            skipped += 1;
+            tracing::warn!(id, path = %path.display(), "写文件失败，已跳过");
+        }
+    }
+    tracing::info!(dir = %target_dir.display(), written, skipped, total, "批量导出完成");
+    Ok(format!("已导出 {written} 条到 {}", target_dir.display()))
+}
+
+/// 生成导出文件名：`{id}-{备注或开始时间}`，转义 Windows 非法字符。
+fn session_file_name(session: &hint_store::Session) -> String {
+    // `started_at` 是 **Unix 毫秒时间戳（i64）**，不是字符串——直接拼进文件名会得到
+    // 一串 13 位数字，用户看不出是哪次。先格式化成「2026-11-26 15-37-30」。
+    let stamp = format_started_at(session.started_at);
+    let label = session
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| stamp.clone());
+    // Windows 文件名非法字符：\ / : * ? " < > | 以及控制字符。
+    // 时间戳里的冒号必须换成 '-'，否则建文件直接失败。
+    let cleaned: String = label
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('-');
+    // 全空（比如备注是纯禁止字符）时退回时间戳，避免产生 `-.md`。
+    if trimmed.is_empty() {
+        format!("{}-{stamp}", session.id)
+    } else {
+        format!("{}-{trimmed}", session.id)
+    }
+}
+
+/// Unix 毫秒时间戳 → `2026-11-26 15-37-30`（已把冒号换成 `-`，可直接做文件名）。
+///
+/// 用本地时区：文件名是给人看的，不是给机器解析的。
+fn format_started_at(ms: i64) -> String {
+    use chrono::{Local, TimeZone};
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(dt) => dt.format("%Y-%m-%d %H-%M-%S").to_string(),
+        // 时间戳超出可表示范围时不 panic：退回原始数字，文件仍然可建。
+        None => format!("{ms}"),
+    }
+}
+
 #[tauri::command(async)]
 pub fn delete_all_sessions(state: State<'_, AppState>, app: AppHandle) -> Result<usize, String> {
     // 启动中的会话记录已经落库，但 state.session 仍为空；此时清空会把
@@ -1620,5 +1722,69 @@ mod tests {
         assert!(build_capture_system_prompt(&settings).contains("口语短答"));
         settings.answer_style = AnswerStyle::Outline;
         assert!(build_capture_system_prompt(&settings).contains("5-7 条要点"));
+    }
+}
+
+#[cfg(test)]
+mod export_name_tests {
+    use super::*;
+
+    fn session(id: i64, started_at: i64, note: Option<&str>) -> hint_store::Session {
+        hint_store::Session {
+            id,
+            started_at,
+            ended_at: None,
+            provider_id: "openai".to_string(),
+            model_id: "m".to_string(),
+            note: note.map(str::to_string),
+        }
+    }
+
+    /// 2026-11-26 15:37:30 本地时间的毫秒时间戳。
+    fn sample_ms() -> i64 {
+        use chrono::{Local, TimeZone};
+        Local
+            .with_ymd_and_hms(2026, 11, 26, 15, 37, 30)
+            .single()
+            .expect("valid datetime")
+            .timestamp_millis()
+    }
+
+    /// Windows 文件名非法字符必须替换：时间戳里的冒号换完才建得出文件。
+    #[test]
+    fn session_file_name_escapes_illegal_chars() {
+        let name = session_file_name(&session(7, sample_ms(), None));
+        assert!(!name.contains(':'), "文件名不能含冒号：{name}");
+        assert!(
+            name.starts_with("7-2026-11-26"),
+            "应以 id-日期 开头：{name}"
+        );
+
+        let weird = session_file_name(&session(8, sample_ms(), Some(r#"a/b\c:d*e?f"g<h>i|j"#)));
+        for bad in ['/', '\\', ':', '*', '?', '"', '<', '>', '|'] {
+            assert!(!weird.contains(bad), "文件名仍含非法字符 {bad}：{weird}");
+        }
+    }
+
+    /// 备注优先于时间戳——用户自己起的名字最有辨识度。
+    #[test]
+    fn session_file_name_prefers_note() {
+        let name = session_file_name(&session(3, sample_ms(), Some("字节二面")));
+        assert_eq!(name, "3-字节二面");
+    }
+
+    /// 备注全是非法字符时退回时间戳，不能产生 '-.md' 这种文件。
+    #[test]
+    fn session_file_name_falls_back_when_note_is_blank_after_cleaning() {
+        let name = session_file_name(&session(9, sample_ms(), Some("  :::  ")));
+        assert!(name.starts_with("9-"), "应带 id 前缀：{name}");
+        assert!(name.contains("2026-11-26"), "应回落到时间戳：{name}");
+    }
+
+    /// 时间戳格式化：本地时区、冒号换横线。
+    #[test]
+    fn started_at_formats_to_filename_safe_string() {
+        let text = format_started_at(sample_ms());
+        assert_eq!(text, "2026-11-26 15-37-30");
     }
 }

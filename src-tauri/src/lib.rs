@@ -746,6 +746,7 @@ pub fn run() {
             commands::test_llm,
             commands::organize_profile,
             commands::rename_session,
+            commands::export_all_sessions,
             commands::search_sessions,
             commands::check_update,
             commands::download_update,

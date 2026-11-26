@@ -24,6 +24,8 @@ type Props = {
   onExport: () => void;
   onDelete: () => void;
   onDeleteAll: () => void;
+  /** 批量导出全部会话到一个目录。 */
+  onExportAll: () => void;
   /** 保存会话备注：空串表示清除，回落到时间戳。 */
   onRename: (id: string, note: string) => Promise<void>;
 };
@@ -50,6 +52,7 @@ export default function SessionReview(props: Props) {
     onExport,
     onDelete,
     onDeleteAll,
+    onExportAll,
     onRename,
   } = props;
 
@@ -61,6 +64,15 @@ export default function SessionReview(props: Props) {
           <div className="action-row">
             <button type="button" className="ghost" onClick={onRefresh} disabled={loading}>
               {loading ? "加载中…" : "刷新"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={onExportAll}
+              disabled={loading || totalCount === 0}
+              title="把全部会话各导出一个 Markdown 文件到指定目录"
+            >
+              导出全部
             </button>
             <button
               type="button"
