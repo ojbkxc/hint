@@ -1557,6 +1557,51 @@ button.preset.active {
   color: var(--text);
 }
 
+/* 面试档案：整理按钮行与事实预览。
+   整理是可选动作，视觉上要比「简历 / 项目资料」轻一档，别抢主输入的注意力。 */
+.profile-organize-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 6px;
+}
+
+.profile-facts {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-sunken);
+}
+
+.profile-fact-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  list-style: disc;
+}
+
+.profile-fact-list li {
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.profile-fact-kind {
+  display: inline-block;
+  min-width: 52px;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
 .overlay-status {
   display: flex;
   align-items: center;

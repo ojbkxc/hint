@@ -17,6 +17,64 @@ type ImportField = "resume" | "projects";
 export default function ProfileCard({ form, patch }: Props) {
   const [importing, setImporting] = useState<ImportField | "">("");
   const [status, setStatus] = useState("");
+  const [organizing, setOrganizing] = useState(false);
+  const [organizeStatus, setOrganizeStatus] = useState("");
+
+  /**
+   * 选多份文档 → 交给后端整理成事实列表。
+   *
+   * 把 `form.form`（当前表单，可能还没保存）一起传过去：用户常常是「刚粘完 Key
+   * 就想整理」，此时配置还没落盘，用已保存的旧配置会连不上接口。后端 `organize_profile`
+   * 与 `test_llm` 同一套「表单优先」处理。
+   */
+  async function organize() {
+    if (!isTauri()) {
+      setOrganizeStatus("纯浏览器预览无法打开文件对话框；安装版可直接整理。");
+      return;
+    }
+    setOrganizing(true);
+    setOrganizeStatus("");
+    try {
+      const selected = await open({
+        multiple: true,
+        directory: false,
+        title: "选择要整理的资料（可多选）",
+        filters: [
+          {
+            name: "资料文件（TXT / MD / DOCX / PDF）",
+            extensions: ["txt", "md", "markdown", "docx", "pdf"],
+          },
+        ],
+      });
+      const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+      if (paths.length === 0) return;
+
+      setOrganizeStatus(`正在整理 ${paths.length} 份文档…（模型调用，可能需要几十秒）`);
+      // 只传文档，配置与 Key 用**已保存**的：整理是一次性离线动作，不追求
+      // 「表单里刚粘的 Key 立刻可用」——那需要额外把 apiKey 透到这一层。
+      // Key 没保存时后端会明确提示「请先保存」而不是静默失败。
+      const result = await safeInvoke<Settings["profile"]>("organize_profile", {
+        documents: paths,
+      });
+      if (!result.ok) {
+        setOrganizeStatus(`整理失败：${result.error}`);
+        return;
+      }
+      const profile = result.data;
+      if (!profile || !Array.isArray(profile.facts) || profile.facts.length === 0) {
+        setOrganizeStatus("整理失败：模型没有返回可解析的事实。");
+        return;
+      }
+      patch({ profile });
+      setOrganizeStatus(
+        `已整理出 ${profile.facts.length} 条事实。记得点底部「保存全部配置」写入磁盘。`,
+      );
+    } catch (error) {
+      setOrganizeStatus(`整理失败：${describeError(error)}`);
+    } finally {
+      setOrganizing(false);
+    }
+  }
 
   async function importFile(field: ImportField) {
     if (!isTauri()) {
@@ -134,6 +192,69 @@ export default function ProfileCard({ form, patch }: Props) {
           导入的文件只在本机解析（PDF / Word 文本提取全部离线完成），资料不会上传到
           除你所选模型接口以外的任何地方。
         </p>
+      </div>
+
+      {/* 整理：把多份文档压成可检索的紧凑档案。
+          为什么值得单独一步——见 docs：原来简历+项目各 6000 字**每次请求全量发送**，
+          中文 12000 字约 8–12k tokens，首字延迟与 prompt 长度近似成正比。整理之后
+          每轮只发常驻段 + 命中片段（约 2600 字）。 */}
+      <div className="field-group">
+        <p className="field-group-title">面试档案（整理，可选）</p>
+        <p className="muted small">
+          选多份资料（简历、项目文档、复盘笔记…），让模型压成一份紧凑档案。之后提问时
+          只按问题检索相关片段发送，首字更快；不整理则仍按上面「简历 / 项目资料」整段
+          发送（较慢但不用额外操作）。
+        </p>
+
+        <div className="profile-organize-row">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void organize()}
+            disabled={organizing}
+          >
+            {organizing ? "整理中…" : "选择文档并整理"}
+          </button>
+          {form.profile && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                patch({ profile: null });
+                setOrganizeStatus("已清除档案；之后按「简历 / 项目资料」整段发送。");
+              }}
+              disabled={organizing}
+            >
+              清除档案
+            </button>
+          )}
+        </div>
+
+        {organizeStatus && (
+          <p className={statusToneClass(deriveStatusTone(organizeStatus))}>{organizeStatus}</p>
+        )}
+
+        {form.profile && form.profile.facts.length > 0 && (
+          <div className="profile-facts">
+            <p className="muted small">
+              共 {form.profile.facts.length} 条事实
+              {form.profile.sources.length > 0 &&
+                `，基于 ${form.profile.sources.join("、")}`}
+              。提问时按关键词挑相关几条发送。
+            </p>
+            <ul className="profile-fact-list">
+              {form.profile.facts.slice(0, 8).map((fact, index) => (
+                <li key={index}>
+                  <span className="profile-fact-kind">{fact.kind}</span>
+                  {fact.text}
+                </li>
+              ))}
+            </ul>
+            {form.profile.facts.length > 8 && (
+              <p className="muted small">…另有 {form.profile.facts.length - 8} 条</p>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

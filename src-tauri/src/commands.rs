@@ -226,6 +226,97 @@ pub async fn test_llm(
     .map_err(|error| format!("模型连接失败：{error}"))
 }
 
+/// 整理面试档案：把多份文档交给模型压成可检索的事实列表。
+///
+/// ## 为什么单独做一步
+///
+/// 1.1.x 把简历与项目资料（各截断 6000 字）每次请求全量塞进 system prompt，
+/// 中文 12000 字约 8–12k tokens，首字延迟与 prompt 长度近似成正比——这是
+/// 「点了提问要等很久」的主要来源。整理一次之后，每轮只发常驻段 + 命中片段
+/// （约 2600 字），把首字延迟压下来。
+///
+/// ## 与 test_llm 的区别
+///
+/// 同样支持用表单里尚未保存的配置与 Key（用户可能刚粘完 Key 就想整理），
+/// 但**不使用** `settings.system_prompt()`——那是面试作答的提示词，整理要用
+/// `profile::organize_system_prompt()`。
+#[tauri::command]
+pub async fn organize_profile(
+    state: State<'_, AppState>,
+    documents: Vec<String>,
+    settings: Option<Settings>,
+    api_key: Option<String>,
+) -> Result<hint_core::Profile, String> {
+    if documents.is_empty() {
+        return Err("请先选择至少一份资料文档。".to_string());
+    }
+    let settings = settings.unwrap_or_else(|| Settings::load(&state.settings_path));
+    let provider = settings.provider.as_str().to_string();
+    let key = resolve_api_key(
+        api_key,
+        &provider,
+        "当前接口还没有保存 API Key：请先在上方输入框粘贴 Key 并保存，或点「测试连接」自动保存",
+    )?;
+
+    // 读文档。单份失败不中断整次整理——用户选十份、其中一份是加密 PDF 时，
+    // 直接报错会让另外九份白读；把失败的列出来，成功的继续。
+    let mut loaded: Vec<(String, String)> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for path in &documents {
+        match crate::import::document_text(path) {
+            Ok(text) if !text.trim().is_empty() => {
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                loaded.push((name, text));
+            }
+            Ok(_) => failed.push(format!("{path}（内容为空）")),
+            Err(error) => failed.push(format!("{path}（{error}）")),
+        }
+    }
+    if loaded.is_empty() {
+        return Err(format!("选中的资料都读不出来：{}", failed.join("；")));
+    }
+
+    let user_prompt = hint_core::profile::organize_user_prompt(&loaded);
+    let response = llm::complete(
+        &settings,
+        &key,
+        llm::ChatRequest {
+            system: hint_core::profile::organize_system_prompt().to_string(),
+            user: user_prompt,
+            ..llm::ChatRequest::default()
+        },
+    )
+    .await
+    .map_err(|error| format!("整理失败（模型调用出错）：{error}"))?;
+
+    let facts = hint_core::profile::parse_organized(&response.text);
+    if facts.is_empty() {
+        // 模型没按格式回。把原文前 200 字带出来，用户能看出是「模型不听话」
+        // 还是「文档里确实没内容」——只说「解析失败」等于让人猜。
+        let preview: String = response.text.chars().take(200).collect();
+        return Err(format!(
+            "整理失败：模型没有按「类型 + 制表符 + 正文」的格式输出，无法解析。原始回复开头：{preview}"
+        ));
+    }
+
+    let sources = loaded.into_iter().map(|(name, _)| name).collect();
+    tracing::info!(
+        facts = facts.len(),
+        sources = documents.len(),
+        failed = failed.len(),
+        "面试档案整理完成"
+    );
+
+    Ok(hint_core::Profile {
+        organized_at: chrono::Utc::now().timestamp_millis(),
+        sources,
+        facts,
+    })
+}
+
 /// 拉取接口可用的模型列表（设置页下拉选择用）。
 ///
 /// 与 `test_llm` 同理：支持用表单里未保存的 Key；未保存时给出中文提示，

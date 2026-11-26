@@ -1818,7 +1818,7 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
     let pending = lock(&shared.answers).pending();
     let settings = shared.settings.clone();
     let request = ChatRequest {
-        system: pipeline::build_system_prompt(&settings),
+        system: pipeline::build_system_prompt(&settings, &question),
         user: pipeline::build_user_prompt(&question, &history),
         ..ChatRequest::default()
     };

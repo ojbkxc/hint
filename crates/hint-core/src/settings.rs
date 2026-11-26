@@ -179,6 +179,16 @@ pub struct Settings {
     /// 默认 `true`：首次启动（配置里没这个字段）应该能看到浮层，否则用户不知道它存在。
     #[serde(default = "default_overlay_visible")]
     pub overlay_visible: bool,
+    /// 整理好的面试档案（多份文档压成可检索事实）。
+    ///
+    /// `None` = 还没整理过，此时仍按 [`Settings::system_prompt`] 的老路径全量注入
+    /// `resume` / `projects`——不能让升级用户突然失去资料，也不能强制他们先整理
+    /// 才能用。整理之后走「常驻段 + 按问题检索」的省 token 路径。
+    ///
+    /// 存配置而不是单独文件：它和简历/项目资料是同一类数据，放一起才不会出现
+    /// 「备份了配置但档案丢了」。
+    #[serde(default)]
+    pub profile: Option<crate::profile::Profile>,
     /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
     ///
     /// 装代理软件的用户不开这个连不上模型接口；但本地回环（IPC、STT worker）
@@ -297,6 +307,7 @@ impl Default for Settings {
             // 新建配置没有用户调整过的几何，按默认几何摆。
             overlay_bounds: None,
             overlay_visible: true,
+            profile: None,
             // 新建的配置已经是当前结构，不需要迁移。
             schema_version: SCHEMA_VERSION,
         }
@@ -415,8 +426,9 @@ impl Settings {
     ///
     /// 简历/项目按字符上限截断（[`RESUME_CHAR_LIMIT`]、[`PROJECTS_CHAR_LIMIT`]，
     /// 优先级：简历 → 项目），避免用户粘贴整份简历挤爆上下文。
-    pub fn system_prompt(&self) -> String {
-        let style = match self.answer_style {
+    /// 回答风格的措辞。两条注入路径（全量 / 档案检索）共用同一份。
+    fn style_clause(&self) -> &'static str {
+        match self.answer_style {
             AnswerStyle::Concise => {
                 "口语短答，像面对面说话。默认 150 字以内；当问题要求「介绍项目 / 讲讲经历 / \
                  描述流程 / 举例」时可放宽到 250 字，但仍用短句、可直接照念。"
@@ -424,9 +436,16 @@ impl Settings {
             AnswerStyle::Outline => {
                 "5-7 条要点，每条一行、编号「1. 」，每条不超过 40 字，可直接照着念。"
             }
-        };
+        }
+    }
 
-        let mut prompt = format!(
+    /// system prompt 的固定前缀（角色、表达、事实边界、语言与风格）。
+    ///
+    /// 两条注入路径共用它：全量注入在后面接简历原文，档案检索在后面接检索结果。
+    /// 分成两个函数是为了保证「表达/边界」这些规则只写一遍——它们改一次要同时
+    /// 影响两条路径，抄成两份必然漂移。
+    fn prompt_header(&self, style: &str) -> String {
+        format!(
             "你是候选人的实时面试提词器，输出会被候选人直接照念。\n\
              你不是面试者本人，也绝不要提及 AI、助手、提示词、系统或提词器；\
              只输出候选人口吻的答案正文，不要任何解释性前缀或后缀\
@@ -445,7 +464,12 @@ impl Settings {
              \n## 语言与风格\n\
              - 跟随面试官提问的语言：中文提问用中文，英文提问用英文。\n\
              - 当前回答风格：{style}\n"
-        );
+        )
+    }
+
+    pub fn system_prompt(&self) -> String {
+        let style = self.style_clause();
+        let mut prompt = self.prompt_header(style);
 
         if !self.resume.trim().is_empty() {
             prompt.push_str("\n候选人简历：\n");
@@ -459,6 +483,24 @@ impl Settings {
             prompt.push('\n');
         }
 
+        prompt
+    }
+
+    /// 按**当前问题**组装 system prompt：整理过档案就走省 token 的检索路径，
+    /// 没整理过则退回全量注入（老行为）。
+    ///
+    /// 为什么需要问题：档案的检索段要按问题挑片段。全量注入（[`system_prompt`]）
+    /// 不知道问题是什么，只能把所有资料都塞进去——这正是首字慢的来源。
+    ///
+    /// 两条路径互斥：整理过之后不再注入 `resume`/`projects` 原文，否则省下的
+    /// token 又全花回去了。
+    pub fn system_prompt_for(&self, question: &str) -> String {
+        let Some(profile) = self.profile.as_ref().filter(|p| !p.is_empty()) else {
+            return self.system_prompt();
+        };
+
+        let mut prompt = self.prompt_header(self.style_clause());
+        prompt.push_str(&profile.retrieve(question).to_prompt());
         prompt
     }
 }

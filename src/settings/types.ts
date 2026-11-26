@@ -39,6 +39,20 @@ export type OverlayBounds = {
   height: number;
 };
 
+/** 一条整理好的事实（与 Rust 侧 `profile::Fact` 一一对应）。 */
+export type ProfileFact = {
+  kind: "basics" | "skill" | "project" | "story" | "qa";
+  text: string;
+  tags: string[];
+};
+
+/** 整理后的面试档案。`null` = 没整理过，走「简历/项目资料整段发送」的老路径。 */
+export type Profile = {
+  organizedAt: number;
+  sources: string[];
+  facts: ProfileFact[];
+};
+
 export type Settings = {
   provider: Provider;
   baseUrl: string;
@@ -89,6 +103,13 @@ export type Settings = {
    * 用户调过的浮层位置下次启动就白丢了（`schemaVersion` 踩过同样的坑）。
    */
   overlayBounds: OverlayBounds | null;
+  /**
+   * 整理后的面试档案。
+   *
+   * 与 `overlayBounds` 同理：前端**只透传、不编辑**，但必须带在类型与
+   * normalizeSettings 里——保存配置时用整个对象覆盖，丢了它就白整理了。
+   */
+  profile: Profile | null;
   schemaVersion: number;
 };
 
@@ -296,6 +317,7 @@ export const EMPTY_SETTINGS: Settings = {
   proxyUrl: "",
   sttLanguage: DEFAULT_STT_LANGUAGE,
   overlayBounds: null,
+  profile: null,
   schemaVersion: 1,
 };
 
@@ -349,6 +371,41 @@ export function normalizeSettings(raw: unknown): Settings {
     overlayBounds: normalizeOverlayBounds(
       value.overlayBounds ?? value.overlay_bounds,
     ),
+    // 同理原样透传：丢了它，保存配置后整理好的档案就没了。
+    profile: normalizeProfile(value.profile),
+  };
+}
+
+/**
+ * 把后端返回的档案归一成可用值。
+ *
+ * 判据与 Rust 侧保持一致（不认识的 kind 直接丢、空正文丢），否则会出现
+ * 「Rust 认为有 12 条、前端只显示 9 条」的漂移。
+ */
+export function normalizeProfile(raw: unknown): Profile | null {
+  if (!isRecord(raw)) return null;
+  const rawFacts = raw.facts;
+  if (!Array.isArray(rawFacts)) return null;
+  const kinds = new Set(["basics", "skill", "project", "story", "qa"]);
+  const facts: ProfileFact[] = [];
+  for (const item of rawFacts) {
+    if (!isRecord(item)) continue;
+    const kind = typeof item.kind === "string" ? item.kind : "";
+    const text = typeof item.text === "string" ? item.text.trim() : "";
+    if (!kinds.has(kind) || !text) continue;
+    const tags = Array.isArray(item.tags)
+      ? item.tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
+    facts.push({ kind: kind as ProfileFact["kind"], text, tags });
+  }
+  if (facts.length === 0) return null;
+  const sources = Array.isArray(raw.sources)
+    ? raw.sources.filter((name): name is string => typeof name === "string")
+    : [];
+  return {
+    organizedAt: typeof raw.organizedAt === "number" ? raw.organizedAt : 0,
+    sources,
+    facts,
   };
 }
 
