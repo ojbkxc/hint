@@ -654,6 +654,12 @@ export default function Dashboard() {
                           点下方固定栏的「保存全部配置」一次性落盘，没有逐项保存。改动未落盘时界面不给提示，
                           切换区块也不会丢，关闭窗口前记得保存。
                         </p>
+                        <p className="muted small">
+                          <strong>会话进行中保存的配置，要到下一次「开始面试」才生效。</strong>
+                          会话启动时会把配置取一份快照：面试中途换模型、换设备、改提示词都不会影响
+                          当前这场（避免正在作答时接口突然变了，答案风格前后不一致）。浮层的
+                          不透明度、字号与主题例外——它们是即时生效的。
+                        </p>
                       </div>
                       <div className="field-group">
                         <p className="field-group-title">环境自检</p>
