@@ -4,6 +4,51 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.40] - 2026-11-26
+
+### 改进：会话搜索同时覆盖答案，不只转录
+
+上一版的搜索只查 `segments`。但用户也会记得「当时 AI 给的那个方案」——那时关键词
+只出现在 `answers` 里。只搜转录会让这类查找落空，而**界面上看不出「搜过了但没搜
+答案」**：用户只会以为没记过。
+
+#### 改法
+
+```sql
+SELECT DISTINCT session_id FROM (
+    SELECT session_id FROM segments WHERE text LIKE ?1 ESCAPE '\'
+    UNION
+    SELECT session_id FROM answers  WHERE text LIKE ?1 ESCAPE '\'
+)
+ORDER BY session_id DESC LIMIT ?2
+```
+
+用 UNION 而不是两次查询再合并：SQL 一次扫完，`DISTINCT` 顺带去掉「同一会话里转录
+和答案都命中」的重复行。
+
+#### 真机验证（能区分新旧）
+
+挑了两个**只存在于答案里**的词（转录命中数为 0）：
+
+| 词 | 转录命中 | 答案命中 | 界面结果 |
+|---|---|---|---|
+| 自动化 | **0** | 3 | **3 条** ✅ |
+| 框架 | **0** | 4 | **4 条** ✅ |
+
+改动前搜这两个词会返回 0 条——界面结果与数据库实际命中数逐一对上，不是「看起来
+有结果」。
+
+#### 测试
+
+`search_covers_both_segments_and_answers`：关键词只在转录 → 命中；只在答案 → 命中
+（本轮扩的范围）；两表都命中 → 只返回一次；都不含 → 空。
+
+（写这条时踩了两个签名：`add_segment` 的参数顺序是
+`id, channel, start_ms, end_ms, text, is_echo, recovered`，`add_answer` 多一个
+`AnswerMetrics`——都不是靠猜能对的，按源码改的。）
+
+574 用例（+1）、tsc 0 错、eslint 0/0、rustfmt 干净、CI 全绿。
+
 ## [1.1.39] - 2026-11-26
 
 ### 新增：会话可加备注（列表标题的首选显示名）
