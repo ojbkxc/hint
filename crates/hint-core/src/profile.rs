@@ -113,10 +113,65 @@ pub const ALWAYS_CHAR_BUDGET: usize = 600;
 /// 稀有词的权重下限。`weight = 1 / df`，所以这等价于「`df <= 2`」——
 /// 一个词只出现在 1–2 条事实里才算有区分度。
 ///
-/// 取值依据（真机数据）：档案 15 条时，「项目」出现在 4 条 → weight 0.25，
-/// 不该单独构成命中；「kafka」出现在 1 条 → weight 1.0，应当命中。
-/// 阈值卡在两者之间。
+/// 取值依据（真机数据）：档案 15 条、非常驻 8 条时，「接口」出现在 5 条 →
+/// weight 0.20，不该单独构成命中；「自动化」「性能」「金融」各出现 1 条 →
+/// weight 1.0，应当命中。
 const RARE_WORD_WEIGHT: f32 = 0.5;
+
+/// **问题结构词**：出现在面试问题里是语法需要，不代表在问具体内容。
+///
+/// 为什么单靠 df 不够——真机数据（档案 15 条、非常驻 8 条）：
+///
+/// | 词 | df | weight | 该不该算命中 |
+/// |---|---|---|---|
+/// | 项目 | 2 | 0.50 | ❌ 不该（「做过区块链项目吗」靠它误命中）|
+/// | 银行 | 2 | 0.50 | ✅ 该（用户真有银行经历）|
+/// | 催收 | 2 | 0.50 | ✅ 该 |
+///
+/// **「项目」和「银行」df 完全相同、区分度完全不同**——频率分不开它们，能分开的
+/// 是「这个词是不是问题句式的一部分」。这类词跨行业固定（不会随档案变化），
+/// 所以用一张固定小表比调 df 阈值可靠。
+///
+/// 表里只放**只起语法作用**的词：如果某个词本身可能就是用户想问的内容
+/// （如「测试」「开发」），绝不能放进来。
+const STRUCTURAL_WORDS: &[&str] = &[
+    "项目",
+    "工作",
+    "经历",
+    "经验",
+    "做过",
+    "做过",
+    "有什么",
+    "什么",
+    "怎么",
+    "如何",
+    "介绍",
+    "讲讲",
+    "说说",
+    "介绍",
+    "一下",
+    "你的",
+    "你们",
+    "我们",
+    "觉得",
+    "认为",
+    "看看",
+    "了解",
+    "简单",
+    "具体",
+    "大概",
+    "一般",
+    "平时",
+    "之前",
+    "以前",
+    "最近",
+    "现在",
+];
+
+/// 是否为问题结构词（该词的任何二元组片段都不应独立构成相关性）。
+fn is_structural(word: &str) -> bool {
+    STRUCTURAL_WORDS.iter().any(|stop| stop == &word)
+}
 
 /// 检索部分的字符预算：项目 / 故事 / 问答。
 pub const RETRIEVED_CHAR_BUDGET: usize = 2_000;
@@ -289,7 +344,9 @@ fn score_fact(
         };
         if let Some(gain) = matched {
             score += gain;
-            if weight >= RARE_WORD_WEIGHT {
+            // 结构词（项目/做过/介绍…）即使出现频率低也不算「稀有命中」：
+            // 它们出现在问题里只是语法需要，命中它们说明不了任何相关性。
+            if weight >= RARE_WORD_WEIGHT && !is_structural(word) {
                 hit_rare = true;
             }
         }
@@ -773,6 +830,60 @@ mod tests {
             Some(&1),
             "稀有词那条应排第一：{:?}",
             r.matched_indices
+        );
+    }
+
+    /// 结构词（项目/做过/介绍…）不该单独构成命中。
+    ///
+    /// 真机案例：档案里没有区块链，但「项目」二字出现在 2 条项目事实里，
+    /// df=2 → weight 0.50 通过了稀有词阈值，于是「做过区块链项目吗」命中 2 条，
+    /// 模型答了一段无关的项目介绍。
+    ///
+    /// 为什么不能只调 df 阈值：同档案里「银行」「催收」的 df 也是 2 —— 它们是
+    /// **有效业务词**，不能被一起挡掉。能区分两者的是「是不是问题句式的一部分」。
+    #[test]
+    fn structural_words_alone_do_not_match() {
+        let mut profile = Profile::default();
+        // 2 条都含「项目」，与真机档案的 df 一致。
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[A] 某银行项目 负责测试",
+            vec!["a".into()],
+        ));
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[B] 某保险项目 负责测试",
+            vec!["b".into()],
+        ));
+
+        let r = profile.retrieve("做过区块链项目吗");
+        assert!(
+            r.matched.is_empty(),
+            "结构词「项目」不该单独构成命中：{}",
+            r.matched
+        );
+    }
+
+    /// 有效业务词（df 与「项目」相同）仍然命中——证明上面不是一刀切。
+    #[test]
+    fn business_word_with_same_df_still_matches() {
+        let mut profile = Profile::default();
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[A] 某银行项目 负责测试",
+            vec!["a".into()],
+        ));
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[B] 某保险项目 负责测试",
+            vec!["b".into()],
+        ));
+
+        let r = profile.retrieve("有银行经验吗");
+        assert!(
+            r.matched.contains("某银行项目"),
+            "「银行」是有效业务词，必须命中：{}",
+            r.matched
         );
     }
 }
