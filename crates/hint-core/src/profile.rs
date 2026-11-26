@@ -110,6 +110,14 @@ pub struct Profile {
 /// 常驻部分的字符预算：基本信息 + 技能。
 pub const ALWAYS_CHAR_BUDGET: usize = 600;
 
+/// 稀有词的权重下限。`weight = 1 / df`，所以这等价于「`df <= 2`」——
+/// 一个词只出现在 1–2 条事实里才算有区分度。
+///
+/// 取值依据（真机数据）：档案 15 条时，「项目」出现在 4 条 → weight 0.25，
+/// 不该单独构成命中；「kafka」出现在 1 条 → weight 1.0，应当命中。
+/// 阈值卡在两者之间。
+const RARE_WORD_WEIGHT: f32 = 0.5;
+
 /// 检索部分的字符预算：项目 / 故事 / 问答。
 pub const RETRIEVED_CHAR_BUDGET: usize = 2_000;
 
@@ -188,14 +196,24 @@ impl Profile {
             return result;
         }
 
+        // 词的区分度：在多少条事实里出现过。只在 1 条里出现的词（kafka）区分度高，
+        // 在 8 条里都出现的词（项目）几乎不区分类别。
+        //
+        // 没有这一步时，「做过区块链项目吗」会命中所有带「项目」二字的事实——
+        // 真机实测命中 2 条，模型会当成找到了相关经历，答出一段与问题无关的项目
+        // 介绍。**答非所问比 0 命中更糟**：0 命中时模型按事实边界说「这块我接触
+        // 不深」，而误命中会让它自信地跑偏。
+        let idf = inverse_document_frequency(&query, &self.facts);
+
         let mut scored: Vec<(usize, f32)> = self
             .facts
             .iter()
             .enumerate()
             .filter(|(_, f)| !f.kind.is_always_included())
             .filter_map(|(index, fact)| {
-                let score = score_fact(fact, &query);
-                if score > 0.0 {
+                let (score, hit_rare) = score_fact(fact, &query, &idf);
+                // 只命中常见词的，视为与问题无关。
+                if score > 0.0 && hit_rare {
                     Some((index, score))
                 } else {
                     None
@@ -235,24 +253,80 @@ fn push_line(out: &mut String, fact: &Fact, used: &mut usize) {
 }
 
 /// 给一条事实打分。
-fn score_fact(fact: &Fact, query: &[String]) -> f32 {
+///
+/// `idf` 是每个查询词的区分度权重（见 [`inverse_document_frequency`]）：
+/// 直接把分数乘上去，让「项目」这类到处都是的词几乎不再贡献分数，而
+/// 「kafka」这类只在一两条里出现的词保持满权重。
+fn score_fact(
+    fact: &Fact,
+    query: &[String],
+    idf: &std::collections::HashMap<String, f32>,
+) -> (f32, bool) {
     let text_lower = fact.text.to_lowercase();
     let mut score = 0.0f32;
+    // 是否命中过**稀有词**（只在少数事实里出现的词）。
+    //
+    // 这是「无关问题不该命中」的判据：问「做过区块链项目吗」时，唯一命中的是
+    // 「项目」这种到处都是的词——命中它说明不了任何相关性。真机实测该问题会命中
+    // 两条项目事实，模型于是答了一段与区块链无关的项目介绍。**答非所问比 0 命中
+    // 更糟**：0 命中时模型按事实边界说「这块我接触不深」，误命中则让它自信跑偏。
+    let mut hit_rare = false;
     for word in query {
-        if fact.tags.iter().any(|tag| tag.to_lowercase() == *word) {
+        let weight = idf.get(word).copied().unwrap_or(1.0);
+        let matched = if fact.tags.iter().any(|tag| tag.to_lowercase() == *word) {
             // 标签精确命中：整理阶段刻意提炼过，信号最强。
-            score += 3.0;
+            Some(3.0 * weight)
         } else if fact
             .tags
             .iter()
             .any(|tag| tag.to_lowercase().contains(word.as_str()))
         {
-            score += 2.0;
+            Some(2.0 * weight)
         } else if text_lower.contains(word.as_str()) {
-            score += 1.0;
+            Some(1.0 * weight)
+        } else {
+            None
+        };
+        if let Some(gain) = matched {
+            score += gain;
+            if weight >= RARE_WORD_WEIGHT {
+                hit_rare = true;
+            }
         }
     }
-    score * fact.kind.weight()
+    (score * fact.kind.weight(), hit_rare)
+}
+
+/// 计算每个查询词的区分度权重。
+///
+/// 简化版 IDF（用「文档频率」而不是严格的对数）：`1 / 出现该词的事实条数`。
+/// 不取对数是因为档案通常只有 10–30 条，`1/df` 已足够拉开差距，且不需要额外
+/// 参数（对数版本的底数与平滑项在这么小的样本上没有意义）。
+///
+/// 只统计**非常驻**事实：常驻段（基本信息 + 技能）每问都发，它里面的词不参与
+/// 检索段的区分度计算。
+fn inverse_document_frequency(
+    query: &[String],
+    facts: &[Fact],
+) -> std::collections::HashMap<String, f32> {
+    let mut idf = std::collections::HashMap::new();
+    for word in query {
+        let mut df = 0usize;
+        for fact in facts.iter().filter(|f| !f.kind.is_always_included()) {
+            let text_lower = fact.text.to_lowercase();
+            let in_tags = fact
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(word.as_str()));
+            if in_tags || text_lower.contains(word.as_str()) {
+                df += 1;
+            }
+        }
+        // df=0 的词与任何事实都无关（不会贡献分数），权重给 1 无所谓。
+        let weight = if df == 0 { 1.0 } else { 1.0 / df as f32 };
+        idf.insert(word.clone(), weight);
+    }
+    idf
 }
 
 /// 把问题切成检索词。
@@ -552,7 +626,11 @@ mod tests {
 
     #[test]
     fn retrieved_section_respects_budget() {
-        // 造 20 条各 300 字、都命中同一关键词的项目。
+        // 造 20 条各 300 字、都含稀有词「自动化」的项目。
+        //
+        // 注意：这 20 条都带同一 tag，按 df 计算「自动化」的 df=20、weight=0.05，
+        // 会被稀有词判据挡掉——所以这里刻意让问题里还带一个真正稀有的词，
+        // 否则这条测试会因为「只命中常见词」而空转（那是新判据的正确行为）。
         let mut profile = Profile::default();
         for i in 0..20 {
             profile.facts.push(Fact::new(
@@ -561,7 +639,10 @@ mod tests {
                 vec!["自动化".into()],
             ));
         }
-        let r = profile.retrieve("自动化怎么做");
+        // 只有第 0 条带稀有 tag。
+        profile.facts[0].tags.push("稀有词".into());
+
+        let r = profile.retrieve("稀有词 自动化");
         assert!(
             r.matched.chars().count() <= RETRIEVED_CHAR_BUDGET + 40,
             "检索段超预算：{} 字",
@@ -621,6 +702,78 @@ mod tests {
         let prompt = r.to_prompt();
         assert!(prompt.contains("候选人档案"));
         assert!(prompt.contains("相关经历"));
+    }
+
+    /// 只命中「到处都是的词」时不该算命中——这是「答非所问」的防线。
+    ///
+    /// 真机案例：问「做过区块链项目吗」，档案里没有区块链，但「项目」二字出现在
+    /// 多条项目事实里，于是命中 2 条，模型答了一段与区块链无关的项目介绍。
+    #[test]
+    fn common_word_alone_does_not_match() {
+        let mut profile = Profile::default();
+        // 4 条项目事实，都含「项目」；「区块链」谁都没有。
+        for i in 0..4 {
+            profile.facts.push(Fact::new(
+                FactKind::Project,
+                format!("[P{i}] 某银行项目 负责测试"),
+                vec![format!("p{i}")],
+            ));
+        }
+
+        let r = profile.retrieve("做过区块链项目吗");
+        assert!(
+            r.matched.is_empty(),
+            "只命中「项目」不该算命中：{}",
+            r.matched
+        );
+    }
+
+    /// 稀有词命中时照常返回。
+    #[test]
+    fn rare_word_still_matches() {
+        let mut profile = Profile::default();
+        for i in 0..4 {
+            profile.facts.push(Fact::new(
+                FactKind::Project,
+                format!("[P{i}] 某银行项目"),
+                vec![format!("p{i}")],
+            ));
+        }
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[K1] 内部系统 负责中间件选型",
+            vec!["kafka".into()],
+        ));
+
+        let r = profile.retrieve("用过 kafka 吗");
+        assert!(r.matched.contains("中间件选型"), "{}", r.matched);
+
+        let miss = profile.retrieve("做过区块链项目吗");
+        assert!(miss.matched.is_empty(), "{}", miss.matched);
+    }
+
+    /// 常见词与稀有词同时命中时，稀有词的那条排前面。
+    #[test]
+    fn rare_word_ranks_above_common_word() {
+        let mut profile = Profile::default();
+        // A：只含常见词「项目」
+        profile
+            .facts
+            .push(Fact::new(FactKind::Project, "[A] 某项目", vec!["a".into()]));
+        // B：含稀有词「kafka」
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[B] 消息中间件",
+            vec!["kafka".into()],
+        ));
+
+        let r = profile.retrieve("kafka 项目");
+        assert_eq!(
+            r.matched_indices.first(),
+            Some(&1),
+            "稀有词那条应排第一：{:?}",
+            r.matched_indices
+        );
     }
 }
 
