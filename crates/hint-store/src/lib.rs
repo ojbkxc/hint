@@ -319,11 +319,14 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// 按**转录内容**搜索会话，返回命中的会话 id（按最近优先）。
+    /// 按**转录或答案内容**搜索会话，返回命中的会话 id（按最近优先）。
     ///
     /// 为什么需要：会话攒到几十条之后，列表只能按时间倒序翻——用户记得的是
     /// 「问过 kafka 的那次面试」，不是「10 月 17 日 15:37 那次」。没有内容搜索
     /// 就只能一条条点开找。
+    ///
+    /// 搜**两个**表而不只是转录：用户也会记得「当时 AI 给的那个方案」，那时关键词
+    /// 只出现在答案里。只搜转录会让这类查找落空，而界面上看不出「搜过了但没搜答案」。
     ///
     /// 实现用 `LIKE '%词%'`：
     /// - 转录总量是「几十场 × 几百段」，几万行的 LIKE 全扫描在桌面场景是毫秒级；
@@ -343,10 +346,14 @@ impl Store {
             .replace('%', "\\%")
             .replace('_', "\\_");
         let pattern = format!("%{escaped}%");
+        // UNION 而不是两次查询再合并：SQL 这边一次扫完，DISTINCT 顺带去掉
+        // 「同一会话里转录和答案都命中」的重复行。
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT session_id
-             FROM segments
-             WHERE text LIKE ?1 ESCAPE '\\'
+            "SELECT DISTINCT session_id FROM (
+                 SELECT session_id FROM segments WHERE text LIKE ?1 ESCAPE '\\'
+                 UNION
+                 SELECT session_id FROM answers  WHERE text LIKE ?1 ESCAPE '\\'
+             )
              ORDER BY session_id DESC
              LIMIT ?2",
         )?;
@@ -777,6 +784,52 @@ fn migrate(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 搜索必须同时覆盖转录与答案。
+    ///
+    /// 只搜转录时，「当时 AI 给的那个方案」这类查找会落空，而界面上看不出
+    /// 「搜过了但没搜答案」——用户只会以为没记过。
+    #[test]
+    fn search_covers_both_segments_and_answers() {
+        let store = Store::open_in_memory().expect("open");
+        let a = store.create_session("openai", "m", None).expect("create a");
+        let b = store.create_session("openai", "m", None).expect("create b");
+
+        // a 的关键词只在转录里
+        store
+            .add_segment(a, "interviewer", 0, 1000, "问过 kafka 吗", false, false)
+            .expect("seg");
+        // b 的关键词只在**答案**里
+        store
+            .add_answer(
+                b,
+                None,
+                "我们用的是 playbook 方案",
+                "m",
+                AnswerMetrics::default(),
+            )
+            .expect("ans");
+
+        // 转录命中
+        assert_eq!(store.search_sessions("kafka", 10).expect("search"), vec![a]);
+        // 答案命中——这是本轮扩的范围
+        assert_eq!(
+            store.search_sessions("playbook", 10).expect("search"),
+            vec![b]
+        );
+        // 两个都不含的词
+        assert!(
+            store
+                .search_sessions("zzz不存在", 10)
+                .expect("search")
+                .is_empty()
+        );
+        // 同一会话里转录与答案都命中时只返回一次（UNION 去重）
+        store
+            .add_answer(a, None, "kafka 的用法是这样", "m", AnswerMetrics::default())
+            .expect("ans2");
+        assert_eq!(store.search_sessions("kafka", 10).expect("search"), vec![a]);
+    }
 
     /// 备注：写入 / trim / 清除 / 不存在的 id。
     ///
