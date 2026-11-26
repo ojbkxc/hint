@@ -319,6 +319,41 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// 按**转录内容**搜索会话，返回命中的会话 id（按最近优先）。
+    ///
+    /// 为什么需要：会话攒到几十条之后，列表只能按时间倒序翻——用户记得的是
+    /// 「问过 kafka 的那次面试」，不是「10 月 17 日 15:37 那次」。没有内容搜索
+    /// 就只能一条条点开找。
+    ///
+    /// 实现用 `LIKE '%词%'`：
+    /// - 转录总量是「几十场 × 几百段」，几万行的 LIKE 全扫描在桌面场景是毫秒级；
+    /// - 不引入 FTS5（SQLite 全文索引）：它要求额外的虚表与触发器，还要处理
+    ///   中文分词——本项目的中文检索一直是二元组匹配，与 `profile::tokenize`
+    ///   同一思路，不需要分词器。
+    ///
+    /// `query` 里的 `%` `_` `\` 会被转义，避免用户输入 `%` 匹配到全部。
+    pub fn search_sessions(&self, query: &str, limit: usize) -> Result<Vec<i64>> {
+        let needle = query.trim();
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        // LIKE 的特殊字符：用 `\` 转义，并在 SQL 里声明 ESCAPE。
+        let escaped = needle
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT session_id
+             FROM segments
+             WHERE text LIKE ?1 ESCAPE '\\'
+             ORDER BY session_id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// 读取单个会话。
     pub fn get_session(&self, id: i64) -> Result<Session> {
         self.conn

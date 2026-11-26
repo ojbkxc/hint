@@ -746,6 +746,11 @@ export default function Dashboard() {
         >
         <SessionReview
           sessions={sessions.sessions}
+          totalCount={sessions.totalCount}
+          query={sessions.query}
+          onQueryChange={sessions.setQuery}
+          searching={sessions.searching}
+          isSearching={sessions.isSearching}
           loading={sessions.loading}
           error={sessions.error}
           selectedId={sessions.selectedId}

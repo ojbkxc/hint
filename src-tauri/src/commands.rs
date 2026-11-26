@@ -283,6 +283,21 @@ pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 按转录内容搜索会话，返回命中的会话 id 列表。
+///
+/// 会话攒到几十条后，列表只能按时间倒序翻——用户记得的是「问过 kafka 的那次」，
+/// 不是「10 月 17 日 15:37 那次」。没有内容搜索就只能一条条点开找。
+///
+/// 只返回 id：前端已有完整会话列表，用它做交集即可，避免把摘要重复传一遍。
+#[tauri::command(async)]
+pub fn search_sessions(state: State<'_, AppState>, query: String) -> Result<Vec<String>, String> {
+    let store = lock(&state.store);
+    let ids = store
+        .search_sessions(&query, 200)
+        .map_err(|error| format!("搜索会话失败：{error}"))?;
+    Ok(ids.into_iter().map(|id| id.to_string()).collect())
+}
+
 /// 检索预览：给定一个问题，返回**会实际发送给模型**的档案片段。
 ///
 /// ## 为什么需要

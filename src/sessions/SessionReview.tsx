@@ -2,7 +2,15 @@ import { deriveStatusTone, statusToneClass } from "../settings/statusTone";
 import type { SessionDetail, SessionSummary } from "./types";
 
 type Props = {
+  /** 当前要显示的会话（已按搜索过滤）。 */
   sessions: SessionSummary[];
+  /** 会话总数，不受搜索影响：用于「清空全部（N）」，避免搜索时显示成过滤后的数量。 */
+  totalCount: number;
+  query: string;
+  onQueryChange: (next: string) => void;
+  searching: boolean;
+  /** 是否处于搜索状态：区分「没搜」与「搜了没结果」。 */
+  isSearching: boolean;
   loading: boolean;
   error: string;
   selectedId: string;
@@ -22,6 +30,11 @@ const SKELETON_KEYS = ["skeleton-1", "skeleton-2", "skeleton-3"];
 export default function SessionReview(props: Props) {
   const {
     sessions,
+    totalCount,
+    query,
+    onQueryChange,
+    searching,
+    isSearching,
     loading,
     error,
     selectedId,
@@ -49,16 +62,37 @@ export default function SessionReview(props: Props) {
               type="button"
               className="danger small-danger"
               onClick={onDeleteAll}
-              disabled={loading || sessions.length === 0}
+              disabled={loading || totalCount === 0}
               title={
-                sessions.length > 0
-                  ? `永久删除本机全部 ${sessions.length} 条会话记录`
+                totalCount > 0
+                  ? `永久删除本机全部 ${totalCount} 条会话记录`
                   : "永久删除本机全部会话记录"
               }
             >
-              {sessions.length > 0 ? `清空全部（${sessions.length}）` : "清空全部"}
+              {totalCount > 0 ? `清空全部（${totalCount}）` : "清空全部"}
             </button>
           </div>
+        </div>
+
+        {/* 按转录内容搜索：会话攒到几十条后，用户记得的是「问过 kafka 的那次」，
+            不是「10 月 17 日 15:37 那次」。 */}
+        <div className="session-search">
+          <input
+            type="search"
+            className="form-input"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索会话内容（如某道题、某个技术词）"
+            aria-label="搜索会话内容"
+          />
+          {searching && <span className="session-search-state">搜索中…</span>}
+          {!searching && isSearching && (
+            <span className="session-search-state">
+              {sessions.length > 0
+                ? `匹配 ${sessions.length} 条`
+                : "没有匹配的会话"}
+            </span>
+          )}
         </div>
 
         {error ? (

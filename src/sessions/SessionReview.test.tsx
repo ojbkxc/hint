@@ -38,6 +38,11 @@ function renderReview(props: Props = {}) {
   const utils = render(
     <SessionReview
       sessions={[]}
+      totalCount={0}
+      query=""
+      onQueryChange={vi.fn()}
+      searching={false}
+      isSearching={false}
       loading={false}
       error=""
       selectedId=""
@@ -93,14 +98,28 @@ describe("SessionReview —— 左侧列表分支", () => {
 
   it("有条目时清空全部带条数并可点击", async () => {
     const user = userEvent.setup();
+    // 「清空全部」的数量取 totalCount（不受搜索过滤影响）——搜索时也必须显示
+    // 真实总数，否则用户会以为只有几条。
     const { onDeleteAll } = renderReview({
       sessions: [makeSummary({ id: "a" }), makeSummary({ id: "b" })],
+      totalCount: 2,
     });
     const clearAll = screen.getByRole("button", { name: "清空全部（2）" });
     expect(clearAll).toBeEnabled();
     expect(clearAll).toHaveAttribute("title", "永久删除本机全部 2 条会话记录");
     await user.click(clearAll);
     expect(onDeleteAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("搜索过滤时「清空全部」仍显示总数，不是过滤后的条数", () => {
+    // 这是本轮加搜索时特意分开的：sessions 是过滤后的列表，totalCount 是全部。
+    renderReview({
+      sessions: [makeSummary({ id: "a" })],
+      totalCount: 41,
+      query: "kafka",
+      isSearching: true,
+    });
+    expect(screen.getByRole("button", { name: "清空全部（41）" })).toBeInTheDocument();
   });
 
   it("列表项标题优先级：note > startedAt > 会话 id", () => {

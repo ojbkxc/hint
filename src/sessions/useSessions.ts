@@ -11,6 +11,15 @@ import {
 export function useSessions(enabled: boolean) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  /**
+   * 搜索词（按转录内容搜）。
+   *
+   * 空串 = 不过滤。命中集合为 `null` 表示「没有在搜索」，与「搜索了但没命中」
+   * （空数组）必须区分——否则搜不到结果时界面会显示全部会话，看起来像没搜。
+   */
+  const [query, setQuery] = useState("");
+  const [matchedIds, setMatchedIds] = useState<string[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<SessionDetail | null>(null);
@@ -40,6 +49,36 @@ export function useSessions(enabled: boolean) {
   useEffect(() => {
     if (enabled) void refresh();
   }, [enabled, refresh]);
+
+  // 搜索：防抖 250ms。每次按键都打一次后端没有意义，而 250ms 用户感觉不到延迟。
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed === "") {
+      setMatchedIds(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const result = await safeInvoke<string[]>("search_sessions", { query: trimmed });
+        if (cancelled) return;
+        if (result.ok && Array.isArray(result.data)) {
+          setMatchedIds(result.data.map((id) => String(id)));
+        } else {
+          // 搜索失败不要把列表清空——用户至少还能按时间翻。
+          setMatchedIds(null);
+          setError(`搜索失败：${result.ok ? "返回格式异常" : result.error}`);
+        }
+        setSearching(false);
+      })();
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
 
   const open = useCallback(async (id: string) => {
     const requestId = ++detailRequest.current;
@@ -135,8 +174,26 @@ export function useSessions(enabled: boolean) {
     await refresh();
   }, [sessions, refresh]);
 
+  /**
+   * 界面上实际显示的会话：没搜索时是全部，搜索时按命中 id 过滤（保持原顺序）。
+   *
+   * 用 `matchedIds === null` 判断「不在搜索」，而不是「命中集为空」——
+   * 后者代表搜了但没结果，界面要显示「没有匹配的会话」而不是退回全部列表。
+   */
+  const visibleSessions =
+    matchedIds === null
+      ? sessions
+      : sessions.filter((session) => matchedIds.includes(session.id));
+
   return {
-    sessions,
+    sessions: visibleSessions,
+    /** 会话总数（不受搜索影响），用于「共 N 条」这类文案。 */
+    totalCount: sessions.length,
+    query,
+    setQuery,
+    searching,
+    /** 是否处于搜索状态（区分「没搜」与「搜了没结果」）。 */
+    isSearching: matchedIds !== null,
     loading,
     error,
     selectedId,
