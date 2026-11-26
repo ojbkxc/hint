@@ -1817,9 +1817,23 @@ async fn answer_one(app: &AppHandle, shared: &Arc<SessionShared>, job: QueuedQue
     }
     let pending = lock(&shared.answers).pending();
     let settings = shared.settings.clone();
+    let system_prompt = pipeline::build_system_prompt(&settings, &question);
+    let user_prompt = pipeline::build_user_prompt(&question, &history);
+    // 记录 prompt 体积：这是「整理档案能省多少 token」的唯一可观测证据。
+    //
+    // 首字延迟与 prompt 长度近似成正比，而「整理后每轮只发检索片段」是这套设计的
+    // 核心承诺——不打这个数，就没法验证它真的生效（也是排查「为什么还是很慢」的
+    // 第一个要看的值）。
+    tracing::info!(
+        system_chars = system_prompt.chars().count(),
+        user_chars = user_prompt.chars().count(),
+        organized = settings.profile.as_ref().is_some_and(|p| !p.is_empty()),
+        question_chars = question.chars().count(),
+        "作答 prompt 体积"
+    );
     let request = ChatRequest {
-        system: pipeline::build_system_prompt(&settings, &question),
-        user: pipeline::build_user_prompt(&question, &history),
+        system: system_prompt,
+        user: user_prompt,
         ..ChatRequest::default()
     };
 

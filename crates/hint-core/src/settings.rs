@@ -783,4 +783,123 @@ mod tests {
         assert_eq!(loaded.resume, "简历");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// 整理过档案之后，system prompt 必须显著变小——这是这套设计的全部意义。
+    ///
+    /// 断言用「相对」而不是绝对字数：提示词会随版本演进，钉死绝对数会让这条
+    /// 测试每隔几版就假红一次。
+    #[test]
+    fn organized_profile_shrinks_system_prompt() {
+        use crate::profile::{Fact, FactKind, Profile};
+
+        let resume = "简历正文".repeat(500); // 3000 字
+        let projects = "项目正文".repeat(500); // 3000 字
+        let settings = Settings {
+            resume: resume.clone(),
+            projects: projects.clone(),
+            ..Settings::default()
+        };
+
+        let before = settings.system_prompt_for("你们的自动化是怎么做的？");
+        assert!(
+            before.contains("简历正文"),
+            "没整理时必须注入简历原文（老行为不能变）"
+        );
+        assert!(before.contains("项目正文"));
+
+        let organized = Settings {
+            profile: Some(Profile {
+                organized_at: 1,
+                sources: vec!["简历.md".into()],
+                facts: vec![
+                    Fact::new(FactKind::Basics, "张三 5年测试开发 本科", vec![]),
+                    Fact::new(
+                        FactKind::Skill,
+                        "Playwright 熟练",
+                        vec!["playwright".into()],
+                    ),
+                    Fact::new(
+                        FactKind::Project,
+                        "[P1] 自动化平台 用 Playwright 做分层 回归3天到4小时",
+                        vec!["自动化".into(), "playwright".into()],
+                    ),
+                ],
+            }),
+            ..settings.clone()
+        };
+
+        let after = organized.system_prompt_for("你们的自动化是怎么做的？");
+        assert!(
+            !after.contains("简历正文"),
+            "整理过后不该再注入简历原文（否则省下的 token 又花回去）"
+        );
+        assert!(after.contains("张三"), "常驻段里的基本信息要带上");
+        assert!(after.contains("自动化平台"), "按问题命中的项目要带上");
+
+        let before_len = before.chars().count();
+        let after_len = after.chars().count();
+        assert!(
+            after_len * 4 < before_len,
+            "整理后应显著变小：{before_len} → {after_len}"
+        );
+    }
+
+    /// 不同问题检索到不同片段——这是「按问题注入」的意义所在。
+    #[test]
+    fn different_questions_hit_different_facts() {
+        use crate::profile::{Fact, FactKind, Profile};
+
+        let settings = Settings {
+            profile: Some(Profile {
+                organized_at: 1,
+                sources: vec![],
+                facts: vec![
+                    Fact::new(FactKind::Basics, "张三 5年", vec![]),
+                    Fact::new(
+                        FactKind::Project,
+                        "[P1] 自动化平台 Playwright",
+                        vec!["自动化".into()],
+                    ),
+                    Fact::new(
+                        FactKind::Project,
+                        "[P2] 性能压测 JMeter 10万QPS",
+                        vec!["性能".into(), "jmeter".into()],
+                    ),
+                ],
+            }),
+            ..Settings::default()
+        };
+
+        let automation = settings.system_prompt_for("自动化怎么做的");
+        let performance = settings.system_prompt_for("性能测试做过吗");
+
+        assert!(automation.contains("自动化平台"), "{}", automation);
+        assert!(
+            !automation.contains("10万QPS"),
+            "自动化问题不该带上性能项目"
+        );
+
+        assert!(performance.contains("性能压测"), "{}", performance);
+        assert!(
+            !performance.contains("自动化平台"),
+            "性能问题不该带自动化项目"
+        );
+    }
+
+    /// 档案存在但为空时退回全量注入（不能因为一个空档案就丢掉资料）。
+    #[test]
+    fn empty_profile_falls_back_to_full_injection() {
+        use crate::profile::Profile;
+
+        let settings = Settings {
+            resume: "我的简历".into(),
+            profile: Some(Profile::default()),
+            ..Settings::default()
+        };
+        let prompt = settings.system_prompt_for("随便问");
+        assert!(
+            prompt.contains("我的简历"),
+            "空档案应退回全量注入：{prompt}"
+        );
+    }
 }
