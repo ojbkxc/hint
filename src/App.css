@@ -1840,6 +1840,9 @@ button.preset.active {
 
 /* 空态提示属于辅助文字，不跟随「浮层字号」滑块（滑块只缩放答案）。 */
 .overlay-empty {
+  /* 与「有内容时」的位置对齐：内容行用 .overlay-transcript-body 的 margin-top: auto
+     贴底，空态若留在顶部，第一行出现时会有明显跳变。 */
+  margin-top: auto;
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--text-dim);
