@@ -85,6 +85,23 @@ export default function Dashboard() {
   // 浮层可见性与切换中标志：徽章按钮据此显示「显示浮层 / 隐藏浮层」。
   // 初值 true 与 tauri.conf.json 的 overlay.visible 一致（1.0.10 起默认显示）。
   const [overlayVisible, setOverlayVisible] = useState(true);
+
+  // 按钮状态要跟浮层的**真实**可见性一致。
+  //
+  // 不能靠 `useState(true)` 猜：用户上次收起浮层后，启动时它是隐藏的，
+  // 按钮若仍显示「隐藏浮层」，点一下等于去隐藏一个已经隐藏的窗口——
+  // 用户看到的是「点了没反应」。
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const result = await safeInvoke<boolean>("overlay_is_visible");
+      if (!active || !result.ok) return;
+      if (typeof result.data === "boolean") setOverlayVisible(result.data);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   const [overlayBusy, setOverlayBusy] = useState(false);
   const form = useSettingsForm();
   const sessions = useSessions(tab === "review");

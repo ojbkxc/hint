@@ -565,13 +565,50 @@ fn hide_overlay_window(window: &WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) -> Result<(), String> {
     let window = overlay_window(&app)?;
-    hide_overlay_window(&window)
+    hide_overlay_window(&window)?;
+    persist_overlay_visible(&app, false);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn show_overlay(app: AppHandle) -> Result<(), String> {
     let window = overlay_window(&app)?;
-    show_overlay_window(&window)
+    show_overlay_window(&window)?;
+    persist_overlay_visible(&app, true);
+    Ok(())
+}
+
+/// 浮层当前是否可见。前端用它初始化按钮文案与图标。
+///
+/// 不能用 `useState(true)` 猜：用户上次收起浮层后，启动时它是隐藏的，
+/// 按钮必须显示「显示浮层」而不是「隐藏浮层」，否则点一下会变成「隐藏一个
+/// 本来就隐藏的窗口」——用户看到的是「点了没反应」。
+#[tauri::command]
+pub fn overlay_is_visible(app: AppHandle) -> bool {
+    app.get_webview_window("overlay")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// 记住浮层当前是显示还是隐藏，下次启动照此恢复。
+///
+/// 为什么需要：`tauri.conf.json` 的 `overlay.visible = true` 只是建窗初值，
+/// 用户按 Ctrl+Shift+H 收起浮层之后没人记这件事——重启它又自己弹出来盖住屏幕。
+/// 收起通常意味着「现在不想让它挡着」，原样弹回等于没听。
+fn persist_overlay_visible(app: &AppHandle, visible: bool) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let mut settings = Settings::load(&state.settings_path);
+    // 与上次相同就不写盘，避免每次切换都碰文件时间戳。
+    if settings.overlay_visible == visible {
+        return;
+    }
+    settings.overlay_visible = visible;
+    if let Err(error) = settings.save(&state.settings_path) {
+        // 落盘失败不该让「显示/隐藏」本身失败——用户按了就要生效。
+        tracing::warn!(%error, visible, "保存浮层显示状态失败");
+    }
 }
 
 #[tauri::command]
@@ -579,9 +616,11 @@ pub fn toggle_overlay(app: AppHandle) -> Result<bool, String> {
     let window = overlay_window(&app)?;
     if window.is_visible().unwrap_or(false) {
         hide_overlay_window(&window)?;
+        persist_overlay_visible(&app, false);
         Ok(false)
     } else {
         show_overlay_window(&window)?;
+        persist_overlay_visible(&app, true);
         Ok(true)
     }
 }

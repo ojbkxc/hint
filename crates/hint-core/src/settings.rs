@@ -170,6 +170,15 @@ pub struct Settings {
     /// 用户当时的观感。
     #[serde(default)]
     pub overlay_bounds: Option<OverlayBounds>,
+    /// 用户上次把浮层留在了显示还是隐藏状态。
+    ///
+    /// `tauri.conf.json` 里 `overlay.visible = true` 只是**建窗时**的初值，之后没人
+    /// 记得用户按过 Ctrl+Shift+H 隐藏——于是每次启动浮层都自己弹出来盖在屏幕上。
+    /// 用户收起浮层通常是因为「现在不想让它挡着」，重启后原样弹回等于没听。
+    ///
+    /// 默认 `true`：首次启动（配置里没这个字段）应该能看到浮层，否则用户不知道它存在。
+    #[serde(default = "default_overlay_visible")]
+    pub overlay_visible: bool,
     /// 出网代理模式：direct（默认）/ system（跟随系统）/ manual（手填）。
     ///
     /// 装代理软件的用户不开这个连不上模型接口；但本地回环（IPC、STT worker）
@@ -207,6 +216,11 @@ const SCHEMA_VERSION: u32 = 1;
 
 /// 语音识别语言的默认值。字段本身已不对用户暴露（见 `stt_language` 上的实测
 /// 说明），保留只是为了让旧配置仍能反序列化。
+/// 浮层默认显示：首次启动要让用户知道它存在。
+fn default_overlay_visible() -> bool {
+    true
+}
+
 fn default_stt_language() -> String {
     "zh".to_string()
 }
@@ -282,6 +296,7 @@ impl Default for Settings {
             stt_language: default_stt_language(),
             // 新建配置没有用户调整过的几何，按默认几何摆。
             overlay_bounds: None,
+            overlay_visible: true,
             // 新建的配置已经是当前结构，不需要迁移。
             schema_version: SCHEMA_VERSION,
         }

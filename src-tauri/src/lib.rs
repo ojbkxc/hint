@@ -725,6 +725,7 @@ pub fn run() {
             commands::delete_all_sessions,
             commands::hide_overlay,
             commands::show_overlay,
+            commands::overlay_is_visible,
             commands::toggle_overlay,
             commands::set_overlay_content_protected,
             commands::regenerate_answer,
@@ -787,6 +788,23 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
                 .unwrap_or(false);
             if !restored {
                 apply_overlay_default_geometry(&window);
+            }
+            // 用户上次收起过浮层就不要再弹出来。
+            //
+            // `tauri.conf.json` 的 `overlay.visible = true` 是建窗初值，静态创建时
+            // 窗口一出现就在屏幕上；这里按配置决定是否立刻隐藏。收起浮层通常意味着
+            // 「现在不想让它挡着」，重启后原样弹回等于没听用户的。
+            let want_visible = {
+                let state = app.state::<AppState>();
+                Settings::load(&state.settings_path).overlay_visible
+            };
+            if !want_visible {
+                if let Err(error) = window.hide() {
+                    tracing::warn!(%error, "按上次状态隐藏浮层失败");
+                }
+                // 隐藏态不该抢焦点。
+                let _ = window.set_focusable(false);
+                tracing::info!("浮层按上次状态保持隐藏（Ctrl+Shift+H 可显示）");
             }
             // 浮层默认不进入屏幕捕获：腾讯会议 / 钉钉 / OBS 这类共享屏幕时，
             // 面试官看到的是桌面，看不到浮层与答案。
