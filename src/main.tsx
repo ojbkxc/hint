@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import CaptureOverlay from "./CaptureOverlay";
 import ErrorBoundary from "./ErrorBoundary";
 import Dashboard from "./Dashboard";
 import Overlay from "./Overlay";
+import UpdateGate from "./UpdateGate";
 import "./App.css";
 
 function currentLabel(): string {
@@ -36,11 +37,25 @@ function Root() {
         <CaptureOverlay />
       </ErrorBoundary>
     );
+  // 只在主窗口做启动检查：浮层与截图窗口是辅助窗口，用户不直接看它们，
+  // 在那里弹更新遮罩没有意义（而且会跟主窗口的下载打架）。
   return (
     <ErrorBoundary surface="dashboard">
-      <Dashboard />
+      <MainWindow />
     </ErrorBoundary>
   );
+}
+
+/**
+ * 主窗口：先过一道更新闸门，再进设置页。
+ *
+ * 更新检查失败时 `UpdateGate` 会直接调到 `onDone`，所以正常情况下用户几乎看不到
+ * 这个遮罩——只有真发现新版本时才会停留。
+ */
+function MainWindow() {
+  const [ready, setReady] = useState(false);
+  if (!ready) return <UpdateGate onDone={() => setReady(true)} />;
+  return <Dashboard />;
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

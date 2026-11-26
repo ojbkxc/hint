@@ -226,6 +226,63 @@ pub async fn test_llm(
     .map_err(|error| format!("模型连接失败：{error}"))
 }
 
+/// 启动时检查更新：有新版本就返回它，没有则返回 None。
+///
+/// **所有失败都返回 Ok(None)**（网络不通、GitHub 被墙、解析异常）——它挂在启动
+/// 路径上，让用户因为「检查更新失败」打不开软件是不可接受的。
+///
+/// 代理：默认直连。更新源是 github.com，与模型接口不同路径；用户装 Clash 之类通常
+/// 只代理模型域名，实测直连 GitHub 更快（11.9 秒下完 8.4 MB，走本地代理 120 秒超时）。
+#[tauri::command]
+pub async fn check_update() -> Option<hint_core::UpdateInfo> {
+    let current = env!("CARGO_PKG_VERSION");
+    match hint_core::check_latest(current, None).await {
+        Ok(info) => info,
+        Err(error) => {
+            tracing::warn!(%error, "检查更新失败（不影响使用）");
+            None
+        }
+    }
+}
+
+/// 下载安装包到本地，返回落盘路径。配合 check_update 使用。
+#[tauri::command]
+pub async fn download_update(info: hint_core::UpdateInfo) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("hint-update");
+    // 文件名来自 GitHub 的 asset name；只取末段防止路径穿越。
+    let safe_name = std::path::Path::new(&info.installer_name)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| "安装包文件名无效".to_string())?;
+    let dest = dir.join(safe_name);
+    let bytes = hint_core::download_installer(&info, &dest, None).await?;
+    tracing::info!(path = %dest.display(), bytes, "更新安装包已下载");
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// 静默安装刚下载的安装包，然后退出当前进程。
+///
+/// NSIS 的 /S 是静默模式。启动安装器后**立即退出自己**：安装程序需要替换正在
+/// 运行的可执行文件，本进程不退出的话文件被占用、安装会失败或要求重启。
+#[tauri::command]
+pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
+    let installer = std::path::PathBuf::from(&path);
+    if !installer.is_file() {
+        return Err(format!("安装包不存在：{path}"));
+    }
+    std::process::Command::new(&installer)
+        .arg("/S")
+        .spawn()
+        .map_err(|error| format!("启动安装程序失败：{error}"))?;
+    tracing::info!(path = %installer.display(), "已启动安装程序，退出当前进程");
+    // 给安装程序一点时间拿到文件句柄，再退出，避免「自己还没退、安装器已在替换」。
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        app.exit(0);
+    });
+    Ok(())
+}
+
 /// 检索预览：给定一个问题，返回**会实际发送给模型**的档案片段。
 ///
 /// ## 为什么需要

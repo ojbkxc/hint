@@ -3059,3 +3059,87 @@ button.mini.ghost {
     max-width: 72px;
   }
 }
+
+/* 启动强制更新遮罩：全屏、居中卡片。
+   只在真发现新版本时停留，检查失败会立刻放行，所以不需要「跳过」这类干扰项。 */
+.update-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  z-index: 9999;
+}
+
+.update-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 28px 32px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  text-align: center;
+}
+
+.update-card h1 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.update-version {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.update-message {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+/* 不确定进度的下载：用一条循环滑动的条表示「在动」，不假装知道百分比。 */
+.update-progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+}
+
+.update-progress-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36%;
+  border-radius: 999px;
+  background: var(--accent, #2f6bff);
+  animation: update-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes update-slide {
+  0% {
+    left: -36%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.update-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.update-actions .primary,
+.update-actions .ghost {
+  min-width: 96px;
+}
