@@ -80,8 +80,19 @@ pub fn store_degraded_notice(state: State<'_, AppState>) -> bool {
 pub fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    // `overlay_visible` 由**热键/托盘单方面写入**，前端表单里没有这个字段。
+    //
+    // 真机验证过的后果：用户按 Ctrl+Shift+H 隐藏浮层（磁盘记 false），接着改任一
+    // 设置点保存——前端载荷不含该字段 → serde 用默认值 true 填上 → 磁盘被重置成
+    // true → 下次启动浮层又弹出来。1.1.51 刚修好「热键切换不持久化」，却在这里被
+    // 抵消掉。
+    //
+    // 不能让前端补上这个字段：前端读一次配置（true），用户期间按热键改成 false，
+    // 再保存会把过期的 true 写回去——那是更难查的竞争。这个字段的唯一真相是磁盘，
+    // 保存配置时原样保留。
+    settings.overlay_visible = Settings::load(&state.settings_path).overlay_visible;
     // 拒绝保存空的必填项：Base URL 或模型名为空时，模型调用必然失败，
     // 而把空值写进配置文件会**覆盖掉用户本来填好的值**——这是 1.0.23 之前
     // 「配置被清空」的直接后果（表单停在空值时点保存）。宁可让保存失败并
