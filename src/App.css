@@ -1820,11 +1820,22 @@ button.preset.active {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  /* 新的在最下面，超出部分向上溢出：scrollTop 由 useAutoScroll 保持贴底，
-     于是「之前的问题往上挤」是自然效果，而不是靠丢掉旧行。 */
-  justify-content: flex-end;
+  /* **不能用 justify-content: flex-end**：flex-end + overflow 的组合下，溢出到顶部
+     的内容无法滚动到（scrollHeight 恒等于 clientHeight），最早的行永远看不到。
+     改成内层包裹 + margin-top: auto 实现「内容不足时贴底、超出时正常滚动」。 */
+  justify-content: flex-start;
   background: transparent;
   border-bottom: 1px solid var(--overlay-hairline);
+}
+
+/* 内容不足 3 行时把它推到容器底部（新行从下方出现，视觉稳定）；
+   内容超出时 margin-top: auto 不生效，正常滚动，所有行都可达。 */
+.overlay-transcript-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: auto;
+  min-height: 0;
 }
 
 /* 空态提示属于辅助文字，不跟随「浮层字号」滑块（滑块只缩放答案）。 */
