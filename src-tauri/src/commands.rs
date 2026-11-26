@@ -583,11 +583,14 @@ pub fn show_overlay(app: AppHandle) -> Result<(), String> {
 /// 不能用 `useState(true)` 猜：用户上次收起浮层后，启动时它是隐藏的，
 /// 按钮必须显示「显示浮层」而不是「隐藏浮层」，否则点一下会变成「隐藏一个
 /// 本来就隐藏的窗口」——用户看到的是「点了没反应」。
+///
+/// **优先读配置里的意图，而不是问窗口**：`setup_after_ready` 里 `window.hide()`
+/// 与本命令的执行没有先后保证，真机实测重启后出现过「浮层实际隐藏、按钮却写
+/// 隐藏浮层」——那是读窗口状态时的竞争。配置里的 `overlay_visible` 是用户意图的
+/// 单一真相，窗口状态只是它的结果。
 #[tauri::command]
-pub fn overlay_is_visible(app: AppHandle) -> bool {
-    app.get_webview_window("overlay")
-        .and_then(|window| window.is_visible().ok())
-        .unwrap_or(false)
+pub fn overlay_is_visible(state: State<'_, AppState>) -> bool {
+    Settings::load(&state.settings_path).overlay_visible
 }
 
 /// 记住浮层当前是显示还是隐藏，下次启动照此恢复。
