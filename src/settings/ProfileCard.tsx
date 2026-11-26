@@ -49,6 +49,8 @@ export default function ProfileCard({ form, patch }: Props) {
     setPreviewError("");
     try {
       const result = await safeInvoke<ProfileRetrieval>("profile_retrieve_preview", {
+        // 传当前表单里的档案：用户可能刚改完标签还没保存，读磁盘会看到旧结果。
+        profile: form.profile,
         question,
       });
       if (!result.ok) {

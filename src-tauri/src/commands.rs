@@ -236,16 +236,29 @@ pub async fn test_llm(
 ///
 /// 返回的 `always` / `matched` 与 `system_prompt_for` 用的是**同一个**
 /// `Profile::retrieve`——预览与实际发送不可能不一致（否则预览就是假的）。
+///
+/// ## 为什么接收 `profile` 而不只读磁盘
+///
+/// 用户改完标签/正文、还**没点「保存全部配置」**时，磁盘上仍是旧档案。若这里只读
+/// 磁盘，点「预览」看到的是改动前的结果——真机实测踩到过：给一条项目加了 `kafka`
+/// 标签，预览仍 0 命中，一度误判成「标签没参与检索」。
+///
+/// 传前端当前档案，预览就反映**眼前的编辑状态**（与 `organize_profile` 接受表单
+/// 配置同一套思路）。前端没传时才退回磁盘。
 #[tauri::command]
 pub fn profile_retrieve_preview(
+    profile: Option<hint_core::Profile>,
     state: State<'_, AppState>,
     question: String,
 ) -> Result<hint_core::Retrieval, String> {
-    let settings = Settings::load(&state.settings_path);
-    let Some(profile) = settings.profile.as_ref().filter(|p| !p.is_empty()) else {
-        return Err(
-            "还没有整理过面试档案：先在「简历与项目资料」里点「选择文档并整理」。".to_string(),
-        );
+    let profile = match profile.filter(|p| !p.is_empty()) {
+        Some(profile) => profile,
+        None => Settings::load(&state.settings_path)
+            .profile
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| {
+                "还没有整理过面试档案：先在「简历与项目资料」里点「选择文档并整理」。".to_string()
+            })?,
     };
     Ok(profile.retrieve(&question))
 }
