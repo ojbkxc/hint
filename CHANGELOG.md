@@ -4,6 +4,41 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.36] - 2026-11-26
+
+### 启动构建失败改为记日志退出，不再 panic
+
+代码审查扫了非测试代码里的 `unwrap` / `expect`，全仓只有一处：
+`.build(...).expect("error while building tauri application")`。
+
+问题不在崩溃本身（构建失败确实没法继续），而在**panic 信息只走 stderr**——
+这是 Windows GUI 子系统程序，用户双击启动时根本看不到 stderr，只会觉得
+「点了没反应」，也没法反馈任何有效信息。
+
+改成 `tracing::error!` + `eprintln!` + `exit(1)`：此时日志系统已在 setup 之前
+初始化过，失败原因会进 `hint.log`。
+
+### 顺带确认（代码审查结论）
+
+其余 159 处 `let _ =` 都是窗口操作（hide / show / set_focus / set_focusable）、
+诊断报告输出、清理临时文件这类「尽力而为」的调用，失败不影响正确性，保留原样。
+
+### 截图问答的真机验证（本轮顺带做的）
+
+之前一直没验证过 `Ctrl+Shift+S`。这轮实测确认整条链路正常：
+
+- 截图窗口覆盖层在屏幕上可见（像素 diff 51.55%，桌面被压暗）；
+- `finish_capture` 前 80ms 的 hide settle 足够——模型读出的截图里**不含遮罩**；
+- OCR 质量很好：壁纸内容、三列桌面图标名（Obsidian、RustDesk、Postman、
+  GitHub Desktop…）、文件类型（`.xlsx` / `.docx` / `.pdf`）、任务栏时间
+  「18:53:40」全部识别正确。
+
+验证过程中我先误判过两次（以为覆盖层没显示）：一次是拿 `background-image` 当判据
+（设计本来就是半透明覆盖层，没有背景图），一次是抓图时机不对。最后用「两次真实
+屏幕截图做像素 diff」才得到正确结论。
+
+555 用例、tsc 0 错、eslint 0/0、rustfmt 干净、CI 全绿。
+
 ## [1.1.35] - 2026-11-26
 
 ### 修复：几何恢复的两个单位错误
