@@ -1810,14 +1810,14 @@ button.preset.active {
 }
 
 .overlay-transcript {
-  flex: 0 0 auto;
-  /* 固定为「3 行问题」的高度，不是按比例——按比例时窗口一变大就会显示七八行，
-     面试中持续占掉屏幕。
-     行高 20.25px + gap 7px → 3 行占 3×20.25 + 2×7 = 74.75px；
-     加上 padding-top 10px，合计 84.75px。
-     **padding-bottom 在这里不算**：滚动容器的 padding-bottom 不会为内容留白
-     （最后一项会贴到 padding 区域），按 95px 设会实际装下 3.1 行、看起来是 4 行。 */
-  height: 85px;
+  /* **最多** 3 行，而不是固定 3 行：窗口很矮时（用户把浮层调小、或屏幕本身小）
+     固定高度会把答案区挤到只剩一行，答案反而是最该看的东西。
+     用 max-height + 可收缩把「最多 3 行」表达清楚：
+     - 内容少 / 窗口高 → 按内容撑开，最多 85px；
+     - 窗口矮 → 允许被压缩到更小，把空间让给答案。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 85px;
   overflow-y: auto;
   padding: 10px 14px;
   display: flex;
@@ -1922,7 +1922,9 @@ button.preset.active {
 
 .overlay-answer {
   flex: 1;
-  min-height: 0;
+  /* 答案是最该看的东西：给它一个保底高度，窗口再矮也不该只剩一行。
+     配合 .overlay-transcript 的「可收缩」——矮窗口优先保答案。 */
+  min-height: 96px;
   display: flex;
   flex-direction: column;
   background: transparent;
