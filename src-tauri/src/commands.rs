@@ -16,7 +16,7 @@ use hint_core::{
 };
 use hint_stt::download::user_message_for;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::session::{self, EVT_MODEL_PROGRESS, StreamRun};
 use crate::{AppState, DispatchDone, lock};
@@ -609,6 +609,9 @@ fn persist_overlay_visible(app: &AppHandle, visible: bool) {
         // 落盘失败不该让「显示/隐藏」本身失败——用户按了就要生效。
         tracing::warn!(%error, visible, "保存浮层显示状态失败");
     }
+    // 通知界面：托盘与 Ctrl+Shift+H 两条入口不经过前端，不发事件的话
+    // 按钮文案会停在旧状态（实测过：浮层已隐藏、按钮还写「隐藏浮层」）。
+    let _ = app.emit(crate::session::EVT_OVERLAY_VISIBLE, visible);
 }
 
 #[tauri::command]

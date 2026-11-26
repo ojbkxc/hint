@@ -43,6 +43,12 @@ pub(crate) const EVT_STATUS: &str = "hint://status";
 pub(crate) const EVT_NOTICE: &str = "hint://notice";
 /// 排队问题的实时数量（入队/出队/清空时发），供浮层刷新「排队 N」。
 pub(crate) const EVT_QUEUE: &str = "hint://queue";
+/// 浮层显示 / 隐藏状态变化（按钮、Ctrl+Shift+H、托盘三条入口都会发）。
+///
+/// 前端只在首屏用 `overlay_is_visible` 拉一次初值；之后用户用快捷键或托盘切换，
+/// 界面上的按钮文案会停在旧状态（实测：浮层已隐藏，按钮还写着「隐藏浮层」，
+/// 点一下等于去隐藏一个已经隐藏的窗口）。
+pub(crate) const EVT_OVERLAY_VISIBLE: &str = "hint://overlay-visible";
 /// 浮层不透明度变化（设置页保存后实时生效）。
 pub(crate) const EVT_OVERLAY_OPACITY: &str = "hint://overlay-opacity";
 /// 浮层字号缩放变化（设置页保存后实时生效，无需重开浮层）。

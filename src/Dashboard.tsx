@@ -102,6 +102,27 @@ export default function Dashboard() {
       active = false;
     };
   }, []);
+
+  // 后端才是「浮层现在到底可见吗」的唯一真相：按钮、Ctrl+Shift+H、托盘三条入口
+  // 都会改它。只靠首屏拉一次不够——用快捷键或托盘切换后按钮文案会停在旧状态。
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void safeListen<unknown>("hint://overlay-visible", (payload) => {
+      if (!active) return;
+      if (typeof payload === "boolean") setOverlayVisible(payload);
+    }).then((fn) => {
+      if (!active) {
+        fn?.();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
   const [overlayBusy, setOverlayBusy] = useState(false);
   const form = useSettingsForm();
   const sessions = useSessions(tab === "review");
