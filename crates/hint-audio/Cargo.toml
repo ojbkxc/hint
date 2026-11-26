@@ -1,6 +1,6 @@
 [package]
 name = "hint-audio"
-version = "1.1.25"
+version = "1.1.26"
 edition = "2024"
 description = "hint 的双通道音频采集：麦克风 + 系统声 loopback"
 license = "MIT"
