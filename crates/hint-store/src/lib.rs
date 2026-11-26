@@ -386,6 +386,16 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// 会话总数。
+    ///
+    /// 列表接口有上限（当前 200 条），超过之后**必须**能告诉用户「还有更多」——
+    /// 否则界面上看不出记录被截断，用户会以为早先的会话丢了。
+    pub fn count_sessions(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
+    }
+
     /// 读取单个会话。
     pub fn get_session(&self, id: i64) -> Result<Session> {
         self.conn

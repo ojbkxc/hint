@@ -21,6 +21,14 @@ export function useSessions(enabled: boolean) {
    */
   const [query, setQuery] = useState("");
   const [matchedIds, setMatchedIds] = useState<string[] | null>(null);
+  /**
+   * 后端总数与「是否被截断」。
+   *
+   * 列表接口有上限（200 条），超过之后必须告诉用户——否则界面上看不出记录被
+   * 截断，用户会以为早先的会话丢了。
+   */
+  const [total, setTotal] = useState(0);
+  const [limited, setLimited] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -41,9 +49,25 @@ export function useSessions(enabled: boolean) {
     if (listRequest.current !== requestId) return;
     if (!result.ok) {
       setSessions([]);
+      setTotal(0);
+      setLimited(false);
       setError(`读取会话失败：${result.error}`);
     } else {
       setSessions(normalizeSessions(result.data));
+      // 后端把 { sessions, total, limited } 一起返回；老格式（纯数组）没有这两个
+      // 字段时退回「总数 = 当前条数、未截断」。
+      const payload = result.data as { total?: unknown; limited?: unknown } | unknown[] | null;
+      const fromPayload =
+        payload && !Array.isArray(payload) && typeof payload === "object"
+          ? Number((payload as { total?: unknown }).total)
+          : NaN;
+      const list = normalizeSessions(result.data);
+      setTotal(Number.isFinite(fromPayload) ? fromPayload : list.length);
+      setLimited(
+        payload && !Array.isArray(payload) && typeof payload === "object"
+          ? (payload as { limited?: unknown }).limited === true
+          : false,
+      );
     }
     setLoading(false);
   }, []);
@@ -240,12 +264,14 @@ export function useSessions(enabled: boolean) {
   return {
     sessions: visibleSessions,
     /** 会话总数（不受搜索影响），用于「共 N 条」这类文案。 */
-    totalCount: sessions.length,
+    totalCount: total,
     query,
     setQuery,
     searching,
     /** 是否处于搜索状态（区分「没搜」与「搜了没结果」）。 */
     isSearching: matchedIds !== null,
+    /** 是否因为条数上限被截断（界面据此提示「只显示最近 200 条」）。 */
+    limited,
     loading,
     error,
     selectedId,

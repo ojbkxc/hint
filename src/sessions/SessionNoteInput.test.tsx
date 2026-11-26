@@ -33,6 +33,7 @@ function renderWithNote(note: string, onRename = vi.fn(async () => {})) {
       onQueryChange={vi.fn()}
       searching={false}
       isSearching={false}
+      limited={false}
       loading={false}
       error=""
       selectedId="1"

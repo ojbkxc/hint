@@ -12,6 +12,8 @@ type Props = {
   searching: boolean;
   /** 是否处于搜索状态：区分「没搜」与「搜了没结果」。 */
   isSearching: boolean;
+  /** 是否因为条数上限被截断。 */
+  limited: boolean;
   loading: boolean;
   error: string;
   selectedId: string;
@@ -40,6 +42,7 @@ export default function SessionReview(props: Props) {
     onQueryChange,
     searching,
     isSearching,
+    limited,
     loading,
     error,
     selectedId,
@@ -110,6 +113,13 @@ export default function SessionReview(props: Props) {
             </span>
           )}
         </div>
+
+        {limited && (
+          <p className="session-limit-hint">
+            只显示最近 {sessions.length} 条（共 {totalCount} 条）。更早的记录仍在本机，
+            导出全部可以拿到。
+          </p>
+        )}
 
         {error ? (
           <div className="card-body">

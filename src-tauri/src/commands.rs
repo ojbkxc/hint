@@ -531,12 +531,19 @@ fn format_time(ms: i64) -> String {
 
 /// 会话列表：拍平成前端 `SessionSummary` 的形状。
 #[tauri::command(async)]
-pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+pub fn list_sessions(state: State<'_, AppState>) -> Result<Value, String> {
     let store = lock(&state.store);
+    // 上限存在的理由：列表全量渲染（没有虚拟化），几百条以上会明显卡。
+    // 但**必须把总数带出去**，否则界面看不出被截断。
+    const LIST_LIMIT: usize = 200;
     let summaries = store
-        .list_sessions(200)
+        .list_sessions(LIST_LIMIT)
         .map_err(|error| format!("读取会话列表失败：{error}"))?;
-    Ok(summaries
+    let total = store
+        .count_sessions()
+        .map_err(|error| format!("读取会话总数失败：{error}"))?;
+    let limited = total as usize > summaries.len();
+    let sessions: Vec<Value> = summaries
         .into_iter()
         .map(|summary| {
             json!({
@@ -550,7 +557,12 @@ pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
                 "answerCount": summary.answer_count,
             })
         })
-        .collect())
+        .collect();
+    Ok(json!({
+        "sessions": sessions,
+        "total": total,
+        "limited": limited,
+    }))
 }
 
 /// 会话详情：通道名映射为前端约定的 `me` / `interviewer`。

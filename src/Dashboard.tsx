@@ -751,6 +751,7 @@ export default function Dashboard() {
           onQueryChange={sessions.setQuery}
           searching={sessions.searching}
           isSearching={sessions.isSearching}
+          limited={sessions.limited}
           loading={sessions.loading}
           error={sessions.error}
           selectedId={sessions.selectedId}

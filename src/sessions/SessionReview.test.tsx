@@ -45,6 +45,7 @@ function renderReview(props: Props = {}) {
       onQueryChange={vi.fn()}
       searching={false}
       isSearching={false}
+      limited={false}
       loading={false}
       error=""
       selectedId=""

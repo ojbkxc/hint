@@ -3189,3 +3189,16 @@ button.mini.ghost {
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* 条数上限提示：列表被截断时说明「还有更多」。
+   不用 error 红色——记录没丢，只是没全列出来。 */
+.session-limit-hint {
+  margin: 0 14px 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
+  word-break: break-word;
+}
