@@ -567,19 +567,32 @@ fn migrate_legacy_voice_dir(
     }
 }
 
+/// 热键（Ctrl+Shift+H）与托盘「浮层」菜单共用的开关。
+///
+/// ## 为什么这里也要持久化
+///
+/// 命令层有一份同名的 `commands::toggle_overlay`，它调了 `persist_overlay_visible`
+/// 把「用户想让浮层显示还是隐藏」写进配置。这条路径原本**没有**——于是同一个开关，
+/// 从设置页点会记住、按热键或走托盘却不记：用户按 Ctrl+Shift+H 收起浮层，下次启动
+/// 它又自己弹出来盖住屏幕。
+///
+/// 配置里的 `overlay_visible` 是「用户意图」的单一真相（`overlay_is_visible` 命令
+/// 的注释里写了这一点），两条入口必须都更新它。
 fn toggle_overlay(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("overlay") else {
         return;
     };
-    if window.is_visible().unwrap_or(false) {
-        let _ = window.set_focusable(false);
-        let _ = window.hide();
-    } else {
+    let now_visible = !window.is_visible().unwrap_or(false);
+    if now_visible {
         let _ = window.show();
         // 浮层配置为 focus:false；可聚焦才能收到 Esc / 方向键。
         let _ = window.set_focusable(true);
         let _ = window.set_focus();
+    } else {
+        let _ = window.set_focusable(false);
+        let _ = window.hide();
     }
+    commands::persist_overlay_visible(app, now_visible);
 }
 
 fn show_main(app: &tauri::AppHandle) {
@@ -758,18 +771,14 @@ pub fn run() {
             commands::import_document_text,
             commands::start_session,
             commands::stop_session,
-            commands::toggle_session,
             commands::list_sessions,
             commands::session_detail,
-            commands::export_session_markdown,
             commands::export_session_file,
             commands::delete_session,
             commands::delete_all_sessions,
             commands::hide_overlay,
-            commands::show_overlay,
             commands::overlay_is_visible,
             commands::toggle_overlay,
-            commands::set_overlay_content_protected,
             commands::regenerate_answer,
             commands::ask_question,
             commands::list_audio_devices,

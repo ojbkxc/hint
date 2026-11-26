@@ -549,21 +549,6 @@ pub async fn stop_session(app: AppHandle) -> Result<(), String> {
     .await
     .map_err(|error| format!("结束会话任务失败：{error}"))?
 }
-
-#[tauri::command]
-pub async fn toggle_session(app: AppHandle) -> Result<bool, String> {
-    // 方向在生命周期队列的锁内决定，再串行执行；启动中/已运行 → Stop，
-    // 空闲/正在停止 → Start。这样在加载模型的 10–30 秒里再按一次也能排上停止。
-    let task_app = app.clone();
-    let dir = tauri::async_runtime::spawn_blocking(move || {
-        let (dir, _, _) = session::submit_toggle(&task_app);
-        dir
-    })
-    .await
-    .map_err(|error| format!("切换会话任务失败：{error}"))?;
-    Ok(dir == LifecycleDir::Start)
-}
-
 fn format_time(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|time| {
@@ -654,16 +639,6 @@ pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, S
         "answers": answers,
     }))
 }
-
-#[tauri::command(async)]
-pub fn export_session_markdown(state: State<'_, AppState>, id: String) -> Result<String, String> {
-    let session_id = parse_id(&id)?;
-    let store = lock(&state.store);
-    store
-        .export_markdown(session_id)
-        .map_err(|error| format!("导出失败：{error}"))
-}
-
 /// 导出会话到指定路径（用户通过保存对话框选的）。
 ///
 /// **为什么不走浏览器的 Blob 下载**：真机验证过，WebView2 里 `a.download` 触发的
@@ -984,15 +959,6 @@ pub fn hide_overlay(app: AppHandle) -> Result<(), String> {
     persist_overlay_visible(&app, false);
     Ok(())
 }
-
-#[tauri::command]
-pub fn show_overlay(app: AppHandle) -> Result<(), String> {
-    let window = overlay_window(&app)?;
-    show_overlay_window(&window)?;
-    persist_overlay_visible(&app, true);
-    Ok(())
-}
-
 /// 浮层当前是否可见。前端用它初始化按钮文案与图标。
 ///
 /// 不能用 `useState(true)` 猜：用户上次收起浮层后，启动时它是隐藏的，
@@ -1013,7 +979,10 @@ pub fn overlay_is_visible(state: State<'_, AppState>) -> bool {
 /// 为什么需要：`tauri.conf.json` 的 `overlay.visible = true` 只是建窗初值，
 /// 用户按 Ctrl+Shift+H 收起浮层之后没人记这件事——重启它又自己弹出来盖住屏幕。
 /// 收起通常意味着「现在不想让它挡着」，原样弹回等于没听。
-fn persist_overlay_visible(app: &AppHandle, visible: bool) {
+/// 记录「用户想让浮层显示还是隐藏」。
+///
+/// 热键/托盘那条切换路径也要调它——见 `lib.rs::toggle_overlay` 里的说明。
+pub(crate) fn persist_overlay_visible(app: &AppHandle, visible: bool) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
@@ -1045,21 +1014,6 @@ pub fn toggle_overlay(app: AppHandle) -> Result<bool, String> {
         Ok(true)
     }
 }
-
-/// 切换浮层是否从屏幕捕获中排除（设置页开关即时生效）。
-///
-/// 底层 `WDA_EXCLUDEFROMCAPTURE`：开了之后腾讯会议共享屏幕时对方看不到浮层。
-/// 返回实际生效的状态：某些系统版本（Win10 2004 之前）不支持，会如实返回 false。
-#[tauri::command]
-pub fn set_overlay_content_protected(app: AppHandle, protected: bool) -> Result<bool, String> {
-    let window = overlay_window(&app)?;
-    window
-        .set_content_protected(protected)
-        .map_err(|error| format!("设置浮层内容保护失败：{error}"))?;
-    tracing::info!(protected, "浮层内容保护已切换");
-    Ok(protected)
-}
-
 #[tauri::command]
 pub async fn regenerate_answer(app: AppHandle) -> Result<(), String> {
     session::regenerate(&app)
