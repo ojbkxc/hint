@@ -1,9 +1,14 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { Channel, TranscriptLine } from "./types";
+import { useStickToBottom } from "./useStickToBottom";
 
 type Props = { lines: TranscriptLine[] };
 
 function TranscriptPanel({ lines }: Props) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // 最新一行始终可见，旧的往上溢出（固定 3 行高，见 App.css 的 .overlay-transcript）。
+  const { onScroll } = useStickToBottom(listRef, lines);
+
   return (
     <div
       className="overlay-transcript"
@@ -11,6 +16,8 @@ function TranscriptPanel({ lines }: Props) {
       role="log"
       aria-label="实时转录"
       tabIndex={0}
+      ref={listRef}
+      onScroll={onScroll}
     >
       {lines.length === 0 ? (
         <div className="overlay-empty">麦克风与系统声通道的转录会出现在这里。</div>

@@ -26,6 +26,32 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 const FATAL_GRACE: Duration = Duration::from_secs(15);
 /// 流稳定运行多久后清零失败计数。
 const HEALTHY_AFTER: Duration = Duration::from_secs(3);
+
+/// 麦克风「曾经打开成功、之后又失败」时的排查提示。
+///
+/// 为什么要区分两种失败：真机日志（用户机器）显示
+///
+/// ```text
+/// 06:12:19  麦克风采集已启动：48000 Hz
+/// 06:14:07  麦克风采集中断：拒绝访问 (os error -2147024891)
+/// ```
+///
+/// **先能用、约两分钟后失去访问**——这不是隐私权限没开（没开的话第一次就打不开），
+/// 而是麦克风被别的应用抢占了：会议软件（腾讯会议/钉钉）在入会、切设备或检测到
+/// 通话时会以独占模式拿麦，蓝牙耳机切到 HFP（通话）模式也会这样。
+///
+/// 原文案只说「请检查麦克风设备与隐私权限」，把人往错误方向引——用户去翻 Windows
+/// 隐私设置会发现麦克风明明是允许的。
+fn lost_access_hint(was_running: bool) -> &'static str {
+    if was_running {
+        "（麦克风原本可用、之后被系统拒绝：常见原因是会议软件以独占模式占用了麦克风，\
+         或蓝牙耳机切换到了通话模式。关闭占用麦克风的应用后重新开始会话即可，\
+         不需要改 Windows 隐私权限。）"
+    } else {
+        "（麦克风从未成功打开：请检查 Windows 设置 → 隐私和安全性 → 麦克风是否允许\
+         桌面应用访问，以及是否选了不存在的设备。）"
+    }
+}
 /// 队列容量（样本数）：约 10 秒 @48 kHz 单声道；溢出丢弃最旧数据。
 const QUEUE_CAPACITY_SAMPLES: usize = 480_000;
 /// 队列消费等待超时，决定停止响应速度。
@@ -141,7 +167,10 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
 
                 match failure_reason {
                     Some(reason) => {
-                        rt.error(format!("麦克风采集中断：{reason}"));
+                        rt.error(format!(
+                            "麦克风采集中断：{reason}{}",
+                            lost_access_hint(init.is_none())
+                        ));
                         failures = failures.saturating_add(1);
                         first_failure_at.get_or_insert_with(Instant::now);
                     }
@@ -151,10 +180,15 @@ pub(crate) fn run(rt: Arc<Runtime>, init: Sender<std::result::Result<(), String>
             Err(message) => {
                 if let Some(tx) = init.take() {
                     // 首次启动失败：交给 AudioEngine::start 统一上报并返回错误。
-                    let _ = tx.send(Err(message));
+                    // 这里也带提示——「从未打开成功」和「运行中失去」的排查方向
+                    // 完全不同，混成一句会把用户引到错误的地方。
+                    let _ = tx.send(Err(format!("{message}{}", lost_access_hint(false))));
                     break;
                 }
-                rt.error(format!("麦克风设备重新打开失败：{message}"));
+                rt.error(format!(
+                    "麦克风设备重新打开失败：{message}{}",
+                    lost_access_hint(true)
+                ));
                 failures = failures.saturating_add(1);
                 first_failure_at.get_or_insert_with(Instant::now);
             }

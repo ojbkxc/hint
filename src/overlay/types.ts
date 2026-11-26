@@ -71,6 +71,13 @@ export type SessionState =
   | "connected"
   | "error";
 
+/**
+ * 内存里保留的转录行数上限。
+ *
+ * 注意与「浮层显示几行」是两件事：显示区固定 3 行高（App.css 的
+ * .overlay-transcript），超出部分向上溢出、最新一行贴底可见。保留 6 条是为了
+ * 往上翻时还能看到上一两轮的内容，不必与显示行数相等。
+ */
 export const MAX_TRANSCRIPT_LINES = 6;
 
 /** 浮层保留的历史问答条数上限（「本场已答 N 题」用独立计数器，不受此上限影响）。 */
