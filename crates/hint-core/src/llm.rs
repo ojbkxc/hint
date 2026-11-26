@@ -1417,11 +1417,14 @@ mod tests {
     /// 「Let me extract facts carefully…」。1024 个 token 全花在思考上。
     #[test]
     fn output_token_budget_is_large_enough() {
+        // 用 const block：断言的是编译期常量，clippy 会要求换成 const assert。
         // 1024 是出事时的值；留一倍余量给思考过程 + 正文。
-        assert!(
-            MAX_OUTPUT_TOKENS >= 4096,
-            "输出上限 {MAX_OUTPUT_TOKENS} 太小：推理模型的思考过程会先把额度吃光，正文返回空"
-        );
+        const {
+            assert!(
+                MAX_OUTPUT_TOKENS >= 4096,
+                "输出上限太小：推理模型的思考过程会先把额度吃光，正文返回空"
+            )
+        };
     }
 
     /// 三个 provider 的请求体都要用同一个上限。
