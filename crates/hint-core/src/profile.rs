@@ -110,14 +110,6 @@ pub struct Profile {
 /// 常驻部分的字符预算：基本信息 + 技能。
 pub const ALWAYS_CHAR_BUDGET: usize = 600;
 
-/// 稀有词的权重下限。`weight = 1 / df`，所以这等价于「`df <= 2`」——
-/// 一个词只出现在 1–2 条事实里才算有区分度。
-///
-/// 取值依据（真机数据）：档案 15 条、非常驻 8 条时，「接口」出现在 5 条 →
-/// weight 0.20，不该单独构成命中；「自动化」「性能」「金融」各出现 1 条 →
-/// weight 1.0，应当命中。
-const RARE_WORD_WEIGHT: f32 = 0.5;
-
 /// **问题结构词**：出现在面试问题里是语法需要，不代表在问具体内容。
 ///
 /// 为什么单靠 df 不够——真机数据（档案 15 条、非常驻 8 条）：
@@ -266,9 +258,9 @@ impl Profile {
             .enumerate()
             .filter(|(_, f)| !f.kind.is_always_included())
             .filter_map(|(index, fact)| {
-                let (score, hit_rare) = score_fact(fact, &query, &idf);
+                let (score, hit_content) = score_fact(fact, &query, &idf);
                 // 只命中常见词的，视为与问题无关。
-                if score > 0.0 && hit_rare {
+                if score > 0.0 && hit_content {
                     Some((index, score))
                 } else {
                     None
@@ -319,13 +311,22 @@ fn score_fact(
 ) -> (f32, bool) {
     let text_lower = fact.text.to_lowercase();
     let mut score = 0.0f32;
-    // 是否命中过**稀有词**（只在少数事实里出现的词）。
+    // 是否命中过**内容词**（不在结构词表里的词）。
     //
     // 这是「无关问题不该命中」的判据：问「做过区块链项目吗」时，唯一命中的是
-    // 「项目」这种到处都是的词——命中它说明不了任何相关性。真机实测该问题会命中
-    // 两条项目事实，模型于是答了一段与区块链无关的项目介绍。**答非所问比 0 命中
-    // 更糟**：0 命中时模型按事实边界说「这块我接触不深」，误命中则让它自信跑偏。
-    let mut hit_rare = false;
+    // 「项目」这种结构词——命中它说明不了任何相关性。真机实测该问题会命中两条
+    // 项目事实，模型于是答了一段与区块链无关的项目介绍。**答非所问比 0 命中更
+    // 糟**：0 命中时模型按事实边界说「这块我接触不深」，误命中则让它自信跑偏。
+    //
+    // ## 为什么不再要求「稀有」
+    //
+    // 曾经要求「权重 >= 0.5」（即 df <= 2）才算命中。真机复验：一份主题集中的
+    // 档案里「自动化」出现在 4 条非常驻事实里（df=4 → weight 0.25），于是用户问
+    // 「你在自动化项目里做了什么」**命中 0 条**，而这正是他最想问的问题。
+    // **主题词在主档案里必然高频**，用频率当否决条件会把档案的核心内容一起挡掉。
+    //
+    // 频率仍然有用——它参与打分（越稀有分越高），只是不再一票否决。
+    let mut hit_content = false;
     for word in query {
         let weight = idf.get(word).copied().unwrap_or(1.0);
         let matched = if fact.tags.iter().any(|tag| tag.to_lowercase() == *word) {
@@ -344,14 +345,14 @@ fn score_fact(
         };
         if let Some(gain) = matched {
             score += gain;
-            // 结构词（项目/做过/介绍…）即使出现频率低也不算「稀有命中」：
-            // 它们出现在问题里只是语法需要，命中它们说明不了任何相关性。
-            if weight >= RARE_WORD_WEIGHT && !is_structural(word) {
-                hit_rare = true;
+            // 结构词（项目/做过/介绍…）命不命中都不算内容命中：它们出现在问题里
+            // 只是语法需要，命中它们说明不了任何相关性。
+            if !is_structural(word) {
+                hit_content = true;
             }
         }
     }
-    (score * fact.kind.weight(), hit_rare)
+    (score * fact.kind.weight(), hit_content)
 }
 
 /// 计算每个查询词的区分度权重。
@@ -831,6 +832,48 @@ mod tests {
             "稀有词那条应排第一：{:?}",
             r.matched_indices
         );
+    }
+
+    /// 档案的主题词即使高频也必须能命中。
+    ///
+    /// 真机案例（这是把「稀有词」判据换掉的直接原因）：一份「自动化测试」主题的
+    /// 档案里，「自动化」出现在 4 条非常驻事实里 → df=4、weight=0.25，低于当时的
+    /// 0.5 阈值 → 用户问「你在自动化项目里做了什么」**命中 0 条**。
+    ///
+    /// 主题词在主档案里必然高频，用频率当否决条件会把档案的核心内容一起挡掉。
+    #[test]
+    fn topic_word_with_high_df_still_matches() {
+        let mut profile = Profile::default();
+        // 「自动化」出现在 5 条里（df 高），但它是这份档案的主题。
+        for i in 0..5 {
+            profile.facts.push(Fact::new(
+                FactKind::Project,
+                format!("[P{i}] 自动化测试平台 负责第 {i} 模块"),
+                vec![format!("p{i}")],
+            ));
+        }
+        // 一条完全不相关的事实
+        profile.facts.push(Fact::new(
+            FactKind::Project,
+            "[X] 双十一大促压测 负责压测",
+            vec!["x".into()],
+        ));
+
+        let r = profile.retrieve("你在自动化项目里做了什么");
+        assert!(
+            !r.matched.is_empty(),
+            "主题词「自动化」df 高也必须命中，否则用户问不到自己最核心的经历"
+        );
+        // 且不该把不相关的那条带进来（「项目」是结构词，「压测」没被问到）
+        assert!(
+            !r.matched.contains("双十一"),
+            "不相关的事实不该被带进来：{}",
+            r.matched
+        );
+
+        // 纯结构词的问题仍然不该命中（不能因为放宽就又允许答非所问）
+        let miss = profile.retrieve("做过区块链项目吗");
+        assert!(miss.matched.is_empty(), "{}", miss.matched);
     }
 
     /// 结构词（项目/做过/介绍…）不该单独构成命中。
