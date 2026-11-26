@@ -5,6 +5,7 @@ pub mod error;
 pub mod import;
 pub mod llm;
 pub mod pipeline;
+pub mod profile;
 pub mod proxy;
 pub mod secret;
 pub mod session;
@@ -13,4 +14,5 @@ pub mod stt;
 
 pub use error::{CoreError, Result};
 pub use llm::{ChatRequest, ChatResponse};
+pub use profile::{Fact, FactKind, Profile, Retrieval};
 pub use settings::{AnswerStyle, OverlayBounds, ProviderKind, Settings, ThemeKind, TriggerMode};

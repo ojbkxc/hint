@@ -5,6 +5,7 @@ import StatusBar from "./overlay/StatusBar";
 import TranscriptPanel from "./overlay/TranscriptPanel";
 import { useCaptureAnswer } from "./lib/useCaptureAnswer";
 import { useOverlayEvents } from "./lib/useOverlayEvents";
+import { safeInvoke } from "./lib/tauri";
 import QuestionBar from "./overlay/QuestionBar";
 
 const ACTIVE_STATES = new Set(["connected", "listening", "ready"]);
@@ -29,6 +30,27 @@ export default function Overlay() {
     clearAnswer,
     dismissAnswerError,
   } = useOverlayEvents();
+
+  // 会话开始 / 结束。浮层是面试时唯一看得见的窗口（主窗口收进托盘是常态），
+  // 要开始面试却必须切回主窗口或右键托盘去找入口，等于把最常用的动作藏起来。
+  const [sessionBusy, setSessionBusy] = useState(false);
+  // 状态取值见 overlay/types.ts 的 SessionState：没有 "running"，
+  // 进行中是 listening/ready/connected，启动过程是 connecting——按钮都该显示「结束」，
+  // 否则启动那几秒会显示「开始面试」，用户会再点一次。
+  const running =
+    ACTIVE_STATES.has(status.state) || status.state === "connecting";
+  const toggleSession = useCallback(async () => {
+    setSessionBusy(true);
+    try {
+      if (running) {
+        await safeInvoke("stop_session");
+      } else {
+        await safeInvoke("start_session");
+      }
+    } finally {
+      setSessionBusy(false);
+    }
+  }, [running]);
   // 截图问答与面试问答是两条独立事件流：各自的状态、各自的分区，互不覆盖。
   const {
     text: captureText,
@@ -144,6 +166,17 @@ export default function Overlay() {
             <em className="header-latency">首字 {(answer.ttftMs / 1000).toFixed(1)}s</em>
           )}
         </span>
+        {/* 面试中浮层往往是屏幕上唯一看得到的窗口，开始/结束不该逼用户切回主窗口
+            或右键托盘。按钮与主窗口「开始面试 / 结束面试」调同一组命令。 */}
+        <button
+          type="button"
+          className={`overlay-session-btn ${running ? "is-running" : ""}`}
+          onClick={() => void toggleSession()}
+          disabled={sessionBusy}
+          title={running ? "结束本次面试（同主窗口「结束面试」）" : "开始面试（同主窗口「开始面试」）"}
+        >
+          {sessionBusy ? "…" : running ? "结束面试" : "开始面试"}
+        </button>
       </header>
 
       <TranscriptPanel lines={transcript} />

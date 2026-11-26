@@ -1563,10 +1563,53 @@ button.preset.active {
   gap: 6px;
   font-size: 12px;
   color: var(--text-muted);
-  max-width: 65%;
+  /* 留出右侧会话按钮的位置：原来 65% 是「品牌 + 状态」两栏时的口径。 */
+  max-width: 54%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 浮层头部的「开始面试 / 结束面试」按钮。
+   面试时浮层常常是屏幕上唯一可见的窗口，这个入口不能只留在主窗口或托盘菜单里。 */
+.overlay-session-btn {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: 999px;
+  border: 1px solid var(--overlay-hairline);
+  background: var(--overlay-surface-rgb);
+  background: rgba(var(--overlay-surface-rgb), 0.72);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.overlay-session-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 进行中时按钮表达的是「结束」，用警示色区分，避免误点。 */
+.overlay-session-btn.is-running {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.overlay-session-btn.is-running:hover:not(:disabled) {
+  background: rgba(201, 52, 47, 0.12);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.overlay-session-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .dot {
