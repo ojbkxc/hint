@@ -1600,6 +1600,68 @@ button.preset.active {
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
+  vertical-align: top;
+}
+
+/* 每条事实：正文可点改，右侧 × 删除。
+   排成 flex 是为了让「×」始终贴右侧，不随正文长短跳动。 */
+.profile-fact-body,
+.profile-fact-edit {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: calc(100% - 62px);
+  vertical-align: top;
+}
+
+.profile-fact-edit {
+  flex-wrap: wrap;
+}
+
+.profile-fact-text {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+  word-break: break-word;
+  border-radius: 3px;
+}
+
+.profile-fact-text:hover {
+  background: var(--bg-hover);
+  box-shadow: 0 0 0 3px var(--bg-hover);
+}
+
+.profile-fact-input {
+  flex: 1 1 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.profile-fact-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.profile-fact-remove:hover {
+  background: rgba(201, 52, 47, 0.12);
+  color: var(--danger);
 }
 
 .overlay-status {

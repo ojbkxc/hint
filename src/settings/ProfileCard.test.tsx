@@ -259,3 +259,75 @@ describe("ProfileCard —— 从文件导入", () => {
     });
   });
 });
+
+describe("ProfileCard —— 档案事实的编辑与删除", () => {
+  const profile: Settings["profile"] = {
+    organizedAt: 1,
+    sources: ["简历.md"],
+    facts: [
+      { kind: "basics", text: "张三 5年测试开发", tags: ["张三"] },
+      { kind: "project", text: "[P1] 自动化平台 回归3天到4小时", tags: ["自动化"] },
+      { kind: "qa", text: "离职原因 想做工程化", tags: ["离职"] },
+    ],
+  };
+
+  it("逐条列出全部事实（不再只显示前 8 条）", () => {
+    const { container } = renderCard(makeForm({ profile }));
+    const items = container.querySelectorAll(".profile-fact-list li");
+    expect(items).toHaveLength(3);
+    expect(screen.getByText(/张三 5年测试开发/)).toBeInTheDocument();
+  });
+
+  it("点 × 删掉一条，profile 里少一条", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    const removes = screen.getAllByLabelText(/删除第 \d+ 条事实/);
+    await userEvent.click(removes[1]);
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts).toHaveLength(2);
+    expect(next.profile?.facts.map((f) => f.kind)).toEqual(["basics", "qa"]);
+  });
+
+  it("删光后档案置空，退回整段发送", async () => {
+    const single = { ...profile, facts: [profile.facts[0]] };
+    const { patchLast } = renderCard(makeForm({ profile: single }));
+    await userEvent.click(screen.getByLabelText("删除第 1 条事实"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile).toBeNull();
+  });
+
+  it("点正文进入编辑，保存后 text 更新且 tags 保留", async () => {
+    const { patchLast } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/回归3天到4小时/));
+
+    const box = screen.getByLabelText("编辑第 2 条事实");
+    fireEvent.change(box, { target: { value: "[P1] 自动化平台 回归3天到2小时" } });
+    await userEvent.click(screen.getByText("保存"));
+
+    const next = patchLast() as { profile: Settings["profile"] };
+    expect(next.profile?.facts[1].text).toBe("[P1] 自动化平台 回归3天到2小时");
+    // 只改正文，标签不该被顺手清掉。
+    expect(next.profile?.facts[1].tags).toEqual(["自动化"]);
+  });
+
+  it("取消编辑不改动任何数据", async () => {
+    const { patch } = renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/回归3天到4小时/));
+    fireEvent.change(screen.getByLabelText("编辑第 2 条事实"), {
+      target: { value: "改了但不保存" },
+    });
+    await userEvent.click(screen.getByText("取消"));
+
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("正文清空时保存按钮不可用（空事实没有意义）", async () => {
+    renderCard(makeForm({ profile }));
+    await userEvent.click(screen.getByText(/回归3天到4小时/));
+    fireEvent.change(screen.getByLabelText("编辑第 2 条事实"), {
+      target: { value: "   " },
+    });
+    expect(screen.getByText("保存")).toBeDisabled();
+  });
+});

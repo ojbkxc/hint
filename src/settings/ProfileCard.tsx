@@ -19,6 +19,37 @@ export default function ProfileCard({ form, patch }: Props) {
   const [status, setStatus] = useState("");
   const [organizing, setOrganizing] = useState(false);
   const [organizeStatus, setOrganizeStatus] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
+
+  /**
+   * 改一条事实的正文。
+   *
+   * `patch` 是**浅合并**，所以必须重建整个 profile 对象——直接改 `form.profile.facts`
+   * 里的元素等于原地改传入的 props，React 不会重渲染，保存时也未必带上。
+   */
+  function updateFact(index: number, next: Partial<{ text: string; tags: string[] }>) {
+    if (!form.profile) return;
+    const text = next.text ?? form.profile.facts[index]?.text ?? "";
+    if (!text.trim()) return; // 空正文没有意义，也不该进 prompt
+    const facts = form.profile.facts.map((fact, i) =>
+      i === index ? { ...fact, ...next, text: text.trim() } : fact,
+    );
+    patch({ profile: { ...form.profile, facts } });
+  }
+
+  /** 删一条事实。删光则整个档案置空，退回「整段发送」路径。 */
+  function removeFact(index: number) {
+    if (!form.profile) return;
+    const facts = form.profile.facts.filter((_, i) => i !== index);
+    setEditingIndex(null);
+    if (facts.length === 0) {
+      patch({ profile: null });
+      setOrganizeStatus("已删除全部事实，档案清空；之后按「简历 / 项目资料」整段发送。");
+      return;
+    }
+    patch({ profile: { ...form.profile, facts } });
+  }
 
   /**
    * 选多份文档 → 交给后端整理成事实列表。
@@ -241,18 +272,70 @@ export default function ProfileCard({ form, patch }: Props) {
               {form.profile.sources.length > 0 &&
                 `，基于 ${form.profile.sources.join("、")}`}
               。提问时按关键词挑相关几条发送。
+              <br />
+              整理难免有偏差（写错数字、编出不存在的细节），**逐条可改可删**——留下
+              不准确的条目，面试时会被直接念出去。
             </p>
             <ul className="profile-fact-list">
-              {form.profile.facts.slice(0, 8).map((fact, index) => (
+              {form.profile.facts.map((fact, index) => (
                 <li key={index}>
                   <span className="profile-fact-kind">{fact.kind}</span>
-                  {fact.text}
+                  {editingIndex === index ? (
+                    <span className="profile-fact-edit">
+                      <textarea
+                        className="form-input profile-fact-input"
+                        rows={2}
+                        value={editingText}
+                        onChange={(event) => setEditingText(event.target.value)}
+                        autoFocus
+                        aria-label={`编辑第 ${index + 1} 条事实`}
+                      />
+                      <button
+                        type="button"
+                        className="ghost mini-import"
+                        onClick={() => {
+                          updateFact(index, { text: editingText.trim() });
+                          setEditingIndex(null);
+                        }}
+                        disabled={!editingText.trim()}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost mini-import"
+                        onClick={() => setEditingIndex(null)}
+                      >
+                        取消
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="profile-fact-body">
+                      <button
+                        type="button"
+                        className="profile-fact-text"
+                        onClick={() => {
+                          setEditingIndex(index);
+                          setEditingText(fact.text);
+                        }}
+                        title="点击修改这条"
+                      >
+                        {fact.text}
+                      </button>
+                      <button
+                        type="button"
+                        className="profile-fact-remove"
+                        onClick={() => removeFact(index)}
+                        title="删除这条（不进 prompt）"
+                        aria-label={`删除第 ${index + 1} 条事实`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
-            {form.profile.facts.length > 8 && (
-              <p className="muted small">…另有 {form.profile.facts.length - 8} 条</p>
-            )}
           </div>
         )}
       </div>
