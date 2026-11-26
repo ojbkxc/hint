@@ -666,6 +666,23 @@ fn ensure_leading_user(messages: &mut Vec<Value>, assistant_role: &str, placehol
 }
 
 /// 组装 OpenAI 兼容协议的请求体；`stream` 控制是否要求流式返回。
+/// 单次回复的 token 上限。
+///
+/// ## 为什么从 1024 提到 8192
+///
+/// 1024 在两个真实场景下不够用，且**失败方式很隐蔽**：
+///
+/// 1. **推理模型把额度全花在思考上**。真机实测（deepseek-v4.1-flash）整理面试档案时
+///    返回 `finish_reason: "length"`、`content: ""`，而 `reasoning_content` 里是
+///    「Let me extract facts carefully…」——1024 个 token 全被思考过程吃光，正文
+///    一个字都没输出。表现是「整理失败：模型没有按格式输出」，用户完全看不出真实原因。
+/// 2. **整理档案要输出 10～20 条事实**，每条 30～60 字，光正文就要 1000～2000 token，
+///    加上思考过程 1024 必然截断。
+///
+/// 8192 不影响作答速度：`max_tokens` 只是上限，不会强制生成到那么长。也不会让
+/// 口语短答变长——提示词里已经限定了「一两句话」。
+const MAX_OUTPUT_TOKENS: u32 = 8192;
+
 fn openai_body(settings: &Settings, request: &ChatRequest, stream: bool) -> Value {
     let mut messages: Vec<Value> = Vec::with_capacity(request.history.len() + 2);
     messages.push(json!({ "role": "system", "content": request.system }));
@@ -693,7 +710,7 @@ fn openai_body(settings: &Settings, request: &ChatRequest, stream: bool) -> Valu
     json!({
         "model": settings.model,
         "messages": messages,
-        "max_tokens": 1024,
+        "max_tokens": MAX_OUTPUT_TOKENS,
         "stream": stream,
     })
 }
@@ -751,7 +768,7 @@ fn anthropic_body(settings: &Settings, request: &ChatRequest, stream: bool) -> V
 
     json!({
         "model": settings.model,
-        "max_tokens": 1024,
+        "max_tokens": MAX_OUTPUT_TOKENS,
         "system": request.system,
         "messages": messages,
         "stream": stream,
@@ -802,7 +819,7 @@ fn gemini_body(request: &ChatRequest) -> Value {
     json!({
         "systemInstruction": { "parts": [{ "text": request.system }] },
         "contents": contents,
-        "generationConfig": { "maxOutputTokens": 1024 },
+        "generationConfig": { "maxOutputTokens": MAX_OUTPUT_TOKENS },
     })
 }
 
@@ -1391,6 +1408,52 @@ pub fn parse_sse_data(line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 输出 token 上限必须够大，否则「推理模型的思考过程把额度吃光 → 正文为空」
+    /// 这个真机缺陷会重现。
+    ///
+    /// 具体场景（真机）：deepseek-v4.1-flash 整理面试档案时返回
+    /// `finish_reason: "length"`、`content: ""`，`reasoning_content` 里是
+    /// 「Let me extract facts carefully…」。1024 个 token 全花在思考上。
+    #[test]
+    fn output_token_budget_is_large_enough() {
+        // 1024 是出事时的值；留一倍余量给思考过程 + 正文。
+        assert!(
+            MAX_OUTPUT_TOKENS >= 4096,
+            "输出上限 {MAX_OUTPUT_TOKENS} 太小：推理模型的思考过程会先把额度吃光，正文返回空"
+        );
+    }
+
+    /// 三个 provider 的请求体都要用同一个上限。
+    ///
+    /// 分开写死会出现「OpenAI 改好了、Gemini 还是 1024」——用户换协议后又踩一次。
+    #[test]
+    fn all_providers_share_the_same_output_budget() {
+        let settings = Settings::default();
+        let request = ChatRequest {
+            system: "s".into(),
+            user: "u".into(),
+            ..ChatRequest::default()
+        };
+        let openai = openai_body(&settings, &request, false);
+        assert_eq!(
+            openai["max_tokens"].as_u64(),
+            Some(u64::from(MAX_OUTPUT_TOKENS)),
+            "OpenAI 兼容请求体的 max_tokens 与常量不一致"
+        );
+        let anthropic = anthropic_body(&settings, &request, false);
+        assert_eq!(
+            anthropic["max_tokens"].as_u64(),
+            Some(u64::from(MAX_OUTPUT_TOKENS)),
+            "Anthropic 请求体的 max_tokens 与常量不一致"
+        );
+        let gemini = gemini_body(&request);
+        assert_eq!(
+            gemini["generationConfig"]["maxOutputTokens"].as_u64(),
+            Some(u64::from(MAX_OUTPUT_TOKENS)),
+            "Gemini 请求体的 maxOutputTokens 与常量不一致"
+        );
+    }
 
     #[test]
     fn sse_parser_skips_blank_comment_and_non_data_lines() {
