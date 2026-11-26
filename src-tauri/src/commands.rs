@@ -234,11 +234,50 @@ pub async fn test_llm(
 /// 代理：默认直连。更新源是 github.com，与模型接口不同路径；用户装 Clash 之类通常
 /// 只代理模型域名，实测直连 GitHub 更快（11.9 秒下完 8.4 MB，走本地代理 120 秒超时）。
 #[tauri::command]
-pub async fn check_update() -> Option<hint_core::UpdateInfo> {
+pub async fn check_update(state: State<'_, AppState>) -> Option<hint_core::UpdateInfo> {
     let current = env!("CARGO_PKG_VERSION");
+    let cache_path = state.settings_path.with_file_name("update-check.json");
+    let now = chrono::Utc::now().timestamp_millis();
+
+    // 缓存：6 小时内查过就不再请求。
+    //
+    // GitHub 匿名 API 限流是每小时 60 次，本命令每次启动都跑一次——用户反复重启
+    // （调设置、试设备）几十分钟就能打满，之后一律 403。真机日志里出现过连续两条
+    // 「检查更新失败：HTTP 403 Forbidden」，表现是「自动更新悄悄不工作了」。
+    if let Ok(raw) = std::fs::read(&cache_path)
+        && let Ok(cache) = serde_json::from_slice::<hint_core::UpdateCheckCache>(&raw)
+        && cache.is_fresh(now)
+    {
+        if hint_core::is_newer(&cache.latest, current) {
+            // 缓存说「有新版」但没存 installer 地址，仍需要一次真实请求。
+            // 这种情况很少（只在「刚发版 + 已缓存」时发生），放行。
+            tracing::info!(latest = %cache.latest, "缓存显示有新版本，仍需查询安装包地址");
+        } else {
+            tracing::info!(latest = %cache.latest, "更新检查命中缓存（6 小时内）");
+            return None;
+        }
+    }
+
     match hint_core::check_latest(current, None).await {
-        Ok(info) => info,
+        Ok(info) => {
+            // 记下这次结果。写失败只警告：缓存是优化，不是正确性依赖。
+            let latest = info
+                .as_ref()
+                .map(|update| update.version.clone())
+                .unwrap_or_else(|| current.to_string());
+            let cache = hint_core::UpdateCheckCache {
+                checked_at: now,
+                latest,
+            };
+            if let Ok(text) = serde_json::to_vec(&cache)
+                && let Err(error) = std::fs::write(&cache_path, text)
+            {
+                tracing::warn!(%error, "写入更新检查缓存失败（不影响使用）");
+            }
+            info
+        }
         Err(error) => {
+            // 失败**不写缓存**：一次网络抖动不该让用户 6 小时内都不再检查。
             tracing::warn!(%error, "检查更新失败（不影响使用）");
             None
         }

@@ -17,4 +17,4 @@ pub use error::{CoreError, Result};
 pub use llm::{ChatRequest, ChatResponse};
 pub use profile::{Fact, FactKind, Profile, Retrieval};
 pub use settings::{AnswerStyle, OverlayBounds, ProviderKind, Settings, ThemeKind, TriggerMode};
-pub use update::{UpdateInfo, check_latest, download_installer};
+pub use update::{UpdateCheckCache, UpdateInfo, check_latest, download_installer, is_newer};

@@ -108,6 +108,41 @@ fn pick_installer(release: &Release) -> Option<&Asset> {
         .find(|asset| asset.name.ends_with("_x64-setup.exe"))
 }
 
+/// 多久之内不重复查更新。
+///
+/// ## 为什么需要
+///
+/// GitHub 的匿名 REST API 限流是**每小时 60 次**。本项目每次启动都查一次 latest，
+/// 用户反复重启（调设置、试设备）几十分钟就能打满，之后所有检查都返回 403。
+/// 真机日志里确实出现过连续两条「检查更新失败：HTTP 403 Forbidden」——
+/// 那时的表现是「自动更新悄悄不工作了」，而用户完全看不出原因。
+///
+/// 6 小时的依据：发版不会比这更频繁（本项目的发版节奏是每天几次到几天一次），
+/// 而一天最多 4 次请求，离限流线很远。
+pub const CHECK_CACHE_TTL_MS: i64 = 6 * 60 * 60 * 1000;
+
+/// 上次检查的结果，落在配置目录里（与 settings.json 同级）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckCache {
+    /// 上次检查的时间（Unix 毫秒）。
+    pub checked_at: i64,
+    /// 当次查到的版本号（已是最新时也记，用于「刚发版」的快速比对）。
+    pub latest: String,
+}
+
+impl UpdateCheckCache {
+    /// 缓存是否还新鲜（未到 TTL）。
+    pub fn is_fresh(&self, now_ms: i64) -> bool {
+        // 未来时间戳（时钟回拨/手改文件）当作过期——宁可多查一次，也不要
+        // 因为一个坏值把更新永久卡住。
+        if self.checked_at > now_ms {
+            return false;
+        }
+        now_ms - self.checked_at < CHECK_CACHE_TTL_MS
+    }
+}
+
 /// 构造 HTTP 客户端。默认直连，代理只作兜底。
 fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
@@ -147,7 +182,17 @@ pub async fn check_latest(
         .await
         .map_err(|error| format!("查询更新失败：{error}"))?;
     if !response.status().is_success() {
-        return Err(format!("查询更新失败：HTTP {}", response.status()));
+        let status = response.status().as_u16();
+        // 403/429 在 GitHub 上是**匿名限流**（每小时 60 次），不是配置错误。
+        // 真机日志里出现过「检查更新失败：HTTP 403 Forbidden」，用户看不出该怎么办。
+        // 说清「明天/一小时后自动恢复」比报状态码有用。
+        if status == 403 || status == 429 {
+            return Err(format!(
+                "查询更新失败：HTTP {status}（GitHub 匿名接口限流，每小时 60 次；\
+                 稍后会自动恢复，不影响使用）"
+            ));
+        }
+        return Err(format!("查询更新失败：HTTP {status}"));
     }
     let release: Release = response
         .json()
@@ -229,10 +274,71 @@ pub async fn download_installer(
     std::fs::rename(&part, dest).map_err(|error| format!("保存安装包失败：{error}"))?;
     Ok(written)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 缓存只在 TTL 内新鲜；未来时间戳当作过期。
+    ///
+    /// 依据：GitHub 匿名接口限流每小时 60 次，本命令每次启动都跑。真机日志里
+    /// 出现过连续 403（限流打满），表现是「自动更新悄悄不工作」。
+    #[test]
+    fn cache_is_fresh_only_within_ttl() {
+        let now = 1_800_000_000_000i64;
+        let mk = |checked_at: i64| UpdateCheckCache {
+            checked_at,
+            latest: "1.1.99".into(),
+        };
+
+        // 刚查过 → 新鲜
+        assert!(mk(now - 1000).is_fresh(now));
+        // 差 1 毫秒到 TTL → 仍新鲜
+        assert!(mk(now - CHECK_CACHE_TTL_MS + 1).is_fresh(now));
+        // 恰好 TTL → 过期（边界取开区间，宁可多查一次）
+        assert!(!mk(now - CHECK_CACHE_TTL_MS).is_fresh(now));
+        // 超过 TTL → 过期
+        assert!(!mk(now - CHECK_CACHE_TTL_MS - 1).is_fresh(now));
+
+        // 未来时间戳（时钟回拨 / 手改文件）→ 当作过期，不让坏值永久卡住更新
+        assert!(!mk(now + 1000).is_fresh(now));
+    }
+
+    /// TTL 必须是小时量级：太短会打满限流，太长会错过发版。
+    #[test]
+    fn cache_ttl_is_hours_not_minutes() {
+        const {
+            assert!(
+                CHECK_CACHE_TTL_MS >= 3_600_000,
+                "TTL 至少 1 小时，否则频繁启动会打满 GitHub 限流"
+            )
+        };
+        const {
+            assert!(
+                CHECK_CACHE_TTL_MS <= 24 * 3_600_000,
+                "TTL 不该超过 24 小时，否则发版后一天才看到"
+            )
+        };
+    }
+
+    /// 403 的说明要提到「限流」与「稍后恢复」——只说状态码用户不知道怎么办。
+    #[test]
+    fn rate_limit_error_message_is_actionable() {
+        // 这条断言的是措辞约定：出现 403/429 时必须说清是限流而非配置错误。
+        let source = include_str!("update.rs");
+        // 找 403 分支附近的文本
+        let idx = source
+            .find("403 || status == 429")
+            .expect("应有 403/429 分支");
+        let nearby = &source[idx..(idx + 400).min(source.len())];
+        assert!(
+            nearby.contains("限流"),
+            "403 提示要说明是限流，而不是只报状态码"
+        );
+        assert!(
+            nearby.contains("不影响使用"),
+            "要说明不影响使用，否则用户以为软件坏了"
+        );
+    }
 
     #[test]
     fn version_compare_basic() {
