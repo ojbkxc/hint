@@ -383,7 +383,15 @@ fn parse_json_response(raw: &str) -> Result<Value> {
 fn ensure_text(text: Option<&str>, raw: &str) -> Result<String> {
     match text {
         Some(text) if !text.trim().is_empty() => Ok(text.trim().to_string()),
-        _ => Err(CoreError::Api(format!("响应中没有可用文本：{raw}"))),
+        // `raw` 必须截断：这条错误串会经 `模型连接失败：{error}` 一路传到前端并进日志。
+        // 三方接口在异常时可能返回整页 HTML 或超大 JSON（实测某些网关的 502 会带
+        // 几十 KB 的错误页），全量拼进去会把错误框撑成几屏、把日志灌满。
+        // 500 字符与 `parse_json_response` 的口径一致——同一份响应在不同失败点上
+        // 给出的片段长度不该忽长忽短。
+        _ => Err(CoreError::Api(format!(
+            "响应中没有可用文本：{}",
+            truncate(raw, 500)
+        ))),
     }
 }
 
@@ -1408,6 +1416,45 @@ pub fn parse_sse_data(line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「响应中没有可用文本」的错误串必须截断。
+    ///
+    /// 这条错误经 `模型连接失败：{error}` 一路传到前端并进日志。三方接口异常时
+    /// 可能返回整页 HTML / 超大 JSON，全量拼进去会把错误框撑成几屏、把日志灌满。
+    ///
+    /// 500 字符与 `parse_json_response` 口径一致——同一份响应在不同失败点上给出的
+    /// 片段长度不该忽长忽短。
+    #[test]
+    fn empty_text_error_truncates_raw() {
+        // 模拟 8KB 的 HTML 错误页
+        let huge = "<html>".repeat(1400);
+        assert!(huge.len() > 8000, "样本要够大才有意义");
+
+        let error = ensure_text(None, &huge).expect_err("无文本应报错");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("响应中没有可用文本"),
+            "错误说明要保留：{message}"
+        );
+        // 截断后应当明显短于原文（加前缀约 500 + 若干）
+        assert!(
+            message.chars().count() < 700,
+            "错误串没截断，长度 {} 字符（原始 {} 字节）",
+            message.chars().count(),
+            huge.len()
+        );
+        // 开头的内容要保留，用户能看出这是什么响应
+        assert!(message.contains("<html>"), "要保留开头片段：{message}");
+    }
+
+    /// 空白文本也走截断分支（不是只有 None 才走）。
+    #[test]
+    fn whitespace_text_is_treated_as_empty() {
+        let huge = " ".repeat(5000);
+        let error = ensure_text(Some(&huge), &huge).expect_err("全空白应报错");
+        assert!(error.to_string().chars().count() < 700);
+    }
 
     /// 输出 token 上限必须够大，否则「推理模型的思考过程把额度吃光 → 正文为空」
     /// 这个真机缺陷会重现。
