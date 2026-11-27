@@ -623,6 +623,11 @@ pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, S
                 "channel": if segment.channel == hint_store::CHANNEL_MIC { "me" } else { "interviewer" },
                 "text": segment.text,
                 "isEcho": segment.is_echo,
+                // recovered：断线恢复时补录的段落。前端 `SessionSegment` 声明了它，
+                // 复盘页据此显示「补录」标记。此前 `json!` 里漏了这个键，字段永远是
+                // undefined，标记永远不显示——真机上会话 36 有 21 条补录段落，全都
+                // 和实时转录长得一样，用户没法区分。
+                "recovered": segment.recovered,
                 "startMs": segment.start_ms,
                 "endMs": segment.end_ms,
             })
@@ -646,6 +651,10 @@ pub fn session_detail(state: State<'_, AppState>, id: String) -> Result<Value, S
         "startedAt": format_time(detail.session.started_at),
         "endedAt": detail.session.ended_at.map(format_time),
         "model": detail.session.model_id,
+        // note：前端 `SessionSummary` 声明了它，复盘详情页用这个字段初始化备注框。
+        // 此前这里漏了——`list_sessions` 有、`session_detail` 没有，于是列表里显示
+        // 备注、点进详情却是空白，用户会以为备注丢了。
+        "note": detail.session.note.unwrap_or_default(),
         "segments": segments,
         "answers": answers,
     }))
