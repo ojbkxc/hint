@@ -1249,7 +1249,20 @@ pub async fn verify_model_files(state: State<'_, AppState>) -> Result<(), String
     tauri::async_runtime::spawn_blocking(move || manager.verify())
         .await
         .map_err(|error| format!("校验任务失败：{error}"))?
-        .map_err(|error| format!("{error}"))
+        // `SttError` 的 Display 是**英文**（`integrity check failed: … sha256 mismatch`
+        // / `storage error: …`）。真机验证过：修好按钮之后，用户看到的就是这句英文
+        // ——功能对了、文案没做。这里补中文说明 + 处置动作：用户点这个按钮的场景
+        // 是「识别总是失败、怀疑模型坏了」，他需要的正是「接下来怎么办」。
+        .map_err(|error| {
+            let raw = error.to_string();
+            format!(
+                "模型文件校验未通过：{raw}\n\
+                 说明：本机模型文件与清单里的 sha256 不一致（下载中断、磁盘错误、\
+                 或被其它程序改动过）。语音识别会因此失败。\n\
+                 处理：到「语音模型」区块点「删除模型」，再重新下载（约 241MB）；\
+                 下载完成后可再点一次「校验文件完整性」确认。"
+            )
+        })
 }
 
 #[tauri::command]
