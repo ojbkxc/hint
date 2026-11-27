@@ -955,7 +955,7 @@ pub fn parse_content_range(header: Option<&str>) -> Option<ContentRange> {
 /// 抽成纯函数是为了让「预算怎么算」和「边界在哪」能被单测钉住——此前这段逻辑
 /// 内联在 `prepare_inner` 里，改错预算公式或边界（`<` 写成 `<=`）都不会让任何
 /// 测试变红，而用户会在下载到一半时才发现磁盘不够。
-fn disk_budget_error(free: u64, needed: u64) -> Result<(), SttError> {
+fn disk_budget_error(free: u64, needed: u64) -> Result<()> {
     let budget = if needed >= assets::TOTAL_BYTES {
         assets::REQUIRED_DISK_BYTES
     } else {
