@@ -310,13 +310,19 @@ mod tests {
             let _ = t.on_audio(&[0.5], start, dur, 0.5, 0.012, 15_000, 4_000, 120_000);
         }
 
-        // 被关闭的 outage 里应累计了 3 秒被丢弃的音频。
-        // （淘汰 3 帧，但起点 13_000 的帧可能部分落在窗口内——按实现的
-        //  过滤条件 `start + dur > outage.start` 判定，窗口内的帧都算。）
+        // 被关闭的 outage 里应累计被淘汰的音频时长。
+        //
+        // 淘汰过程（容量 5000ms，窗口内推 4 帧各 2000ms）：
+        //   f1(13000) → total 2000
+        //   f2(15000) → total 4000
+        //   f3(17000) → total 6000 > 5000 → 淘汰 f1，total 4000
+        //   f4(19000) → total 6000 > 5000 → 淘汰 f2，total 4000
+        // 淘汰 f1、f2 各 2000ms，合计 4000ms。两帧都落在窗口内
+        // （start + dur > outage.start = 10000）。
         let outage = t.on_transcript("恢复", 21_000).expect("应关闭 outage");
         assert_eq!(
-            outage.dropped_ms, 3_000,
-            "窗口内被淘汰的音频时长应累计为 3000ms，实际 {}",
+            outage.dropped_ms, 4_000,
+            "窗口内被淘汰的音频时长应累计为 4000ms，实际 {}",
             outage.dropped_ms
         );
     }
