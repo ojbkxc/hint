@@ -4,6 +4,60 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.72] - 2026-11-27
+
+### 测试：`dropped_ms`（断线窗口内被丢弃的音频时长）
+
+#### 起因
+
+验 STT 断线恢复时发现一处**没有测试覆盖的统计逻辑**：
+
+```rust
+// gap.rs on_audio()
+let dropped: u64 = evicted
+    .iter()
+    .filter(|frame| frame.start_ms + frame.dur_ms as i64 > outage_start)
+    .map(|frame| frame.dur_ms)
+    .sum();
+if dropped > 0 {
+    outage.dropped_ms += dropped;
+    if !self.drop_warned {
+        self.drop_warned = true;
+        tracing::warn!(dropped, "断线窗口内音频超过环形容量，部分无法补录");
+    }
+}
+```
+
+环形缓冲只保留最近 120 秒（`RING_CAP_MS`）。**断线期间**说话超过这个时长，
+超出部分就**无法补录**——用户说的话丢了。`dropped_ms` 是这件事的**唯一量化证据**，
+它进日志和诊断报告。
+
+此前这条逻辑**没有任何测试**：写在哪都不影响现有断言，改错（比如漏掉
+`> outage_start` 过滤、或把 `dropped_ms` 记成总淘汰量而非窗口内淘汰量）
+都不会红。而统计错了，排查时会以为音频没丢。
+
+#### 补的测试（+2）
+
+**`dropped_ms_counts_only_audio_inside_outage_window`**
+
+环形容量 5 秒、窗口内推 8 秒音频 → 淘汰 3 秒，断言 `dropped_ms == 3_000`。
+验证统计在断线窗口内生效。
+
+**`dropped_ms_ignores_evictions_before_outage`**
+
+先在窗口外把环形缓冲堆满（淘汰发生但不计入），再开窗口、窗口内只推 1 秒。
+断言 `dropped_ms == 0`——**进入 outage 之前的淘汰不算**。
+
+这条测的是那个过滤条件的必要性：`start + dur > outage.start`。没有它，
+窗口外的旧帧会虚报进 `dropped_ms`，排查时误以为窗口内丢了更多音频。
+
+#### 判据设计的提醒
+
+两个测试的构造都刻意区分了「淘汰发生」和「淘汰落在窗口内」——这是两个
+不同的量。只测前者会让过滤条件的正确性悬空。
+
+606 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.71] - 2026-11-27
 
 ### 测试：回声判定的两个边界（门槛是 AND、阈值取 >=）
