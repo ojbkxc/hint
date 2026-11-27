@@ -25,6 +25,21 @@ export default tseslint.config(
   // TypeScript 推荐（不开类型检查，保持 lint 速度与零额外依赖）
   ...tseslint.configs.recommended,
 
+  // scripts/**/*.mjs 是 Node 侧验证脚本（如 verify-ui.mjs，跑 CDP 做 UI 回归）。
+  //
+  // 它们同时需要两套全局：
+  // - node：脚本主体跑在 Node（process / console / setTimeout）；
+  // - browser：`page.evaluate(() => …)` 的回调**被序列化后在页面里执行**，
+  //   里面用的 `document` / `window` 是浏览器的，不是 Node 的。
+  //
+  // 只给 node 会把这 8 处判成 no-undef；只给 browser 则 process 报错。
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+
   // 全部 ts/tsx 走浏览器 + node 混合全局（vite.config.ts 会读 process.env）
   {
     files: ["**/*.{ts,tsx}"],
