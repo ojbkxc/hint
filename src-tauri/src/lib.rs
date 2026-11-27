@@ -391,7 +391,7 @@ fn overlay_geometry_fits(
 pub(crate) fn apply_content_protection(window: &tauri::WebviewWindow, protected: bool) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+        GetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
     };
 
     let _ = window.set_content_protected(protected);
@@ -401,20 +401,27 @@ pub(crate) fn apply_content_protection(window: &tauri::WebviewWindow, protected:
     };
     let handle = HWND(raw.0);
 
-    let actual = unsafe { GetWindowDisplayAffinity(handle) }
-        .map(|v| v.0)
-        .unwrap_or(u32::MAX);
+    // `GetWindowDisplayAffinity(hwnd, *mut u32)` 通过出参返回，返回值本身是
+    // `Result<()>`（只说明「调用是否成功」这一层信息）。
+    let mut affinity = 0u32;
+    let read_ok = unsafe { GetWindowDisplayAffinity(handle, &mut affinity as *mut u32) }.is_ok();
+
     let expected = if protected {
         WDA_EXCLUDEFROMCAPTURE.0
     } else {
         WDA_NONE.0
     };
 
-    if actual != expected {
+    if !read_ok {
+        tracing::warn!(
+            protected,
+            "读取浮层显示亲和性失败，无法校验内容保护是否生效"
+        );
+    } else if affinity != expected {
         tracing::warn!(
             protected,
             expected,
-            actual,
+            affinity,
             "浮层内容保护设置后未生效（系统拒绝了 SetWindowDisplayAffinity）：\
              共享屏幕时浮层内容可能被看到"
         );
