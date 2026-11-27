@@ -518,6 +518,15 @@ fn model_root(data_dir: &std::path::Path) -> std::path::PathBuf {
 /// 不能在收集信息时顺手搬 241 MB。返回 `None` 表示环境变量都拿不到，
 /// 调用方应回退到 `<data_dir>/voice`。
 pub(crate) fn model_root_path(_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    // 模型目录也可以被环境变量覆盖。与 `HINT_DATA_DIR` 分开是因为两者的
+    // 诉求不同：数据目录要隔离（配置/数据库会被破坏性测试改写），而模型
+    // 241MB 通常**不该**复制一份——默认共享真实模型，只在要测「模型损坏」
+    // 时才用 `HINT_MODEL_DIR` 指到测试副本。
+    if let Some(override_dir) = std::env::var_os("HINT_MODEL_DIR")
+        && !override_dir.is_empty()
+    {
+        return Some(std::path::PathBuf::from(override_dir));
+    }
     // Windows 下 %LOCALAPPDATA% 即 Tauri app_local_data_dir 的来源；
     // 拿不到时回退 %APPDATA% 的父目录（Roaming 的上级即 Local）。
     std::env::var_os("LOCALAPPDATA")
@@ -622,14 +631,35 @@ pub(crate) fn set_session_running(app: &tauri::AppHandle, running: bool) {
 /// 需要在**任何 Tauri 初始化之前**调用——诊断要能在「界面打不开」
 /// 的场景下跑通，所以不能依赖 AppState。
 pub fn doctor_entry() -> i32 {
-    // 数据目录用与 tauri::path().app_data_dir() 相同的规则自行推导：
-    // %APPDATA%\<identifier>。推导失败时退回当前目录下的 hint-data。
-    let app_data_dir = std::env::var_os("APPDATA")
-        .map(std::path::PathBuf::from)
-        .map(|base| base.join("com.ojbkxc.hint"))
-        .unwrap_or_else(|| std::path::PathBuf::from("hint-data"));
+    // 走与主程序**同一个**推导函数：这样设了 HINT_DATA_DIR 时，`--doctor`
+    // 诊断的也是那个隔离目录，而不是真实数据目录——否则「用隔离目录复现问题、
+    // 再用 --doctor 看诊断」这条最常用的排障路径会对不上号。
+    let app_data_dir = fallback_app_data_dir();
     doctor::run(&app_data_dir)
 }
+
+/// 数据目录的环境变量覆盖名。
+///
+/// ## 为什么需要
+///
+/// 验证「数据库升级」「配置损坏」「旧库兼容」这类行为时，必须在**真实数据上做
+/// 破坏性操作**——否则测不出东西。此前的做法是「备份 → 破坏 → 还原」，但备份
+/// 有真实的失败模式：SQLite 的 WAL 在进程被强杀后可能还没 checkpoint 进主库，
+/// 此时复制出来的 `.db` 是不完整的。（真机踩过：备份出来的库 sessions=0，
+/// 还原后用户数据一度归零，靠另一个更早的备份救回来。）
+///
+/// 设了这个变量之后，应用读写的是**另一个目录**，真实数据全程不被触碰——
+/// 破坏性测试从「有风险」变成「不可能影响用户」。
+///
+/// 用法：
+///
+/// ```text
+/// set HINT_DATA_DIR=D:\tmp\hint-test-data
+/// hint.exe
+/// ```
+///
+/// 测试脚本应在启动前确认目录里没有真实数据。
+pub(crate) const DATA_DIR_ENV: &str = "HINT_DATA_DIR";
 
 /// 按 Tauri 的规则推导应用数据目录：`%APPDATA%\<identifier>`。
 ///
@@ -637,6 +667,12 @@ pub fn doctor_entry() -> i32 {
 /// 应用状态要在 Builder 阶段注册，那时还没有 AppHandle。
 /// setup 里会与官方结果比对，防止规则变化导致静默读错文件。
 fn fallback_app_data_dir() -> std::path::PathBuf {
+    // 环境变量优先：测试与排障用隔离目录，真实数据不受影响。
+    if let Some(override_dir) = std::env::var_os(DATA_DIR_ENV)
+        && !override_dir.is_empty()
+    {
+        return std::path::PathBuf::from(override_dir);
+    }
     let identifier = "com.ojbkxc.hint";
     std::env::var_os("APPDATA")
         .map(std::path::PathBuf::from)
@@ -677,17 +713,27 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir()?;
+            // 设了 HINT_DATA_DIR 时整套数据（settings / hint.db / logs / 模型）都在
+            // 那个目录里。Tauri 的 `app_data_dir()` 不知道这个覆盖，所以这里必须
+            // 用同一个推导函数——否则 Builder 阶段的 state 指向隔离目录、setup 里
+            // 的日志却写进真实目录，两者会分叉。
+            let data_dir = fallback_app_data_dir();
             let log_dir = data_dir.join("logs");
             logging::init(&log_dir);
-            // 校验：Builder 阶段用的是自己推导的路径，这里与 Tauri 官方结果
-            // 比一次。不一致说明 identifier 或环境变量规则变了，必须暴露出来，
-            // 否则状态会指向另一份配置/数据库（比直接失败更难查）。
-            if data_dir != fallback_app_data_dir() {
+            // 校验：只有在**没有**环境覆盖时，才与 Tauri 官方结果比对。
+            // 有覆盖时两者必然不同（那是预期），比了只会报假警。
+            let official_data_dir = app.path().app_data_dir()?;
+            if std::env::var_os(DATA_DIR_ENV).is_none() && official_data_dir != data_dir {
                 tracing::error!(
-                    official = %data_dir.display(),
-                    derived = %fallback_app_data_dir().display(),
+                    official = %official_data_dir.display(),
+                    derived = %data_dir.display(),
                     "数据目录推导结果与 Tauri 不一致，配置可能读到另一份文件"
+                );
+            }
+            if std::env::var_os(DATA_DIR_ENV).is_some() {
+                tracing::warn!(
+                    dir = %data_dir.display(),
+                    "已启用数据目录覆盖（HINT_DATA_DIR）：本次运行不读写用户真实数据"
                 );
             }
             session::emit_status(app.handle(), "idle", "等待连接");

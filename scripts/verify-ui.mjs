@@ -79,7 +79,13 @@ async function main() {
 
   if (!(await appRunning())) {
     console.log("启动应用…");
-    spawn(EXE, [], { detached: true, stdio: "ignore" }).unref();
+    spawn(EXE, [], {
+      detached: true,
+      stdio: "ignore",
+      // 透传环境变量。HINT_DATA_DIR 在这里很关键：设了它应用就只读写隔离目录，
+      // 这个脚本做的写操作（导出、搜索）完全不会碰到用户真实数据。
+      env: { ...process.env },
+    }).unref();
     await new Promise((r) => setTimeout(r, 14000));
   }
 
