@@ -1017,7 +1017,17 @@ mod tests {
         assert_eq!(h.orphan_answers, 0, "正常库不该有孤儿答案");
 
         // 手工制造孤儿数据：直接插一条指向不存在会话的段落。
-        // 正常路径不会产生（外键级联会清），但外部工具改库或历史版本可能留下。
+        //
+        // 这里**必须临时关掉外键**——`Store` 的连接开了 `PRAGMA foreign_keys = ON`，
+        // 正常插入会被 `FOREIGN KEY constraint failed`（extended_code 787）挡住。
+        // 第一次写这条测试时没关，CI 直接红在那句上——而这恰恰反证了外键约束
+        // 是生效的（正常路径确实不可能产生孤儿数据）。
+        //
+        // 关掉再插，模拟「外部工具改库 / 历史版本没开外键」这种真实来源。
+        store
+            .connection()
+            .execute("PRAGMA foreign_keys = OFF", [])
+            .expect("关外键");
         store
             .connection()
             .execute(
@@ -1026,6 +1036,10 @@ mod tests {
                 [],
             )
             .expect("插孤儿");
+        store
+            .connection()
+            .execute("PRAGMA foreign_keys = ON", [])
+            .expect("开回外键");
 
         let h2 = store.data_health().expect("data_health 2");
         assert_eq!(h2.orphan_segments, 1, "应数出 1 段孤儿转录");
