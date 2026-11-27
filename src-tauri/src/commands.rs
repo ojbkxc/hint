@@ -163,25 +163,12 @@ pub fn save_settings(
     // 重启才发现。`set_overlay_content_protected` 命令当时只有注册、零调用点。
     //
     // 失败不阻断保存：设置已经落盘，这里失败只记日志（窗口可能还没创建）。
+    //
+    // 用 `apply_content_protection` 而不是直接调 `set_content_protected`：tao 的
+    // 封装吞掉了 `SetWindowDisplayAffinity` 的返回值，永远返回 Ok，应用侧的 Err
+    // 分支是死代码——保护被系统拒绝时照样记录成功。该函数设置后会回读校验。
     if let Ok(window) = overlay_window(&app) {
-        match window.set_content_protected(settings.overlay_content_protected) {
-            Ok(()) => tracing::info!(
-                protected = settings.overlay_content_protected,
-                "保存后应用浮层内容保护"
-            ),
-            Err(error) => tracing::warn!(
-                %error,
-                protected = settings.overlay_content_protected,
-                "保存后应用浮层内容保护失败（设置已落盘）"
-            ),
-        }
-    }
-    // 内容保护随保存立即生效：用户刚在设置里关掉/打开，不该等到下次启动。
-    // 失败只记日志——它是「共享时不泄露」的加固，不该让整次保存失败。
-    if let Some(window) = app.get_webview_window("overlay")
-        && let Err(error) = window.set_content_protected(settings.overlay_content_protected)
-    {
-        tracing::warn!(%error, "应用浮层内容保护失败");
+        crate::apply_content_protection(&window, settings.overlay_content_protected);
     }
     Ok(())
 }

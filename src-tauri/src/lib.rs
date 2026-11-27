@@ -362,6 +362,73 @@ fn overlay_geometry_fits(
     visible * 3.0 >= total
 }
 
+/// 设置浮层内容保护，并**回读校验**是否真正生效。
+///
+/// ## 为什么需要回读
+///
+/// tao 的 `set_content_protected` 内部是 `let _ = SetWindowDisplayAffinity(...)`——
+/// **吞掉了 API 的返回值**，永远返回 `Ok`。所以应用侧原来的 `match Ok/Err` 里
+/// `Err` 分支是**死代码**：保护被系统拒绝时，代码照样记录「已设置」的成功日志。
+///
+/// 真机实测过这个形态：`SetWindowDisplayAffinity` 返回 `false`、`GetLastError()=5`
+/// （拒绝访问），但日志里写的是「浮层内容保护已设置 protected=true」——用户在界面上
+/// 看到开关已开，实际共享屏幕时浮层内容**完全可见**。
+///
+/// ## 判据
+///
+/// 设置后用 `GetWindowDisplayAffinity` 读回实际值，与期望值比对：
+/// - 期望开启 → 实际值应为 `WDA_EXCLUDEFROMCAPTURE`
+/// - 期望关闭 → 实际值应为 `WDA_NONE`
+///
+/// 不匹配就记一条 **warn**（而不是 info），让「设置没生效」在日志里看得出来。
+///
+/// ## 为什么不自己调 SetWindowDisplayAffinity 替代 tao
+///
+/// 能拿到返回值，但会与 tao 的封装形成**两套实现**——同一个开关在两条路径上设置，
+/// 将来 tao 改了语义、或窗口句柄获取方式变了，两套实现会各自漂移。
+/// 回读校验是最小改动：仍然只走 tao 这一条设置路径，只多一步验证。
+#[cfg(windows)]
+pub(crate) fn apply_content_protection(window: &tauri::WebviewWindow, protected: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+    };
+
+    let _ = window.set_content_protected(protected);
+
+    let Ok(raw) = window.hwnd() else {
+        return;
+    };
+    let handle = HWND(raw.0);
+
+    let actual = unsafe { GetWindowDisplayAffinity(handle) }
+        .map(|v| v.0)
+        .unwrap_or(u32::MAX);
+    let expected = if protected {
+        WDA_EXCLUDEFROMCAPTURE.0
+    } else {
+        WDA_NONE.0
+    };
+
+    if actual != expected {
+        tracing::warn!(
+            protected,
+            expected,
+            actual,
+            "浮层内容保护设置后未生效（系统拒绝了 SetWindowDisplayAffinity）：\
+             共享屏幕时浮层内容可能被看到"
+        );
+    } else {
+        tracing::info!(protected, "浮层内容保护已设置并校验生效");
+    }
+}
+
+/// 非 Windows 平台（不适用）：内容保护只支持 Windows。
+#[cfg(not(windows))]
+pub(crate) fn apply_content_protection(_window: &tauri::WebviewWindow, protected: bool) {
+    tracing::info!(protected, "非 Windows 平台，浮层内容保护不适用");
+}
+
 /// 读窗口的位置与大小（**物理像素**，Win32 `GetWindowRect`）。
 ///
 /// 为什么不用 tauri 的 `inner_size()` / `outer_position()`：真机实测这台机器上
@@ -965,13 +1032,7 @@ fn setup_after_ready(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let state = app.state::<AppState>();
                 Settings::load(&state.settings_path).overlay_content_protected
             };
-            match window.set_content_protected(protected) {
-                Ok(()) => tracing::info!(protected, "浮层内容保护已设置"),
-                Err(error) => tracing::warn!(
-                    %error,
-                    "设置浮层内容保护失败（共享屏幕时浮层可能被看到）"
-                ),
-            }
+            apply_content_protection(&window, protected);
         }
         None => tracing::warn!("浮层窗口未创建，请检查 tauri.conf.json"),
     }
