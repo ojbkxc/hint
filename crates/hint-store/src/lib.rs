@@ -939,6 +939,78 @@ mod tests {
     /// 真机形态：会话 42/43 只有答案、没有转录段落（调试时直接点「问一句」，没开会）。
     /// 导出里会出现空的 `## 转录与问答`——读起来像「转录内容丢了」，用户第一反应
     /// 是数据出问题，而不是「这场本来就没转录」。
+    /// 导出的**特殊内容**要能安全通过。
+    ///
+    /// 用户转录和答案里可能出现换行、反引号、管道符、表格这些会破坏 Markdown
+    /// 结构的字符。导出是把内容**原样**写进 Markdown 的（`segment.text`、
+    /// `answer.text` 直接拼接），不做转义——这是对的：用户说的话、模型给的答案
+    /// 就是要原样保留。
+    ///
+    /// 但「原样」不等于「不管结构」。多行答案如果直接内嵌，会把后面的标题、
+    /// 下一条记录都挤进同一段，读起来结构全乱。这条测试盯的是**可读性**：
+    /// 特殊字符不丢失，结构标记仍能区分记录。
+    #[test]
+    fn export_handles_special_content() {
+        let store = Store::open_in_memory().expect("open");
+        let id = store
+            .create_session("openai", "m", Some("特殊内容测试"))
+            .expect("create");
+        store
+            .add_segment(
+                id,
+                "mic",
+                0,
+                1000,
+                "面试官问了：用 `pytest` 写一个测试",
+                false,
+                false,
+            )
+            .expect("seg");
+        store
+            .add_answer(
+                id,
+                Some(1),
+                "多行答案第一行\n第二行含 **加粗** 与 | 管道\n第三行 `代码块` 结束",
+                "m",
+                AnswerMetrics::default(),
+            )
+            .expect("ans");
+        store
+            .add_segment(id, "mic", 1000, 2000, "第二段：表格示例", false, false)
+            .expect("seg2");
+        store
+            .add_answer(
+                id,
+                Some(2),
+                "| 列A | 列B |\n| --- | --- |\n| 1 | 2 |",
+                "m",
+                AnswerMetrics::default(),
+            )
+            .expect("ans2");
+
+        let md = store.export_markdown(id).expect("export");
+
+        // 内容不丢失：特殊字符原样保留
+        assert!(md.contains("`pytest`"), "反引号内容应保留");
+        assert!(md.contains("| 列A | 列B |"), "表格应保留");
+        assert!(
+            md.contains("第二行含 **加粗** 与 | 管道"),
+            "加粗与管道应保留"
+        );
+        assert!(md.contains("多行答案第一行\n第二行"), "多行内容应保留");
+
+        // 结构仍可读：每条记录的标记都在
+        assert!(md.contains("# 面试记录 #"), "标题应存在");
+        assert!(md.contains("## 转录与问答"), "转录小节应存在");
+        assert!(md.contains("**面试官**"), "发言人标记应存在");
+        assert!(md.contains("**回答**"), "答案标记应存在");
+        // 第二条记录没有被第一条的多行内容吞掉
+        assert!(
+            md.find("第二段：表格示例").is_some(),
+            "第二段转录应出现，不能被前面的多行答案吞掉"
+        );
+    }
+
     #[test]
     fn export_omits_empty_transcript_header() {
         let store = Store::open_in_memory().expect("open");
