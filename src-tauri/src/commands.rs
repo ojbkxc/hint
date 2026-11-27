@@ -782,6 +782,24 @@ pub fn export_all_sessions(state: State<'_, AppState>, dir: String) -> Result<St
         }
     }
     tracing::info!(dir = %target_dir.display(), written, skipped, total, "批量导出完成");
+
+    // **写盘失败必须让用户看到**：之前这里只返回「已导出 N 条」，失败数被静默
+    // 吞掉。磁盘空间不足、目录权限、文件被占用都会导致 write 失败——用户看到的
+    // 是「已导出 8 条」，实际一个文件都没写出来，还以为导出成功了。
+    //
+    // 判据：只要 skipped > 0，返回结果里必须明确写出失败数与可能原因。
+    if skipped > 0 {
+        let reason = if skipped == total {
+            // 全部失败：最可能是磁盘空间不足或目录不可写
+            "可能原因：磁盘空间不足、目录无写入权限，或目标路径不可用"
+        } else {
+            "部分文件写入失败"
+        };
+        return Ok(format!(
+            "已导出 {written} 条到 {}，{skipped} 条写入失败（{reason}）",
+            target_dir.display()
+        ));
+    }
     Ok(format!("已导出 {written} 条到 {}", target_dir.display()))
 }
 
