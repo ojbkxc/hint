@@ -4,6 +4,57 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.74] - 2026-11-28
+
+### 测试：206 续传的 Content-Range 一致性校验
+
+#### 起因
+
+验下载中断后的续传时发现一处**没有测试的校验逻辑**：
+
+```rust
+// download/mod.rs transfer() 里，收到 206 响应后
+let consistent = parse_content_range(...).is_some_and(|range| {
+    offset > 0 && range.start == offset && range.end >= range.start
+    && range.end < file.bytes
+    && range.total.is_none_or(|total| total == file.bytes)
+});
+if !consistent { remove_quietly(part); return Ok(false); }
+```
+
+**不校验的后果是静默损坏**：CDN / 代理可能返回与请求不符的区间，续传从错误
+位置追加，写出的 `.part` 内容不对——但只有在重算 hash 时才暴露，用户看到的是
+「下载失败」而不是「续传错了」。
+
+这些判据此前内联在 `transfer` 里，**改错任何一条都不会让测试变红**。
+
+#### 改法：抽成纯函数
+
+新增 `content_range_is_consistent(header, offset, file_bytes)`，`transfer` 改为调用它。
+
+#### 补的测试（+2）
+
+**`content_range_consistency_boundaries`**
+
+逐条钉住判据：起点必须等于续传点、终点不能越过文件尾、总长须与清单一致
+（`*` 允许）、`offset > 0` 才可能续传、头部缺失或格式非法 → 不一致。
+
+**`content_range_allows_short_final_segment`**
+
+**关键放宽**：区间不必到文件末尾。
+
+早期版本要求 `end == bytes - 1`，于是「只回一段区间」的 CDN/代理（代理常把
+大文件切成若干段）会让 239MB 的进度被整份删掉重下。区间偏短只是本次读不满，
+读完按网络中断重试即可继续续传。这条测试钉住这个放宽——若有人改回「必须到末尾」，
+这条会红。
+
+#### 判据设计
+
+测试用真实模型大小（239_233_841）构造，而不是凑出来的小数字——这样「区间偏短
+仍判一致」这条才真正对应线上行为。
+
+606 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.73] - 2026-11-27
 
 ### 测试：磁盘空间预检的预算公式与边界
