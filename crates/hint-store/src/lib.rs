@@ -348,8 +348,15 @@ impl Store {
         let pattern = format!("%{escaped}%");
         // UNION 而不是两次查询再合并：SQL 这边一次扫完，DISTINCT 顺带去掉
         // 「同一会话里转录和答案都命中」的重复行。
+        //
+        // `note` 也进搜索：备注是用户给会话起的名字（「腾讯一面」「字节二面」），
+        // 那是他最可能用来找回某场记录的关键词。真机验证过的缺口——备注写进去了
+        // （详情能读到），但搜「独特备注ZZTOP」命中 0 条，而搜正文同一会话能命中。
+        // 用户给会话起了名却搜不到，比没起名更让人困惑。
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT session_id FROM (
+                 SELECT id AS session_id FROM sessions WHERE note LIKE ?1 ESCAPE '\\'
+                 UNION
                  SELECT session_id FROM segments WHERE text LIKE ?1 ESCAPE '\\'
                  UNION
                  SELECT session_id FROM answers  WHERE text LIKE ?1 ESCAPE '\\'
@@ -839,6 +846,60 @@ fn migrate(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 搜索必须覆盖备注（用户给会话起的名字）。
+    ///
+    /// 真机验证过的缺口：备注写进去之后详情页能读到，但搜「独特备注ZZTOP」
+    /// 命中 0 条——而同一会话搜正文能命中（对照组）。SQL 里只 UNION 了
+    /// `segments.text` 与 `answers.text`，没带 `sessions.note`。
+    ///
+    /// 为什么必须补：备注正是用户**最可能用来找回某场记录**的词
+    /// （「腾讯一面」「字节二面」）。起了名却搜不到，比没起名更让人困惑——
+    /// 他会以为那条记录丢了。
+    #[test]
+    fn search_covers_session_note() {
+        let store = Store::open_in_memory().expect("open");
+        let a = store.create_session("openai", "m", None).expect("create a");
+        let b = store.create_session("openai", "m", None).expect("create b");
+
+        assert!(
+            store.set_session_note(a, "腾讯一面").expect("set note"),
+            "备注应更新到记录"
+        );
+
+        // 备注命中
+        assert_eq!(
+            store.search_sessions("腾讯", 10).expect("search"),
+            vec![a],
+            "备注里的词必须能搜到"
+        );
+        assert_eq!(
+            store.search_sessions("一面", 10).expect("search"),
+            vec![a],
+            "部分匹配也要命中（LIKE 语义）"
+        );
+
+        // 对照组：没设备注的会话不被这条路径带出来
+        assert!(
+            store
+                .search_sessions("腾讯", 10)
+                .expect("search")
+                .iter()
+                .all(|id| *id == a),
+            "只有设了这条备注的会话才该命中"
+        );
+        let _ = b;
+
+        // 清空备注后不再命中（空串存 NULL，不是空字符串）
+        store.set_session_note(a, "").expect("clear note");
+        assert!(
+            store
+                .search_sessions("腾讯", 10)
+                .expect("search")
+                .is_empty(),
+            "备注清空后不该再命中"
+        );
+    }
 
     /// 搜索必须同时覆盖转录与答案。
     ///
