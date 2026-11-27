@@ -4,6 +4,67 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.79] - 2026-11-28
+
+### 修复：浮层内容保护「设置成功但实际没生效」，日志却记成功
+
+#### 真机验证发现
+
+验浮层内容保护是否真正生效时，用 Win32 `GetWindowDisplayAffinity` 回读窗口实际状态：
+
+```
+开启保护 → affinity 仍是 0（期望 2 = WDA_EXCLUDEFROMCAPTURE）
+```
+
+但日志里写着「浮层内容保护已设置 protected=true」。**设置没生效，日志却报成功。**
+
+#### 根因：tao 吞掉了 API 返回值
+
+查 tao 0.37.3 的实现：
+
+```rust
+pub fn set_content_protection(&self, enabled: bool) {
+    unsafe {
+        let _ = SetWindowDisplayAffinity(self.hwnd(), if enabled { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE });
+    }
+}
+```
+
+**`let _ =` 把返回值丢掉了**，所以 `set_content_protected()` 永远返回 `Ok`。
+应用侧原来的 `match Ok/Err` 里 **`Err` 分支是死代码**——保护被系统拒绝时，
+代码照样走进 `Ok` 分支记录成功日志。
+
+直接调用 API 复现：`SetWindowDisplayAffinity` 返回 `false`、`GetLastError() = 5`
+（拒绝访问），与日志记录的「已设置」完全矛盾。
+
+#### 影响
+
+用户在设置里打开内容保护，界面显示已保存、日志显示已设置，但**共享屏幕时浮层
+内容完全可见**。这是「设置对了、界面对了、实际没生效」的静默失效——用户只在
+进会议共享屏幕时才会发现。
+
+#### 改法：设置后回读校验
+
+新增 `apply_content_protection(window, protected)`，接入启动时与保存时两个调用点：
+
+1. 仍调用 tao 的 `set_content_protected`（**不另写一套 Win32 调用**——同一开关
+   走两条设置路径，将来语义一变就会各自漂移）；
+2. 设置后用 `GetWindowDisplayAffinity` 读回实际值；
+3. 与期望值比对，**不匹配记 warn**（而不是原来的 info 成功日志）。
+
+判据：
+- 期望开启 → 实际值应为 `WDA_EXCLUDEFROMCAPTURE`
+- 期望关闭 → 实际值应为 `WDA_NONE`
+
+#### 一个判断
+
+本机 `SetWindowDisplayAffinity` 被拒（错误码 5），属**环境限制**（该 API 的行为
+取决于对方的捕获方式，也取决于系统权限策略）。修复的价值不是让这台机器上一定
+生效，而是**让「没生效」在日志里看得出来**——从「记成功」变成「记 warn 并说明
+可能被看到」，排查时不再被误导。
+
+606 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.78] - 2026-11-28
 
 ### 测试：队列满时的提示文案
