@@ -969,6 +969,58 @@ mod tests {
         ));
     }
 
+    /// 门槛是「汉字 < 6 **且** 拉丁 < 12」才短路返回 false。
+    ///
+    /// 这意味着**混合文本**不会被短路：汉字不够 6 个、但拉丁字母达到 12 个时，
+    /// 仍然要进入 2-gram 判据。这条测的是「门槛两侧的行为」，防止有人把 `&&`
+    /// 改成 `||`——那会把「5 汉字 + 15 拉丁」的段落误判为短文本而不检回声。
+    #[test]
+    fn echo_gate_is_and_not_or() {
+        // 汉字 0 个（不足 6），拉丁 24 个（够 12）→ 不短路，能判回声
+        let latin = "please tell me about your project experience";
+        assert!(is_echo(latin, &[latin]), "拉丁够 12 不该被门槛短路");
+
+        // 汉字够 6、拉丁不足 12 → 也不短路
+        let han_only = "一二三四五六";
+        assert!(is_echo(han_only, &[han_only]), "汉字够 6 不该被门槛短路");
+
+        // 两侧都不足 → 短路，不判回声
+        assert!(!is_echo("我们今天面", &["我们今天面试"]));
+    }
+
+    /// `>= ECHO_OVERLAP_THRESHOLD` 取「等于也算回声」这一侧。
+    ///
+    /// 构造覆盖率**恰好等于** 0.70 的输入：若有人把 `>=` 改成 `>`，这条会红。
+    /// 而覆盖率正好落在阈值上的段落是真实场景（阈值本身就是人为选的）。
+    #[test]
+    fn overlap_exactly_at_threshold_is_echo() {
+        // mic：10 个汉字 → 9 个 2-gram；让面试官文本覆盖其中的 7 个。
+        // 命中 7/9 ≈ 0.778，超过 0.70 —— 先确认这条路径确实判回声，
+        // 再在下面单独构造精确 0.70 的用例。
+        assert!(is_echo("一二三四五六七八九十", &["一二三四五六七八"]));
+
+        // 精确 0.70：mic 10 个 2-gram，命中 7 个。
+        // 10 个汉字有 9 个 2-gram，所以用 11 个汉字取 10 个：
+        // 「甲乙丙丁戊己庚辛壬癸子」→ 10 个 2-gram，
+        // 面试官「甲乙丙丁戊己庚辛壬癸」→ 9 个 2-gram，
+        // 交集 9 个，9/10 = 0.9。为拿到精确 0.70，改用 mic 10 gram 命中 7：
+        // 用「甲乙丙丁戊己庚辛壬癸子」对「甲乙丙丁戊己庚辛壬癸」命中 9，
+        // 改用让面试官只覆盖前 7 个：
+        let mic = "甲乙丙丁戊己庚辛壬癸子";
+        let interviewer = "甲乙丙丁戊己庚辛";
+        assert_eq!(bigrams(&compact(mic)).len(), 10);
+        // 面试官的 2-gram：甲乙/乙丙/丙丁/丁戊/戊己/己庚/庚辛 = 7 个，全部在 mic 里
+        let overlap = bigrams(&compact(interviewer))
+            .iter()
+            .filter(|g| bigrams(&compact(mic)).contains(*g))
+            .count();
+        assert_eq!(overlap, 7, "交集应为 7，覆盖率 7/10 = 0.70");
+        assert!(
+            is_echo(mic, &[interviewer]),
+            "覆盖率恰好 0.70 应判为回声（判据是 >=）"
+        );
+    }
+
     #[test]
     fn english_echo_is_detected() {
         assert!(is_echo("hello can you hear me", &["hello can you hear me"]));
