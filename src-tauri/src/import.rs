@@ -164,12 +164,15 @@ mod tests {
     ///
     /// 这条是「改一个字符会不会红」的守卫——把 MAX_CHARS 从 200_000 改成 200
     /// 会让所有长简历被截成两句话，而其余测试仍然全绿。
+    ///
+    /// 用 const block：断言的是编译期常量，clippy `assertions_on_constants` 要求这种写法。
     #[test]
     fn max_chars_is_large_enough_for_real_resumes() {
-        assert!(
-            MAX_CHARS >= 10_000,
-            "MAX_CHARS={MAX_CHARS} 太小：真实简历 + 项目资料通常数千到上万字符，\
-             这么小的上限会把内容截掉大半"
-        );
+        const {
+            assert!(
+                MAX_CHARS >= 10_000,
+                "MAX_CHARS 太小：真实简历 + 项目资料通常数千到上万字符"
+            )
+        };
     }
 }

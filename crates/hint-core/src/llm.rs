@@ -1918,23 +1918,31 @@ mod tests {
     /// 异步流循环里（`buffer.len() > MAX_SSE_LINE_BYTES`），不容易单测；但常量
     /// 本身被改小同样危险——真机上一个几 KB 的 SSE 行很常见（长答案整段包在
     /// 一个 `data:` 里），上限设成几百字节会让所有长回答「生成失败」。
+    ///
+    /// 用 `const { assert!(…) }`：断言的是编译期常量，clippy 的
+    /// `assertions_on_constants` 要求这种写法（普通 `assert!` 会被判成
+    /// 「这个断言的值是常量」而报错）。
     #[test]
     fn stream_size_limits_are_large_enough() {
-        assert!(
-            MAX_SSE_LINE_BYTES >= 64 * 1024,
-            "MAX_SSE_LINE_BYTES={MAX_SSE_LINE_BYTES} 太小：长答案可能整段包在一个 \
-             SSE data 行里，上限过小会让正常回答被判成「单条数据超限」"
-        );
-        assert!(
-            ERROR_BODY_LIMIT >= 4 * 1024,
-            "ERROR_BODY_LIMIT={ERROR_BODY_LIMIT} 太小：非 2xx 响应体被截得太狠，\
-             用户看不到服务端给的错误原因"
-        );
+        const {
+            assert!(
+                MAX_SSE_LINE_BYTES >= 64 * 1024,
+                "MAX_SSE_LINE_BYTES 太小：长答案可能整段包在一个 SSE data 行里"
+            )
+        };
+        const {
+            assert!(
+                ERROR_BODY_LIMIT >= 4 * 1024,
+                "ERROR_BODY_LIMIT 太小：非 2xx 响应体被截得太狠，看不到服务端原因"
+            )
+        };
         // 反向：也不该无限制（内存保护的意义就在于有上限）
-        assert!(
-            MAX_SSE_LINE_BYTES <= 16 * 1024 * 1024,
-            "MAX_SSE_LINE_BYTES 过大，失去了内存保护的意义"
-        );
+        const {
+            assert!(
+                MAX_SSE_LINE_BYTES <= 16 * 1024 * 1024,
+                "MAX_SSE_LINE_BYTES 过大，失去了内存保护的意义"
+            )
+        };
     }
 
     /// 单个 SSE 行的解码不会因为边界被切坏 UTF-8。
@@ -1956,20 +1964,25 @@ mod tests {
     /// 全部超时——而 `STREAM_RETRY_DELAY` 只有 1.5 秒，重试一次也救不回来。
     #[test]
     fn stream_timeout_is_minutes_not_seconds() {
-        assert!(
-            STREAM_TIMEOUT >= Duration::from_secs(20),
-            "STREAM_TIMEOUT={STREAM_TIMEOUT:?} 太短：慢模型首字常超过 20 秒"
-        );
-        assert!(
-            STREAM_TIMEOUT <= Duration::from_secs(300),
-            "STREAM_TIMEOUT={STREAM_TIMEOUT:?} 过长：用户要等 5 分钟才知道失败"
-        );
+        const {
+            assert!(
+                STREAM_TIMEOUT.as_secs() >= 20,
+                "STREAM_TIMEOUT 太短：慢模型首字常超过 20 秒"
+            )
+        };
+        const {
+            assert!(
+                STREAM_TIMEOUT.as_secs() <= 300,
+                "STREAM_TIMEOUT 过长：用户要等 5 分钟才知道失败"
+            )
+        };
         // 重试间隔要短到用户不觉得卡住，又不能立刻重试导致连续撞限流
-        assert!(
-            STREAM_RETRY_DELAY >= Duration::from_millis(500)
-                && STREAM_RETRY_DELAY <= Duration::from_secs(5),
-            "STREAM_RETRY_DELAY={STREAM_RETRY_DELAY:?} 不在合理区间（0.5–5 秒）"
-        );
+        const {
+            assert!(
+                STREAM_RETRY_DELAY.as_millis() >= 500 && STREAM_RETRY_DELAY.as_secs() <= 5,
+                "STREAM_RETRY_DELAY 不在合理区间（0.5–5 秒）"
+            )
+        };
     }
 
     /// 5xx 是服务端临时异常，必须可重试；4xx 除 429 外都不该重试。

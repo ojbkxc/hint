@@ -711,39 +711,56 @@ mod tests {
     /// - `STARTUP_TIMEOUT` 太短 → 冷启动 240MB 模型时必然失败。
     #[test]
     fn worker_limits_are_in_sane_ranges() {
-        assert!(
-            RESPONSE_LIMIT >= 16 * 1024,
-            "RESPONSE_LIMIT={RESPONSE_LIMIT} 太小：长转录响应会被截断"
-        );
-        assert!(
-            RESPONSE_LIMIT <= 4 * 1024 * 1024,
-            "RESPONSE_LIMIT={RESPONSE_LIMIT} 过大，失去内存保护意义"
-        );
-        assert!(
-            READY_LINE_LIMIT >= 512,
-            "READY_LINE_LIMIT={READY_LINE_LIMIT} 太小：启动横幅读不全"
-        );
-        assert!(
-            STARTUP_TIMEOUT >= Duration::from_secs(20),
-            "STARTUP_TIMEOUT={STARTUP_TIMEOUT:?} 太短：冷启动要加载 240MB 模型"
-        );
-        assert!(
-            INFERENCE_TIMEOUT >= Duration::from_secs(30),
-            "INFERENCE_TIMEOUT={INFERENCE_TIMEOUT:?} 太短：长音频推理会被打断"
-        );
+        // 断言的全是编译期常量，必须用 const block（clippy `assertions_on_constants`）。
+        const {
+            assert!(
+                RESPONSE_LIMIT >= 16 * 1024,
+                "RESPONSE_LIMIT 太小：长转录响应会被截断"
+            )
+        };
+        const {
+            assert!(
+                RESPONSE_LIMIT <= 4 * 1024 * 1024,
+                "RESPONSE_LIMIT 过大，失去内存保护意义"
+            )
+        };
+        const {
+            assert!(
+                READY_LINE_LIMIT >= 512,
+                "READY_LINE_LIMIT 太小：启动横幅读不全"
+            )
+        };
+        const {
+            assert!(
+                STARTUP_TIMEOUT.as_secs() >= 20,
+                "STARTUP_TIMEOUT 太短：冷启动要加载 240MB 模型"
+            )
+        };
+        const {
+            assert!(
+                INFERENCE_TIMEOUT.as_secs() >= 30,
+                "INFERENCE_TIMEOUT 太短：长音频推理会被打断"
+            )
+        };
         // 推理超时必须比启动超时更长（推理是持续工作，启动是一次性）
-        assert!(
-            INFERENCE_TIMEOUT > STARTUP_TIMEOUT,
-            "推理超时应当长于启动超时"
-        );
-        assert!(
-            READ_POLL >= Duration::from_millis(50) && READ_POLL <= Duration::from_secs(2),
-            "READ_POLL={READ_POLL:?} 不在合理区间（50ms–2s）"
-        );
-        assert!(
-            STOP_GRACE <= Duration::from_secs(10),
-            "STOP_GRACE={STOP_GRACE:?} 过长：关闭时会拖慢退出"
-        );
+        const {
+            assert!(
+                INFERENCE_TIMEOUT.as_secs() > STARTUP_TIMEOUT.as_secs(),
+                "推理超时应当长于启动超时"
+            )
+        };
+        const {
+            assert!(
+                READ_POLL.as_millis() >= 50 && READ_POLL.as_secs() <= 2,
+                "READ_POLL 不在合理区间（50ms–2s）"
+            )
+        };
+        const {
+            assert!(
+                STOP_GRACE.as_secs() <= 10,
+                "STOP_GRACE 过长：关闭时会拖慢退出"
+            )
+        };
     }
 
     #[test]
