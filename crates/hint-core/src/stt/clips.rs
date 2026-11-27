@@ -216,6 +216,56 @@ mod tests {
         assert!(clips.len() >= 2);
     }
 
+    /// 强制截断时**不能丢字**。
+    ///
+    /// 长句说话时用户不停顿，只会被 `max_clip_ms` 硬切成多段。丢字在界面上完全
+    /// 看不出来——还是显示若干条转录，只是内容缺了后半句。
+    ///
+    /// 这条盯的是**段区间首尾相接**：每段起点等于上一段终点，首段从 0 开始。
+    /// 若切段错位或漏了中间一段，区间就会出现缺口——那正是"丢字"的可观测形态。
+    ///
+    /// （不能按样本总数守恒断言：`flush` 会去掉两侧静音 pad，输出样本数本就少于
+    /// 输入。那是设计使然，不是丢字。）
+    #[test]
+    fn max_clip_truncation_preserves_all_samples() {
+        let opts = ClipOptions {
+            // 100ms 帧、max 500ms → 5 帧成一段
+            max_clip_ms: 500,
+            break_silence_ms: 650,
+            ..ClipOptions::default()
+        };
+        // 连续 40 帧（4 秒）全是语音，中间没有静音 → 强制截断触发
+        let frames: Vec<_> = (0..40).map(|i| frame(i * 100, 100, 0.5)).collect();
+
+        let clips = split_into_speech_clips(&frames, &opts);
+
+        assert!(clips.len() >= 2, "应被切成多段（实际 {}）", clips.len());
+
+        // 首段必须从 0 开始，后续每段起点等于上一段终点
+        assert_eq!(
+            clips[0].start_ms, 0,
+            "首段起点应为 0，实际 {}（帧从 0 开始）",
+            clips[0].start_ms
+        );
+        for (index, clip) in clips.iter().enumerate().skip(1) {
+            assert_eq!(
+                clip.start_ms,
+                clips[index - 1].end_ms,
+                "第 {index} 段起点与前段终点不衔接：前段终点 {}，本段起点 {}",
+                clips[index - 1].end_ms,
+                clip.start_ms
+            );
+        }
+
+        // 末段终点等于全部帧时长（40 × 100ms）
+        assert_eq!(
+            clips.last().map(|c| c.end_ms),
+            Some(4000),
+            "末段终点应等于全部输入时长，实际 {:?}",
+            clips.last().map(|c| c.end_ms)
+        );
+    }
+
     #[test]
     fn empty_input_produces_no_clip() {
         assert!(split_into_speech_clips(&[], &ClipOptions::default()).is_empty());
