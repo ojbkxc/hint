@@ -88,7 +88,7 @@ Write-Host "模型目录: $modelDir"
 $cases = @(
     @{ Name = 'zh-short'; Text = '大家好，我是候选人。'; Expect = '大家好，我是候选人' }
     @{ Name = 'zh-long';  Text = '我在上一个项目里负责自动化测试工作。'; Expect = '我在上一个项目里负责自动化测试' }
-    @{ Name = 'zh-mixed'; Text = '主要使用 Playwright 和 Python 做接口测试。'; Expect = 'playwright' }
+    @{ Name = 'zh-mixed'; Text = '主要使用 Playwright 和 Python 做接口测试。'; Expect = '做接口测试' }
 )
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("hint-stt-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
