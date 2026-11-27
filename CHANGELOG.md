@@ -4,6 +4,64 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.66] - 2026-11-27
+
+### 补充：常量的「改一个字符会不会红」守卫
+
+#### 起因
+
+上一轮补 `>= 500` 边界测试时意识到一个模式：**常量改坏了，测试可能不会红**。
+
+扫了 96 个数值/`Duration` 常量，发现 81 个「被生产代码使用，但测试里零引用」。
+逐个核实后，其中一部分其实有测试（只是用字面量断言，改常量依然会红），但确实有
+几个**改小之后功能坏掉、测试全绿的真空区**。
+
+#### 补的测试（+6，涉及 3 个文件）
+
+**`src-tauri/src/import.rs`** —— 这文件此前**完全没有测试**：
+
+- `truncate_keeps_short_text_untouched`：未超限原样返回、不追加提示；
+- `truncate_cuts_on_char_boundary_and_warns`：用 `MAX_CHARS + 100` 个中文字符，
+  验证截断后正文**恰好** `MAX_CHARS` 个字符、不出现 UTF-8 替换字符、带可读提示；
+- `truncate_at_exact_limit_is_noop`：边界取 `<=`；
+- `truncate_with_zero_limit_does_not_panic`：上限 0 也不炸；
+- `max_chars_is_large_enough_for_real_resumes`：`MAX_CHARS >= 10_000`——
+  改成 200 会让所有长简历被截成两句话，而其它测试全绿。
+
+**`crates/hint-core/src/llm.rs`**：
+
+- `stream_size_limits_are_large_enough`：`MAX_SSE_LINE_BYTES >= 64KB`（长答案可能
+  整段包在一个 SSE data 行里）、`ERROR_BODY_LIMIT >= 4KB`，并反向验证不超 16MB；
+- `stream_timeout_is_minutes_not_seconds`：`STREAM_TIMEOUT` 在 20–300 秒、
+  `STREAM_RETRY_DELAY` 在 0.5–5 秒；
+- `sse_line_limit_does_not_corrupt_multibyte_input`：多字节输入经 `parse_sse_data`
+  不被破坏。
+
+**`crates/hint-stt/src/client.rs`**：
+
+- `worker_limits_are_in_sane_ranges`：`RESPONSE_LIMIT` 16KB–4MB、
+  `READY_LINE_LIMIT >= 512`、`STARTUP_TIMEOUT >= 20s`、`INFERENCE_TIMEOUT >= 30s`、
+  且**推理超时必须长于启动超时**（前者是持续工作、后者是一次性）、
+  `READ_POLL` 50ms–2s、`STOP_GRACE <= 10s`。
+
+#### 判据设计
+
+这些都是既有上界也有下界的**区间断言**，不是「等于某个值」：
+
+- 下界：防止改小导致功能坏掉；
+- 上界：防止改大导致内存保护失效，或让用户等太久才知道失败。
+
+`INFERENCE_TIMEOUT > STARTUP_TIMEOUT` 那条是**跨常量关系**——单独看两个数都合理，
+但关系反了就说明有人调错了方向。
+
+#### 为什么不为这些常量写精确值断言
+
+`assert_eq!(MAX_SSE_LINE_BYTES, 1024 * 1024)` 会变成「改值就要改测试」，
+反而弱化了测试的意义。区间断言抓的是**语义边界**（够不够用、会不会失控），
+这才是常量真正代表的东西。
+
+604 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.65] - 2026-11-27
 
 ### 补充：重试判据的边界测试
