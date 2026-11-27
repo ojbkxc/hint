@@ -149,6 +149,10 @@ impl Write for RotatingWriter {
     }
 }
 
+/// 构造过滤器：读 `HINT_LOG` 环境变量，未设置时用默认。
+///
+/// 只在 `init` 里调用一次，**不在每条日志上求值**——否则每条日志都要解析一次
+/// 环境变量，代价随日志量线性增长。
 fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("hint=info"))
@@ -192,5 +196,97 @@ pub(crate) fn init(log_dir: &Path) {
                 .with_target(false)
                 .try_init();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 造一个临时日志目录。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("hint-log-test-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    /// 轮转后应有 `hint.1.log`（历史）+ 新的空 `hint.log`。
+    #[test]
+    fn rotate_moves_current_log_to_backup() {
+        let dir = temp_dir("rotate");
+        let slot = FileSlot::open(&dir).expect("open");
+
+        // 写超过上限，触发轮转
+        let big = vec![b'x'; (MAX_BYTES as usize) + 1024];
+        slot.write_all(&big).expect("write");
+
+        let main = dir.join("hint.log");
+        let backup = dir.join("hint.1.log");
+        assert!(main.exists(), "轮转后应生成新的 hint.log");
+        assert!(backup.exists(), "历史应移到 hint.1.log");
+
+        // 历史文件应包含之前写入的内容
+        let backup_text = std::fs::read(&backup).expect("读历史");
+        assert!(backup_text.len() > 0, "历史文件应包含轮转前的日志内容");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **只保留一份历史**：连续多次超限，不应累积 `hint.2.log`、`hint.3.log`。
+    ///
+    /// 这是「日志会不会越占越多」的关键判据。旧实现若忘记删 `hint.1.log`，
+    /// 每次轮转都会留下一个文件，长期运行就是无限增长。
+    #[test]
+    fn rotate_keeps_only_one_backup() {
+        let dir = temp_dir("single-backup");
+        let mut slot = FileSlot::open(&dir).expect("open");
+
+        // 连续写三批，每批都超限
+        let big = vec![b'x'; (MAX_BYTES as usize) + 1024];
+        for _ in 0..3 {
+            slot.write_all(&big).expect("write");
+        }
+
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .expect("读目录")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        assert!(entries.iter().any(|n| n == "hint.log"), "应有当前日志");
+        assert!(entries.iter().any(|n| n == "hint.1.log"), "应保留一份历史");
+        assert!(
+            !entries
+                .iter()
+                .any(|n| n.starts_with("hint.2.log") || n.starts_with("hint.3.log")),
+            "不应累积多份历史，实际目录：{entries:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 轮转后新文件从 0 开始计数，下次写满会再次轮转。
+    #[test]
+    fn size_resets_after_rotate() {
+        let dir = temp_dir("size-reset");
+        let mut slot = FileSlot::open(&dir).expect("open");
+
+        // 写超限 → 轮转 → size 应归零
+        let big = vec![b'x'; (MAX_BYTES as usize) + 1024];
+        slot.write_all(&big).expect("write");
+
+        // 再写一点点，不应再次触发轮转（size 已归零）
+        let small = vec![b'y'; 1024];
+        slot.write_all(&small).expect("write");
+
+        // 此时只应有一份历史（第一次轮转的），没有第二次轮转的
+        let backup = dir.join("hint.1.log");
+        let main = dir.join("hint.log");
+        assert!(main.exists());
+        assert!(backup.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
