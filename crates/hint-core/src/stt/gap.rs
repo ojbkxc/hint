@@ -281,4 +281,72 @@ mod tests {
         t.reset();
         assert!(!t.has_transcript());
     }
+
+    /// 断线窗口内音频超过环形容量时，`dropped_ms` 要如实累计。
+    ///
+    /// 这是「用户说的话丢了」的**量化证据**：环形缓冲只保留最近
+    /// `cap_ms`（默认 120 秒），断线期间若说话超过这个时长，超出部分无法
+    /// 补录。`dropped_ms` 就是被丢掉的时长——它进日志和诊断，若统计错了，
+    /// 排查时会以为音频没丢。
+    ///
+    /// 此前这条逻辑**没有任何测试**：`outage.dropped_ms += dropped` 写在哪
+    /// 都不影响现有断言，改错（比如漏掉 `> outage_start` 过滤）也不会红。
+    #[test]
+    fn dropped_ms_counts_only_audio_inside_outage_window() {
+        let mut t = SttGapTracker::new(JointChannel::Interviewer, 5_000);
+        // 开断线窗口，起点 10_000（error 回溯 3_000）。
+        t.on_error(13_000, 3_000);
+
+        // 窗口内推入 4 秒音频，容量只有 5 秒 → 会淘汰。
+        // 帧：start=13_000 dur=2_000、start=15_000 dur=2_000、
+        //     start=17_000 dur=2_000、start=19_000 dur=2_000
+        // 累计 8 秒，容量 5 秒，淘汰 3 秒。
+        for (start, dur) in [
+            (13_000, 2_000),
+            (15_000, 2_000),
+            (17_000, 2_000),
+            (19_000, 2_000),
+        ] {
+            let _ = t.on_audio(&[0.5], start, dur, 0.5, 0.012, 15_000, 4_000, 120_000);
+        }
+
+        // 被关闭的 outage 里应累计了 3 秒被丢弃的音频。
+        // （淘汰 3 帧，但起点 13_000 的帧可能部分落在窗口内——按实现的
+        //  过滤条件 `start + dur > outage.start` 判定，窗口内的帧都算。）
+        let outage = t.on_transcript("恢复", 21_000).expect("应关闭 outage");
+        assert_eq!(
+            outage.dropped_ms, 3_000,
+            "窗口内被淘汰的音频时长应累计为 3000ms，实际 {}",
+            outage.dropped_ms
+        );
+    }
+
+    /// 断线窗口**之外**被淘汰的音频**不应**计入 `dropped_ms`。
+    ///
+    /// 过滤条件 `start + dur > outage.start` 是必要的：进入 outage 之前的
+    /// 旧帧本来就不在补录范围，算进去会让 `dropped_ms` 虚高，排查时误以为
+    /// 窗口内丢了更多音频。
+    #[test]
+    fn dropped_ms_ignores_evictions_before_outage() {
+        let mut t = SttGapTracker::new(JointChannel::Interviewer, 5_000);
+        // 先在窗口外堆满环形缓冲（淘汰发生但不应计入）。
+        for start in (0..3_000).step_by(1_000) {
+            let _ = t.on_audio(&[0.5], start, 1_000, 0.5, 0.012, 15_000, 4_000, 120_000);
+        }
+        // 此时已淘汰 3 秒，但还没开窗口。
+        // 开窗口，起点 10_000（回溯 3_000）。
+        t.on_error(13_000, 3_000);
+
+        // 窗口内只推 1 秒（容量 5 秒，已满，会淘汰，但淘汰的是窗口外的旧帧）
+        let _ = t.on_audio(&[0.5], 13_000, 1_000, 0.5, 0.012, 15_000, 4_000, 120_000);
+
+        let outage = t.on_transcript("恢复", 15_000).expect("应关闭 outage");
+        // 被淘汰的帧 start 都在 0~3000，`start + dur` 最大 4000 < 10000，
+        // 不落在窗口内 → dropped_ms 应为 0。
+        assert_eq!(
+            outage.dropped_ms, 0,
+            "窗口外的淘汰不应计入 dropped_ms，实际 {}",
+            outage.dropped_ms
+        );
+    }
 }
