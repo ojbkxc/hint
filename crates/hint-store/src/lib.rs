@@ -716,7 +716,21 @@ impl Store {
             return Ok(out);
         }
 
-        out.push_str("## 转录与问答\n\n");
+        // 小节标题**按需输出**：没有转录就不写「转录与问答」。
+        //
+        // 真机验证过的形态：会话 42/43 只有答案、没有任何转录段落（那几次是调试时
+        // 直接点「问一句」，没开会）。导出文件里会出现一个空标题：
+        //
+        //     ## 转录与问答
+        //
+        //     ## 其他回答
+        //     **回答**（首字 2.3s · 总耗时 4.2s）…
+        //
+        // 空的 `## 转录与问答` 读起来像「转录内容丢了」——用户看到第一反应是数据
+        // 出问题，而不是「这场本来就没转录」。
+        if !detail.segments.is_empty() {
+            out.push_str("## 转录与问答\n\n");
+        }
         // 同一提问可能有多次「重新生成」产生的多条答案，必须全部导出；
         // 按答案 id（生成顺序）分组，直接遍历一次，避免 O(n²) 的 find。
         let mut answers_by_segment: std::collections::HashMap<i64, Vec<&Answer>> =
@@ -846,6 +860,45 @@ fn migrate(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 没有转录时不该输出空的「转录与问答」标题。
+    ///
+    /// 真机形态：会话 42/43 只有答案、没有转录段落（调试时直接点「问一句」，没开会）。
+    /// 导出里会出现空的 `## 转录与问答`——读起来像「转录内容丢了」，用户第一反应
+    /// 是数据出问题，而不是「这场本来就没转录」。
+    #[test]
+    fn export_omits_empty_transcript_header() {
+        let store = Store::open_in_memory().expect("open");
+
+        // A：只有答案、没有转录
+        let a = store.create_session("openai", "m", None).expect("create a");
+        store
+            .add_answer(a, None, "只有答案没有转录", "m", AnswerMetrics::default())
+            .expect("ans");
+        let text_a = store.export_markdown(a).expect("export a");
+        assert!(
+            !text_a.contains("## 转录与问答"),
+            "没有转录时不该出现这个标题：{text_a}"
+        );
+        assert!(text_a.contains("## 其他回答"), "孤立答案仍要导出：{text_a}");
+        assert!(text_a.contains("只有答案没有转录"), "{text_a}");
+
+        // B：有转录、没答案 → 标题要在，但不该有空的「其他回答」
+        let b = store.create_session("openai", "m", None).expect("create b");
+        store
+            .add_segment(b, "interviewer", 0, 1000, "面试官说了话", false, false)
+            .expect("seg");
+        let text_b = store.export_markdown(b).expect("export b");
+        assert!(
+            text_b.contains("## 转录与问答"),
+            "有转录时标题要在：{text_b}"
+        );
+        assert!(
+            !text_b.contains("## 其他回答"),
+            "没有孤立答案不该出现该节：{text_b}"
+        );
+        assert!(text_b.contains("面试官说了话"), "{text_b}");
+    }
 
     /// 搜索必须覆盖备注（用户给会话起的名字）。
     ///
