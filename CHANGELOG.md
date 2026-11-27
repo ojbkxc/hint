@@ -4,6 +4,68 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.62] - 2026-11-27
+
+### 新增：一条命令跑完 UI 回归（`scripts/verify-ui.mjs`）
+
+#### 为什么
+
+1.1.42 → 1.1.61 这 20 个版本里，每次验证都是临时写脚本、跑完删掉。下次改动后想
+知道「基线还成立吗」就得重写一遍。[`docs/verification-baseline.md`](../docs/verification-baseline.md)
+记的是结论，不能自己跑。
+
+这个脚本把那些判据固化下来：
+
+```powershell
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9222'
+node scripts/verify-ui.mjs
+```
+
+退出码：`0` 全过 / `1` 有失败 / `2` 环境不可用。
+
+#### 覆盖的 15 项
+
+| 分组 | 项 |
+|---|---|
+| 版本与命令 | `app_version` 返回合法版本号；语音模型 `ready` |
+| 会话列表 | `list_sessions` 可用；带 `total`/`limited`（老格式退回）|
+| 搜索 | 空查询返回空数组；搜不存在的词返回空数组（不是失败）|
+| 布局 | 1200/900/780/760px × 7 区块，无横向溢出 |
+| 导出 | 生成文件；每份有标题；无空「转录与问答」小节；对照组（有转录的仍有）|
+| 热键 | 四个全局热键都被本应用占用（系统层 1409 判据）|
+
+#### 判据取舍
+
+只放**稳定且能区分新旧**的检查。热键真实触发（本环境合成按键无效）、麦克风拔插
+（需提权）一律不放——放进来只会让人开始忽略红的信号。
+
+#### 变异验证（3/3）
+
+1. `app_version` 判据用 `/^\d+\.\d+\.\d+$/`，能拒非法值；
+2. 空小节判据：含空小节的样本检出 1 个，正常样本检出 0 个（不误报）；
+3. 还原后完整跑一次 → `ALL PASS (15 项)`。
+
+### 顺带修复：eslint 不认识 `scripts/**/*.mjs`
+
+新脚本一加进来 lint 就报 31 个 `no-undef`——配置只给 `**/*.{ts,tsx}` 声明了全局。
+
+给 `scripts/**/*.mjs` 同时声明 **node + browser** 两套：
+
+- node：脚本主体跑在 Node（`process` / `console` / `setTimeout`）；
+- browser：`page.evaluate(() => …)` 的回调**被序列化后在页面里执行**，里面的
+  `document` / `window` 是浏览器的。
+
+只给 node 会剩 8 处 `no-undef`（`document`/`window`），只给 browser 则 `process` 报错。
+
+#### 一次静默失败
+
+第一次用 `node -e` 改 eslint 配置，**没报错也没生效**（引号把 `fs.writeFileSync`
+那段弄坏了，脚本静默退出）。改用 `edit` 才真正写入。
+
+这是本项目第 4 次栽在 `node -e` 的引号上。**改文件一律用 `edit`，不要用 `node -e` 拼。**
+
+604 用例、tsc 0 错、eslint 0/0。
+
 ## [1.1.61] - 2026-11-27
 
 ### 修复：导出 Markdown 里有空的「转录与问答」小节
