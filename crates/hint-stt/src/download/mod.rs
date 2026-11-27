@@ -696,14 +696,7 @@ where
             // （代理常把大文件切成若干段）会让 239MB 的进度被整份删掉重下；
             // 区间偏短其实只是本次读不满，读完按网络中断重试即可继续续传。
             let content_range = response.header("content-range").map(str::to_string);
-            let consistent = parse_content_range(content_range.as_deref()).is_some_and(|range| {
-                offset > 0
-                    && range.start == offset
-                    && range.end >= range.start
-                    && range.end < file.bytes
-                    && range.total.is_none_or(|total| total == file.bytes)
-            });
-            if !consistent {
+            if !content_range_is_consistent(content_range.as_deref(), offset, file.bytes) {
                 remove_quietly(part);
                 return Ok(false);
             }
@@ -978,6 +971,39 @@ fn disk_budget_error(free: u64, needed: u64) -> Result<()> {
     Ok(())
 }
 
+/// 206 响应的 Content-Range 是否与本次续传点一致。
+///
+/// ## 为什么要校验
+///
+/// 服务器（尤其 CDN / 代理）可能返回与请求不符的区间。若不校验，续传会从错误
+/// 的位置追加，写出的 `.part` **静默损坏**——hash 对不上，但没人知道是续传错了。
+///
+/// ## 各条判据
+///
+/// - `range.start == offset`：起点必须正是续传点。
+/// - `range.end >= range.start`：区间非空（`parse_content_range` 已保证，这里再兜一层）。
+/// - `range.end < file.bytes`：**终点不能越过文件尾**。越界说明服务器给的数据超过了
+///   清单声明的大小，续传下去必然写出超长文件。
+/// - `range.total` 为 `None` 或等于 `file.bytes`：总长必须与清单一致。
+///
+/// ## 为什么不要求 `end == bytes - 1`
+///
+/// 早期版本要求终点必须是文件末尾，于是「只回一段区间」的 CDN/代理会让 239MB
+/// 的进度被整份删掉重下。区间偏短只是本次读不满，读完按网络中断重试即可继续
+/// 续传。这个判据放宽是有据可查的，测试要钉住它。
+///
+/// 抽成纯函数让这些边界可以直接测——此前它内联在 `transfer` 里，改错任何一条
+/// 判据都不会让测试变红。
+fn content_range_is_consistent(header: Option<&str>, offset: u64, file_bytes: u64) -> bool {
+    parse_content_range(header).is_some_and(|range| {
+        offset > 0
+            && range.start == offset
+            && range.end >= range.start
+            && range.end < file_bytes
+            && range.total.is_none_or(|total| total == file_bytes)
+    })
+}
+
 /// 下载失败时的用户提示（包含分类文案 + 脱敏细节）。
 pub fn user_message_for(error: &SttError) -> String {
     // 用 user_message() 而不是 Display：后者是英文枚举前缀，
@@ -1135,6 +1161,85 @@ mod tests {
     /// - 续传：其余 → `needed + 64MB`
     ///
     /// 改错公式或边界（`<` 写成 `<=`）都会让这些用例变红。
+    /// 206 续传的 Content-Range 校验：每条判据都要钉住。
+    ///
+    /// 不校验的后果是**静默损坏**：续传从错误位置追加，写出的 `.part` 内容不对，
+    /// 但只有在重算 hash 时才暴露，用户看到的是「下载失败」而不是「续传错了」。
+    #[test]
+    fn content_range_consistency_boundaries() {
+        // 合法：起点等于续传点，终点在文件尾之前，总长一致
+        assert!(content_range_is_consistent(
+            Some("bytes 100-199/200"),
+            100,
+            200
+        ));
+
+        // 起点不对 → 不一致
+        assert!(!content_range_is_consistent(
+            Some("bytes 100-199/200"),
+            50,
+            200
+        ));
+
+        // 终点越过文件尾 → 不一致（写下去会超长）
+        assert!(!content_range_is_consistent(
+            Some("bytes 100-250/200"),
+            100,
+            200
+        ));
+
+        // 终点等于文件尾 → 一致（区间不必到末尾，见函数文档）
+        assert!(content_range_is_consistent(
+            Some("bytes 100-199/200"),
+            100,
+            200
+        ));
+
+        // 总长与清单不符 → 不一致
+        assert!(!content_range_is_consistent(
+            Some("bytes 100-199/300"),
+            100,
+            200
+        ));
+
+        // 总长为 `*`（服务器不声明）→ 允许
+        assert!(content_range_is_consistent(
+            Some("bytes 100-199/*"),
+            100,
+            200
+        ));
+
+        // 起点 0：只有 offset > 0 时才可能是续传
+        assert!(!content_range_is_consistent(Some("bytes 0-99/200"), 0, 200));
+
+        // 没有 content-range 头 → 不一致
+        assert!(!content_range_is_consistent(None, 100, 200));
+
+        // 头部格式非法 → 不一致
+        assert!(!content_range_is_consistent(Some("garbage"), 100, 200));
+    }
+
+    /// 关键放宽：**区间不必到文件末尾**。
+    ///
+    /// 这是对早期「要求 end == bytes-1」的修正——代理常把大文件切成若干段，
+    /// 若要求到末尾，239MB 的进度会被整份删掉重下。这条测试钉住这个放宽：
+    /// 若有人改回「必须到末尾」，这条会红。
+    #[test]
+    fn content_range_allows_short_final_segment() {
+        let file_bytes = 239_233_841; // 真实模型大小
+        let offset = 200_000_000;
+        // 服务器只回一段（远不到文件尾）→ 仍应判为一致
+        assert!(
+            content_range_is_consistent(
+                Some(&format!("bytes {offset}-{}/{file_bytes}", offset + 100_000)),
+                offset,
+                file_bytes
+            ),
+            "区间不必到文件末尾，否则 CDN 分段会触发整份重下"
+        );
+    }
+
+    /// `disk_budget_allows_enough_and_blocks_short` 之前的位置。
     #[test]
     fn disk_budget_allows_enough_and_blocks_short() {
         let required = assets::REQUIRED_DISK_BYTES;
