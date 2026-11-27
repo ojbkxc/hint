@@ -4,6 +4,74 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.54] - 2026-11-27
+
+### 修复：复盘详情页读不到备注、「补录」标记从不显示
+
+`session_detail` 命令用**手工 `json!`** 构造返回值，两处漏字段：
+
+| 字段 | 前端声明 | 后端返回 | 后果 |
+|---|---|---|---|
+| `recovered` | `SessionSegment.recovered: boolean` | ❌ 缺 | 复盘页「补录」标记永不显示 |
+| `note` | `SessionSummary.note: string` | ❌ 缺 | 详情页备注框恒空 |
+
+#### `recovered`：21 条补录段落在复盘页上和实时转录长得一样
+
+真机查数据库：`SELECT COUNT(*) FROM segments WHERE recovered=1` → **21 条**，全在
+会话 36。而 `session_detail` 返回的 segment 键是：
+
+```
+['channel', 'endMs', 'id', 'isEcho', 'startMs', 'text']     ← 没有 recovered
+```
+
+前端 `normalizeSessionDetail` 走 `record.recovered === true`，字段缺失 → `false` →
+`SessionReview.tsx` 的「补录」`<em>` 永不渲染。用户没法区分哪些是断线后补的。
+
+#### `note`：列表有备注、点进详情是空白
+
+`list_sessions` 返回了 `"note": summary.session.note.unwrap_or_default()`
+（commands.rs:596），但 `session_detail` 的顶层 `json!` 里没有。于是同一个备注在
+列表里显示、点进详情却是空的——用户会以为备注丢了。
+
+#### 改法
+
+两处都补上，并在注释里写清「前端哪个字段消费它、漏了会怎样」。
+
+### 新增：`session_detail` 键覆盖守卫
+
+`src/lib/sessionDetailKeys.test.ts`：从 `commands.rs` 截出 `session_detail` 函数体，
+按出现顺序取三个 `json!` 块（segment / answer / 顶层），断言它们覆盖前端
+`SessionSegment` / `SessionAnswer` / `SessionSummary` 声明的每个键。
+
+反向（后端多返回的键，如 `totalMs`）不判——多余字段无害，缺失才有害。
+
+#### 第一版判据写错了一次
+
+最初拿 `SessionDetail`（含嵌套 `summary`）比顶层键，误报「summary 缺失」。查
+`normalizeSessionDetail` 才发现：它用 `normalizeSummary(raw, 0)` 从**同一层**读
+startedAt / endedAt / model / note——后端扁平返回是对的，`summary` 是前端构造的。
+
+判据要对齐**实际的归一逻辑**，不能只看类型声明。
+
+#### 变异验证
+
+删掉 `"note"` 那行 → 守卫精确报出 `note`；还原后全绿。
+
+### 这一族缺陷的规律
+
+真机验证过的四次同类（1.1.46 `Profile` 缺 camelCase、1.1.53 `overlay_visible`、
+本轮 `recovered` + `note`）都是：**没有报错、没有日志、单测全绿**。
+
+共同点是「两侧数据结构对不上，运行时静默使用默认值」。区别在于漂移发生在哪一层：
+
+- `Profile` / `Settings`：结构体 serde 注解或字段缺失；
+- `session_detail`：**手工 `json!`** ——结构体字段齐全，但手写 json 时漏了。这一层
+  最容易被忽略，因为「结构体有」不等于「返回里有」。
+
+现在 `Settings` 字段、IPC 命令注册、`session_detail` 键三个方向都有守卫了。
+
+604 用例（+5）、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.53] - 2026-11-27
 
 ### 修复：保存配置会把「浮层隐藏」的意图重置掉（抵消 1.1.51 的修复）
