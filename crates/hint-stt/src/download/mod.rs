@@ -292,9 +292,9 @@ impl ModelManager {
         if needed > 0
             && let Some(free) = free_bytes(&self.layout.base)
         {
-            if let Some(error) = disk_budget_error(free, needed) {
-                return Err(error);
-            }
+            // `disk_budget_error` 返回 `Result<()>`（内部错误已带中文提示），
+            // 空间不足时用 `?` 直接传播。
+            disk_budget_error(free, needed)?;
         }
         // 已完成文件累加到整体进度里。
         let mut completed = assets::ALL_FILES
