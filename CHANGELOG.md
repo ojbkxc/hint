@@ -4,6 +4,63 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.73] - 2026-11-27
+
+### 测试：磁盘空间预检的预算公式与边界
+
+#### 起因
+
+验模型下载时发现一处**没有测试覆盖的判据**：
+
+```rust
+// download/mod.rs prepare_inner()
+let budget = if needed >= assets::TOTAL_BYTES {
+    assets::REQUIRED_DISK_BYTES          // 首次安装：约 300MB
+} else {
+    needed + 64 * 1024 * 1024            // 续传：剩余 + 64MB 暂存
+};
+if free < budget {
+    return Err(SttError::storage("磁盘空间不足：…"));
+}
+```
+
+这套预检决定**用户在磁盘不够时是收到明确提示，还是下载到一半失败**。
+但此前它内联在 `prepare_inner` 里，**没有任何测试**：改错预算公式、把 `<`
+写成 `<=`、把 `>=` 写成 `>`，都不会让任何测试变红。
+
+#### 改法：抽成纯函数
+
+新增 `disk_budget_error(free, needed)`，`prepare_inner` 改为调用它。
+
+**纯函数化的价值**：预算公式与边界是纯逻辑，可以脱离文件系统和网络直接测。
+内联在流程里时，想测就得造一个完整的下载环境。
+
+#### 补的测试（+2）
+
+**`disk_budget_allows_enough_and_blocks_short`**
+
+两条路径都覆盖：
+
+- 首次安装：空间**刚好等于**预算 → 放行（判据是 `<`，等于不算不足）；
+  差 1 字节 → 拒绝，且提示是「磁盘空间不足」的中文。
+- 续传：预算是 `needed + 64MB`，提示里的**数字是实际预算**，不是固定的 300MB。
+  这条尤其重要——续传需求远小于首次，固定文案会误导用户。
+
+**`disk_budget_boundary_uses_first_install_branch`**
+
+`needed == TOTAL_BYTES` 走首次安装分支（判据是 `>=`）。
+
+若有人把 `>=` 写成 `>`，这个恰好相等的输入会走续传分支，预算变成
+`TOTAL_BYTES + 64MB`（比 300MB 大）→ **用户空间够 300MB 时被误拒**。
+测试里加了反向对照：确认续传预算确实更大，两条路径不混。
+
+#### 一个实现上的小坑
+
+抽函数时多留了一个 `}`，rustfmt 立刻报「unexpected closing delimiter」。
+这是机械改动的典型错误——**改完先跑 rustfmt，别等 CI**。
+
+606 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.72] - 2026-11-27
 
 ### 测试：`dropped_ms`（断线窗口内被丢弃的音频时长）
