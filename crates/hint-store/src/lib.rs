@@ -958,14 +958,14 @@ mod tests {
         store
             .add_segment(
                 id,
-                "mic",
+                "system",
                 0,
                 1000,
                 "面试官问了：用 `pytest` 写一个测试",
                 false,
                 false,
             )
-            .expect("seg");
+            .expect("seg-sys");
         store
             .add_answer(
                 id,
