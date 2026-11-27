@@ -370,6 +370,61 @@ pub(crate) fn collect(app_data_dir: &Path) -> String {
     }
     let _ = writeln!(out);
 
+    // —— 磁盘空间 ——
+    //
+    // ## 为什么需要
+    //
+    // 磁盘不够时，用户遇到的是**具体的失败**：模型下载到一半失败、导出写不进去、
+    // 配置保存失败——而且每个失败的提示都只针对那一次操作。用户得一个一个试，
+    // 试完才知道「原来是磁盘满了」。
+    //
+    // `--doctor` 的职责是**在用户操作之前**把环境事实说清。磁盘是其中一项，
+    // 且有明确的判据：可用空间是否够模型下载（约 300MB 配额）。
+    //
+    // ## 判据
+    //
+    // - 可用空间 < 模型下载配额 → `[阻塞]`，并说明具体影响；
+    // - 可用空间够但偏紧（< 配额的 2 倍）→ `[注意]`，提示后续操作可能失败；
+    // - 拿不到可用空间 → 如实说明，不瞎猜。
+    //
+    // 配额与 `hint-stt` 的 `REQUIRED_DISK_BYTES` 保持一致：模型下载的预检
+    // 用的是同一个数，诊断报告不能再写一套。
+    let _ = writeln!(out, "【磁盘空间】");
+    let disk_base = app_data_dir;
+    match hint_stt::download::disk::free_bytes(disk_base) {
+        Some(free) => {
+            let required = hint_stt::assets::REQUIRED_DISK_BYTES;
+            let free_mb = free / 1024 / 1024;
+            let required_mb = required / 1024 / 1024;
+            let _ = writeln!(
+                out,
+                "  数据目录所在卷可用：{} MB（模型下载需约 {} MB）",
+                free_mb, required_mb
+            );
+            if free < required {
+                let _ = writeln!(
+                    out,
+                    "  [阻塞] 磁盘空间不足：无法下载语音模型（约需 {} MB，当前仅 {} MB）。\
+                     请清理磁盘后重试。",
+                    required_mb, free_mb
+                );
+                blocking += 1;
+            } else if free < required * 2 {
+                let _ = writeln!(
+                    out,
+                    "  [注意] 磁盘空间偏紧（仅够一次模型下载）：导出、配置保存等\
+                     写入操作可能因空间不足失败。"
+                );
+            } else {
+                let _ = writeln!(out, "  空间充足");
+            }
+        }
+        None => {
+            let _ = writeln!(out, "  无法获取磁盘可用空间（平台或权限限制），跳过检查");
+        }
+    }
+    let _ = writeln!(out);
+
     // —— 最近日志 ——
     let _ = writeln!(out, "【最近日志】");
     let log_path = app_data_dir.join("logs").join("hint.log");
