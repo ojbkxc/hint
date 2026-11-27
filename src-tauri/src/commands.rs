@@ -549,15 +549,37 @@ pub async fn import_document_text(path: String) -> Result<String, String> {
 // 会话
 // ---------------------------------------------------------------------------
 
+/// 启动会话，返回新会话的 id。
+///
+/// ## 返回值 `0` 的含义（真机并发测试抓出来的语义模糊）
+///
+/// 并发调用 5 次 `start_session` 时，实测返回 `[0, 67, 0, 0, 0]`——只有一次
+/// 真的建了会话。其余四次被生命周期队列**合并**了（`LifecycleAction` 非 `Run`
+/// 时 `execute_lifecycle` 返回 `Ok(0)`）。
+///
+/// 合并本身是对的：重复点击「开始面试」不该建出五个会话。但 `0` 这个返回值
+/// 同时被用作「成功」和「没有 id」，调用方无法区分——**当前前端只判 `result.ok`、
+/// 不读 id，所以没有用户可见问题**；这里记下来是因为它是契约上的模糊点，
+/// 将来若有调用方读 id，必须知道 `0` 表示「已合并，不是新会话」。
+///
+/// 想拿到真实 id 的调用方应当先查 `is_busy`，或接受 `0` 并回读当前会话。
 #[tauri::command]
 pub async fn start_session(app: AppHandle) -> Result<i64, String> {
     let task_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let id = tauri::async_runtime::spawn_blocking(move || {
         let (_, result) = session::submit_lifecycle(&task_app, LifecycleDir::Start);
         result
     })
     .await
-    .map_err(|error| format!("启动会话任务失败：{error}"))?
+    .map_err(|error| format!("启动会话任务失败：{error}"))??;
+
+    // 被合并的请求（`0`）说明另一次启动已经/正在生效。这不是错误——但也不能
+    // 让调用方以为「这一次点按启动了一个新会话」。给一条 INFO，日志里能看出
+    // 「用户连点了 N 次，只建了 1 个会话」。
+    if id == 0 {
+        tracing::info!("启动请求已被生命周期队列合并（已有会话在启动/运行中）");
+    }
+    Ok(id)
 }
 
 #[tauri::command]
