@@ -264,6 +264,44 @@ pub(crate) fn collect(app_data_dir: &Path) -> String {
                     let _ = writeln!(out, "  [阻塞] 数据库完整性检查未通过");
                     blocking += 1;
                 }
+                // 数据健康摘要：`integrity_check` 只查文件结构，查不出「结构完好
+                // 但内容不对」——孤儿数据、未结束会话、空会话都要单独数。
+                match store.data_health() {
+                    Ok(h) => {
+                        let _ = writeln!(
+                            out,
+                            "  记录：{} 场会话 / {} 段转录 / {} 条答案",
+                            h.sessions, h.segments, h.answers
+                        );
+                        // 孤儿数据正常应恒为 0（外键级联会清）。非 0 说明库被外部
+                        // 改动过、或某条删除路径漏了级联——它会占空间、拖慢查询，
+                        // 且永远显示不出来。
+                        if h.orphan_segments > 0 || h.orphan_answers > 0 {
+                            let _ = writeln!(
+                                out,
+                                "  [注意] {} 段转录、{} 条答案找不到所属会话（孤儿数据，不影响读但会占空间）",
+                                h.orphan_segments, h.orphan_answers
+                            );
+                        }
+                        if h.unfinished > 0 {
+                            let _ = writeln!(
+                                out,
+                                "  未结束的会话：{} 场（正常情况：进程被强杀或崩溃时留下）",
+                                h.unfinished
+                            );
+                        }
+                        if h.empty > 0 {
+                            let _ = writeln!(
+                                out,
+                                "  空会话：{} 场（开了会话但没有转录也没有答案，可在复盘页「清理空会话」）",
+                                h.empty
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        let _ = writeln!(out, "  数据健康检查失败：{error}");
+                    }
+                }
             }
             Err(error) => {
                 let _ = writeln!(out, "  打开失败：{error}");

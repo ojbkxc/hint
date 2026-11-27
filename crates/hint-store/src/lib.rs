@@ -118,6 +118,27 @@ pub enum StoreError {
 /// 存储层 Result 别名。
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// 数据健康摘要（`--doctor` 用）。
+///
+/// 与 `PRAGMA integrity_check` 的分工：那个查「文件结构有没有坏」，这个查
+/// 「数据本身合不合理」。两者都要看——结构完好但满库孤儿数据的库，用户感受
+/// 就是「记录不对劲」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataHealth {
+    pub sessions: i64,
+    pub segments: i64,
+    pub answers: i64,
+    /// 指向已不存在会话的转录段落（正常应恒为 0）。
+    pub orphan_segments: i64,
+    /// 指向已不存在会话的答案（正常应恒为 0）。
+    pub orphan_answers: i64,
+    /// `ended_at IS NULL` 的会话：进程被强杀留下的痕迹。
+    pub unfinished: i64,
+    /// 没有转录也没有答案的会话。
+    pub empty: i64,
+}
+
 /// 一次面试会话。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +467,58 @@ impl Store {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
+    }
+
+    /// 数据健康摘要：给 `--doctor` 用，用一眼看清「库里有几成是有效数据」。
+    ///
+    /// ## 为什么需要
+    ///
+    /// `PRAGMA integrity_check` 只回答「文件结构有没有损坏」，答不了「数据本身
+    /// 合不合理」。真机上可能出现结构完好、但内容不对劲的库：
+    ///
+    /// - **孤儿数据**：`segments`/`answers` 指向已不存在的会话。正常路径不会产生
+    ///   （外键级联会清），但历史版本、外部工具改库、或外键未开启的旧连接都可能
+    ///   留下；它们占空间、拖慢查询，且永远显示不出来。
+    /// - **未结束的会话**：进程被强杀时 `ended_at` 为 NULL。数量多说明崩溃频繁，
+    ///   这是「用户从没提过但一直在发生」的信号。
+    /// - **空会话**：没有转录也没有答案。数量多说明「开了会话又马上停」的操作很常见。
+    ///
+    /// 这些数字放在诊断报告里，用户反馈「记录不对劲」时就有据可查，而不是只能
+    /// 靠人问「你有几条会话」。
+    pub fn data_health(&self) -> Result<DataHealth> {
+        let sessions: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        let segments: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))?;
+        let answers: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM answers", [], |row| row.get(0))?;
+        let orphan_segments: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM segments WHERE session_id NOT IN (SELECT id FROM sessions)",
+            [],
+            |row| row.get(0),
+        )?;
+        let orphan_answers: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM answers WHERE session_id NOT IN (SELECT id FROM sessions)",
+            [],
+            |row| row.get(0),
+        )?;
+        let unfinished: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(DataHealth {
+            sessions,
+            segments,
+            answers,
+            orphan_segments,
+            orphan_answers,
+            unfinished,
+            empty: self.count_empty_sessions()?,
+        })
     }
 
     /// 读取单个会话。
@@ -898,6 +971,62 @@ mod tests {
             "没有孤立答案不该出现该节：{text_b}"
         );
         assert!(text_b.contains("面试官说了话"), "{text_b}");
+    }
+
+    /// 数据健康摘要要能数出「结构完好但内容不对」的几类情况。
+    ///
+    /// `PRAGMA integrity_check` 只查文件结构；孤儿数据、未结束会话、空会话它
+    /// 全都看不见。真机排障时这三类正是「记录不对劲」的常见来源。
+    #[test]
+    fn data_health_counts_orphans_and_unfinished() {
+        let store = Store::open_in_memory().expect("open");
+
+        // 一个正常会话（有转录 + 有答案 + 已结束）
+        let ok = store
+            .create_session("openai", "m", None)
+            .expect("create ok");
+        store
+            .add_segment(ok, "mic", 0, 1000, "正常转录", false, false)
+            .expect("seg");
+        store
+            .add_answer(ok, None, "正常答案", "m", AnswerMetrics::default())
+            .expect("ans");
+        store.end_session(ok).expect("end");
+
+        // 一个未结束的会话（模拟进程被强杀）
+        let _unfinished = store
+            .create_session("openai", "m", None)
+            .expect("create unf");
+
+        // 一个空会话（开了就停）
+        let empty = store
+            .create_session("openai", "m", None)
+            .expect("create empty");
+        store.end_session(empty).expect("end empty");
+
+        let h = store.data_health().expect("data_health");
+        assert_eq!(h.sessions, 3, "应有 3 场会话");
+        assert_eq!(h.segments, 1);
+        assert_eq!(h.answers, 1);
+        assert_eq!(h.unfinished, 1, "应有 1 场未结束");
+        assert_eq!(h.empty, 1, "应有 1 场空会话");
+        assert_eq!(h.orphan_segments, 0, "正常库不该有孤儿转录");
+        assert_eq!(h.orphan_answers, 0, "正常库不该有孤儿答案");
+
+        // 手工制造孤儿数据：直接插一条指向不存在会话的段落。
+        // 正常路径不会产生（外键级联会清），但外部工具改库或历史版本可能留下。
+        store
+            .connection()
+            .execute(
+                "INSERT INTO segments (session_id, channel, start_ms, end_ms, text, is_echo, recovered)
+                 VALUES (999999, 'mic', 0, 1, '孤儿', 0, 0)",
+                [],
+            )
+            .expect("插孤儿");
+
+        let h2 = store.data_health().expect("data_health 2");
+        assert_eq!(h2.orphan_segments, 1, "应数出 1 段孤儿转录");
+        assert_eq!(h2.segments, 2, "总段数要含孤儿");
     }
 
     /// 搜索必须覆盖备注（用户给会话起的名字）。
