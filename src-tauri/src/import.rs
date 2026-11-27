@@ -110,3 +110,66 @@ fn truncate_chars(mut text: String, limit: usize) -> String {
     text.push_str("\n（文件内容过长，已截取前 20 万字符）");
     text
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 未超限时原样返回，且不追加任何提示。
+    #[test]
+    fn truncate_keeps_short_text_untouched() {
+        let text = "短文本".to_string();
+        let out = truncate_chars(text.clone(), MAX_CHARS);
+        assert_eq!(out, text);
+        assert!(!out.contains("已截取"), "未超限不该追加提示");
+    }
+
+    /// 超限时按**字符**截断（不按字节），并追加可读提示。
+    ///
+    /// 判据落在「字符边界安全」上：中文每字 3 字节，按字节切会切出非法 UTF-8。
+    /// `char_indices().nth(limit)` 保证切点落在字符边界——这条测试钉住它。
+    #[test]
+    fn truncate_cuts_on_char_boundary_and_warns() {
+        let text = "测".repeat(MAX_CHARS + 100);
+        let out = truncate_chars(text, MAX_CHARS);
+
+        assert!(out.contains("已截取前 20 万字符"), "超限要给出可读提示");
+        // 截断后的正文应当恰好 MAX_CHARS 个字符
+        let body = out.split('\n').next().unwrap_or("");
+        assert_eq!(
+            body.chars().count(),
+            MAX_CHARS,
+            "正文应恰好保留 {MAX_CHARS} 个字符"
+        );
+        assert!(!out.contains('\u{FFFD}'), "不该出现 UTF-8 替换字符");
+    }
+
+    /// 恰好等于上限时不截断（边界取 <=）。
+    #[test]
+    fn truncate_at_exact_limit_is_noop() {
+        let text = "a".repeat(MAX_CHARS);
+        let out = truncate_chars(text, MAX_CHARS);
+        assert!(!out.contains("已截取"), "恰好等于上限不该截断");
+        assert_eq!(out.chars().count(), MAX_CHARS);
+    }
+
+    /// 上限为 0 时不该 panic（防御性：调用方传 0 也不炸）。
+    #[test]
+    fn truncate_with_zero_limit_does_not_panic() {
+        let out = truncate_chars("abc".to_string(), 0);
+        assert!(out.contains("已截取") || out.is_empty());
+    }
+
+    /// 上限常量本身要有下界。
+    ///
+    /// 这条是「改一个字符会不会红」的守卫——把 MAX_CHARS 从 200_000 改成 200
+    /// 会让所有长简历被截成两句话，而其余测试仍然全绿。
+    #[test]
+    fn max_chars_is_large_enough_for_real_resumes() {
+        assert!(
+            MAX_CHARS >= 10_000,
+            "MAX_CHARS={MAX_CHARS} 太小：真实简历 + 项目资料通常数千到上万字符，\
+             这么小的上限会把内容截掉大半"
+        );
+    }
+}

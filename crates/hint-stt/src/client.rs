@@ -701,6 +701,51 @@ fn stop_process(running: &mut Running) {
 mod tests {
     use super::*;
 
+    /// worker 通信的四个上限必须在合理区间。
+    ///
+    /// 这几处检查都在 IO 循环里（`response.len() > RESPONSE_LIMIT` 等），不容易
+    /// 单测；但常量被改小同样危险：
+    /// - `RESPONSE_LIMIT` 太小 → 长转录的响应被截断，识别结果丢失；
+    /// - `READY_LINE_LIMIT` 太小 → worker 启动横幅读不全，误判「未就绪」；
+    /// - `INFERENCE_TIMEOUT` 太短 → 长音频推理超时；
+    /// - `STARTUP_TIMEOUT` 太短 → 冷启动 240MB 模型时必然失败。
+    #[test]
+    fn worker_limits_are_in_sane_ranges() {
+        assert!(
+            RESPONSE_LIMIT >= 16 * 1024,
+            "RESPONSE_LIMIT={RESPONSE_LIMIT} 太小：长转录响应会被截断"
+        );
+        assert!(
+            RESPONSE_LIMIT <= 4 * 1024 * 1024,
+            "RESPONSE_LIMIT={RESPONSE_LIMIT} 过大，失去内存保护意义"
+        );
+        assert!(
+            READY_LINE_LIMIT >= 512,
+            "READY_LINE_LIMIT={READY_LINE_LIMIT} 太小：启动横幅读不全"
+        );
+        assert!(
+            STARTUP_TIMEOUT >= Duration::from_secs(20),
+            "STARTUP_TIMEOUT={STARTUP_TIMEOUT:?} 太短：冷启动要加载 240MB 模型"
+        );
+        assert!(
+            INFERENCE_TIMEOUT >= Duration::from_secs(30),
+            "INFERENCE_TIMEOUT={INFERENCE_TIMEOUT:?} 太短：长音频推理会被打断"
+        );
+        // 推理超时必须比启动超时更长（推理是持续工作，启动是一次性）
+        assert!(
+            INFERENCE_TIMEOUT > STARTUP_TIMEOUT,
+            "推理超时应当长于启动超时"
+        );
+        assert!(
+            READ_POLL >= Duration::from_millis(50) && READ_POLL <= Duration::from_secs(2),
+            "READ_POLL={READ_POLL:?} 不在合理区间（50ms–2s）"
+        );
+        assert!(
+            STOP_GRACE <= Duration::from_secs(10),
+            "STOP_GRACE={STOP_GRACE:?} 过长：关闭时会拖慢退出"
+        );
+    }
+
     #[test]
     fn parses_a_success_response() {
         let body = r#"{"text":"你好","audioSeconds":1.5,"inferenceSeconds":0.2}"#;

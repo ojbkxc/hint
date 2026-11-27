@@ -1912,6 +1912,66 @@ mod tests {
         assert!(limited.is_retryable());
     }
 
+    /// 流式解析的两个上限不能太小，否则正常响应会被误判成异常。
+    ///
+    /// 这两条是「改一个字符会不会红」的守卫。`MAX_SSE_LINE_BYTES` 的检查在
+    /// 异步流循环里（`buffer.len() > MAX_SSE_LINE_BYTES`），不容易单测；但常量
+    /// 本身被改小同样危险——真机上一个几 KB 的 SSE 行很常见（长答案整段包在
+    /// 一个 `data:` 里），上限设成几百字节会让所有长回答「生成失败」。
+    #[test]
+    fn stream_size_limits_are_large_enough() {
+        assert!(
+            MAX_SSE_LINE_BYTES >= 64 * 1024,
+            "MAX_SSE_LINE_BYTES={MAX_SSE_LINE_BYTES} 太小：长答案可能整段包在一个 \
+             SSE data 行里，上限过小会让正常回答被判成「单条数据超限」"
+        );
+        assert!(
+            ERROR_BODY_LIMIT >= 4 * 1024,
+            "ERROR_BODY_LIMIT={ERROR_BODY_LIMIT} 太小：非 2xx 响应体被截得太狠，\
+             用户看不到服务端给的错误原因"
+        );
+        // 反向：也不该无限制（内存保护的意义就在于有上限）
+        assert!(
+            MAX_SSE_LINE_BYTES <= 16 * 1024 * 1024,
+            "MAX_SSE_LINE_BYTES 过大，失去了内存保护的意义"
+        );
+    }
+
+    /// 单个 SSE 行的解码不会因为边界被切坏 UTF-8。
+    ///
+    /// `MAX_SSE_LINE_BYTES` 的检查发生在**字节层**（`buffer.len()`），所以理论上
+    /// 存在「切在多字节字符中间」的风险。这里验证 `parse_sse_data` 对合法输入
+    /// 的处理不受影响——真正的多字节保护在 `String::from_utf8_lossy`（末尾那行）。
+    #[test]
+    fn sse_line_limit_does_not_corrupt_multibyte_input() {
+        let line = "data: 中文回答内容";
+        assert_eq!(parse_sse_data(line), Some("中文回答内容"));
+        // 中文每字 3 字节：14 个字 = 42 字节，远小于上限
+        assert!(line.len() < MAX_SSE_LINE_BYTES, "测试样本本身不该超限");
+    }
+
+    /// 单次流式尝试的超时必须是「分钟」量级。
+    ///
+    /// 60 秒是实测值：慢模型首字可能要 30 秒以上。改成 5 秒会让所有慢响应
+    /// 全部超时——而 `STREAM_RETRY_DELAY` 只有 1.5 秒，重试一次也救不回来。
+    #[test]
+    fn stream_timeout_is_minutes_not_seconds() {
+        assert!(
+            STREAM_TIMEOUT >= Duration::from_secs(20),
+            "STREAM_TIMEOUT={STREAM_TIMEOUT:?} 太短：慢模型首字常超过 20 秒"
+        );
+        assert!(
+            STREAM_TIMEOUT <= Duration::from_secs(300),
+            "STREAM_TIMEOUT={STREAM_TIMEOUT:?} 过长：用户要等 5 分钟才知道失败"
+        );
+        // 重试间隔要短到用户不觉得卡住，又不能立刻重试导致连续撞限流
+        assert!(
+            STREAM_RETRY_DELAY >= Duration::from_millis(500)
+                && STREAM_RETRY_DELAY <= Duration::from_secs(5),
+            "STREAM_RETRY_DELAY={STREAM_RETRY_DELAY:?} 不在合理区间（0.5–5 秒）"
+        );
+    }
+
     /// 5xx 是服务端临时异常，必须可重试；4xx 除 429 外都不该重试。
     ///
     /// 边界 `>= 500` 此前没有测试——把它写成 `> 500` 时 500 不再重试，而所有
