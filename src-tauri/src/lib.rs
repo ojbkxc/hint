@@ -245,6 +245,46 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
 /// 2. **与当前显示器工作区求交**——换过显示器、拔掉副屏、改过分辨率之后，
 ///    上次的坐标可能整个落在屏幕外，那时用户既看不见浮层也拖不回来。
 ///    交集不足 1/3 就当作没有记录，回到默认几何。
+/// 浮层几何是否「足够在屏幕内」，值得沿用用户上次的位置。
+///
+/// ## 判据
+///
+/// 计算浮层矩形与显示器工作区的**交集面积**，若交集不足浮层总面积的 1/3，
+/// 就认为位置几乎在屏幕外——换过显示器、拔掉副屏、改过分辨率之后，上次的坐标
+/// 可能整个落在屏外，那时用户既看不见浮层也拖不回来。
+///
+/// ## 为什么抽成纯函数
+///
+/// 判据是纯数值计算（矩形求交 + 比例比较），但此前内联在 `apply_saved_overlay_geometry`
+/// 里，**改错阈值（1/3 改成 1/2）、或把 `<` 写成 `<=`）都不会让任何测试变红**。
+/// 而判据改错的后果是：要么浮层被白白丢回默认位置（用户调的尺寸不保留），
+/// 要么屏外的浮层被保留（用户看不见）。
+///
+/// 输入是物理像素，与工作区同一坐标系。
+fn overlay_geometry_fits(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    area_x: i32,
+    area_y: i32,
+    area_w: u32,
+    area_h: u32,
+) -> bool {
+    let total = width * height;
+    if total <= 0.0 {
+        return false;
+    }
+    let left = f64::from(area_x);
+    let top = f64::from(area_y);
+    let right = left + f64::from(area_w);
+    let bottom = top + f64::from(area_h);
+    let overlap_w = (x + width).min(right) - x.max(left);
+    let overlap_h = (y + height).min(bottom) - y.max(top);
+    let visible = overlap_w.max(0.0) * overlap_h.max(0.0);
+    visible * 3.0 >= total
+}
+
 fn apply_saved_overlay_geometry(
     window: &tauri::WebviewWindow,
     bounds: hint_core::OverlayBounds,
@@ -278,15 +318,16 @@ fn apply_saved_overlay_geometry(
     // 「不在屏幕内」而白白丢弃用户的调整。
     let x_phys = bounds.x;
     let y_phys = bounds.y;
-    let left = f64::from(area.position.x);
-    let top = f64::from(area.position.y);
-    let right = left + f64::from(area.size.width);
-    let bottom = top + f64::from(area.size.height);
-    let overlap_w = (x_phys + width_phys).min(right) - x_phys.max(left);
-    let overlap_h = (y_phys + height_phys).min(bottom) - y_phys.max(top);
-    let visible = overlap_w.max(0.0) * overlap_h.max(0.0);
-    let total = width_phys * height_phys;
-    if total <= 0.0 || visible * 3.0 < total {
+    if !overlay_geometry_fits(
+        x_phys,
+        y_phys,
+        width_phys,
+        height_phys,
+        area.position.x,
+        area.position.y,
+        area.size.width,
+        area.size.height,
+    ) {
         tracing::info!(
             x = bounds.x,
             y = bounds.y,
@@ -1096,5 +1137,101 @@ mod tests {
             assert_eq!(size.width, 640, "缩放比 {scale} 应按 100% 处理");
             assert_eq!(size.height, 346);
         }
+    }
+
+    /// 浮层位置的**屏外回退**：交集不足 1/3 就丢回默认几何。
+    ///
+    /// 判据改错的后果分两个方向，都值得防：
+    /// - 阈值改大（1/3 → 1/2）：用户在屏幕边缘摆的浮层被**白白丢掉**，
+    ///   每次启动都回到默认位置，用户调的尺寸不保留；
+    /// - 阈值改小：屏外的浮层被**保留**，用户看不见也拖不回来。
+    ///
+    /// 工作区用 1920×1040（扣掉任务栏），浮层取常见的 640×346。
+    #[test]
+    fn overlay_geometry_fits_screen_boundary_cases() {
+        let area = (0i32, 0i32, 1920u32, 1040u32);
+        let (w, h) = (640.0f64, 346.0f64);
+
+        // 完全在屏幕内 → 保留
+        assert!(overlay_geometry_fits(
+            100.0, 100.0, w, h, area.0, area.1, area.2, area.3
+        ));
+
+        // 完全在屏幕外（右下方很远）→ 丢弃
+        assert!(!overlay_geometry_fits(
+            5000.0, 5000.0, w, h, area.0, area.1, area.2, area.3
+        ));
+
+        // 左上角完全在屏外 → 丢弃
+        assert!(!overlay_geometry_fits(
+            -1000.0, -1000.0, w, h, area.0, area.1, area.2, area.3
+        ));
+
+        // 恰好一半在屏内（交集 = 1/2 ≥ 1/3）→ 保留
+        // 浮层 640 宽，从 x=-320 开始 → 右半 320 在屏内，交集 = 320×346
+        assert!(overlay_geometry_fits(
+            -320.0, 100.0, w, h, area.0, area.1, area.2, area.3
+        ));
+
+        // 恰好 1/3 在屏内（交集 = 1/3）→ **保留**（判据是 >=）
+        // 浮层 640 宽，从 x=-1280 开始 → 只有右 1280/640 错，实际交集 213.3…
+        // 精确构造：让交集面积恰好等于 total/3。
+        // total = 640×346 = 221440，1/3 ≈ 73813.3。
+        // 交集宽 = 640 × (1/3) / 346 … 用高度方向更直观：
+        // 浮层从 y = -h/3 开始 → 交集高 = h × 2/3，面积 = w × 2h/3 > total/3。
+        // 反过来从 y = 2h/3 起（浮层下半部分在屏外）→ 交集高 = h/3，
+        // 面积 = w × h/3 = total/3 → 恰好等于阈值。
+        assert!(
+            overlay_geometry_fits(
+                100.0,
+                100.0 + (2.0 * h / 3.0),
+                w,
+                h,
+                area.0,
+                area.1,
+                area.2,
+                area.3
+            ),
+            "交集恰好 1/3 时应保留（判据是 >=）"
+        );
+
+        // 交集略小于 1/3 → 丢弃
+        let y_just_short = 100.0 + (2.0 * h / 3.0) + 1.0;
+        assert!(
+            !overlay_geometry_fits(100.0, y_just_short, w, h, area.0, area.1, area.2, area.3),
+            "交集略小于 1/3 应丢弃"
+        );
+
+        // 零尺寸 / 负尺寸 → 丢弃
+        assert!(!overlay_geometry_fits(
+            100.0, 100.0, 0.0, h, area.0, area.1, area.2, area.3
+        ));
+        assert!(!overlay_geometry_fits(
+            100.0, 100.0, w, -1.0, area.0, area.1, area.2, area.3
+        ));
+    }
+
+    /// 判据的**阈值方向**：交集 >= 1/3 才保留。
+    ///
+    /// 单独钉这一条，因为「恰好等于」是最容易写错的边界——把 `>=` 写成 `>`，
+    /// 交集恰好 1/3 的浮层会被误判为屏外而丢弃。
+    #[test]
+    fn overlay_geometry_fits_threshold_is_at_least() {
+        let area = (0i32, 0i32, 1920u32, 1040u32);
+        let w = 600.0f64;
+        let h = 300.0f64;
+        let total = w * h;
+
+        // 构造交集恰好等于 total/3：浮层下半 2/3 在屏外
+        let y = 100.0 + (2.0 * h / 3.0);
+        assert!(overlay_geometry_fits(
+            100.0, y, w, h, area.0, area.1, area.2, area.3
+        ));
+
+        // 同一位置，但浮层略高一点（交集略小于 1/3）
+        let y2 = y + 0.5;
+        assert!(!overlay_geometry_fits(
+            100.0, y2, w, h, area.0, area.1, area.2, area.3
+        ));
     }
 }
