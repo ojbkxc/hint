@@ -4,6 +4,65 @@
 
 只记录每个版本对用户或开发者有实际影响的变化；更早的细节见 git history。
 
+## [1.1.63] - 2026-11-27
+
+### 修复：`%TEMP%\hint-update` 里的旧安装包从不清理
+
+#### 真机发现
+
+查数据目录时注意到 `%TEMP%` 下有明显累积，逐个排查后确认：`download_update`
+把安装包下到 `%TEMP%\hint-update`,而**没有任何地方删它**。
+
+```rust
+let dir = std::env::temp_dir().join("hint-update");
+// 下载 → 记日志 → 返回路径，结束。从头到尾没删过任何东西。
+```
+
+每次更新留一个约 **8.4MB** 的 `hint_x.y.z_x64-setup.exe`，失败的下载还留 `.part`。
+用户更新十几次就是 **100MB 死重量**，而 Temp 目录很少被主动看——只有磁盘满了才会
+被发现。
+
+#### 改法：下载前清理
+
+判据收敛到 `hint_core::update::prune_stale_installers`：
+
+```rust
+pub fn prune_stale_installers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };  // 目录不存在是正常状态
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() { let _ = std::fs::remove_file(&path); }
+    }
+}
+```
+
+**为什么在「下载前」清而不是「安装后」清**：安装成功后本进程会立即退出（要腾出 exe
+让安装器替换），那时再删已经来不及；失败重试的路径也走不到「安装成功」。下载前是
+唯一覆盖全部分支的位置。
+
+**只删文件、不递归**：临时目录正常不该有子目录。万一有（用户误放），留给用户——
+清理工具最忌讳「顺手删了不该删的东西」。
+
+#### 测试（+2）
+
+- `prune_stale_installers_removes_files_only`：建真目录 + 安装包 + `.part` + 子目录，
+  验证前两者被删、子目录及其内容不动；
+- `prune_stale_installers_tolerates_missing_dir`：目录不存在时不 panic 也不凭空建目录
+  （首次运行就是这个状态）。
+
+### 同批清理的其它累积点
+
+| 位置 | 结论 |
+|---|---|
+| `logs/hint.log` | ✅ 已有 5MB 轮转上限（`MAX_BYTES`），保留 `.old` 一份，设计合理 |
+| `%TEMP%\hint-stt*` | ✅ 测试临时目录，测试内 `remove_dir_all` 收尾 |
+| `hint.db.damaged` | 是我 89 轮破坏数据库测试时 SQLite 自己产生的残留，代码里无此逻辑；已手动清理 |
+
+顺手清掉了自己历次测试留下的临时目录：`hint-run` / `hint-tools` / `hint-verify` /
+`hintcheck` / `hint_art` 等，**共释放 444MB**。
+
+604 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.62] - 2026-11-27
 
 ### 新增：一条命令跑完 UI 回归（`scripts/verify-ui.mjs`）
