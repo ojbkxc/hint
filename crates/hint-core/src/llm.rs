@@ -1911,4 +1911,65 @@ mod tests {
         };
         assert!(limited.is_retryable());
     }
+
+    /// 5xx 是服务端临时异常，必须可重试；4xx 除 429 外都不该重试。
+    ///
+    /// 边界 `>= 500` 此前没有测试——把它写成 `> 500` 时 500 不再重试，而所有
+    /// 测试仍然绿。真机上 500 是最常见的服务端异常之一（网关上游失败），
+    /// 少了这条重试用户会看到「生成失败」而不是自动恢复。
+    #[test]
+    fn http_5xx_is_retryable_and_4xx_is_not() {
+        let mk = |status: u16| CoreError::HttpStatus {
+            status,
+            advice: String::new(),
+            body: String::new(),
+        };
+
+        // 4xx：只有 429 可重试
+        for status in [400, 401, 403, 404, 422, 429] {
+            assert_eq!(
+                mk(status).is_retryable(),
+                status == 429,
+                "HTTP {status} 的可重试判据不对"
+            );
+        }
+
+        // 5xx 边界：499 不可重试，500 起全部可重试
+        assert!(!mk(499).is_retryable(), "499 不是服务端异常，不该重试");
+        for status in [500, 502, 503, 504, 599] {
+            assert!(
+                mk(status).is_retryable(),
+                "HTTP {status} 是服务端异常，应当重试"
+            );
+        }
+    }
+
+    /// 流式错误一律可重试（是否真的重试由 `retry_decision` 再判）。
+    ///
+    /// 两者是两个问题：`is_retryable` 说「这种错误值得再试」，
+    /// `retry_decision` 说「现在这一刻能不能再试」（未输出、未取消、还有次数）。
+    #[test]
+    fn stream_errors_are_always_retryable_but_decision_guards() {
+        let stream = CoreError::Stream("连接中断".into());
+        assert!(stream.is_retryable(), "流式中断应当可重试");
+
+        // 已经输出过文本 → 不能重试（否则会把半截答案重放）
+        assert_eq!(
+            retry_decision(1, 5, false, &stream),
+            RetryDecision::Stop,
+            "已输出文本时不该重试"
+        );
+        // 用户取消 → 不能重试
+        assert_eq!(
+            retry_decision(1, 0, true, &stream),
+            RetryDecision::Stop,
+            "已取消时不该重试"
+        );
+        // 未输出、未取消、还有次数 → 重试
+        assert_eq!(
+            retry_decision(1, 0, false, &stream),
+            RetryDecision::Retry,
+            "首字前中断应当重试一次"
+        );
+    }
 }
