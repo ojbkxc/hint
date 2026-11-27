@@ -1009,7 +1009,10 @@ mod tests {
         assert_eq!(h.segments, 1);
         assert_eq!(h.answers, 1);
         assert_eq!(h.unfinished, 1, "应有 1 场未结束");
-        assert_eq!(h.empty, 1, "应有 1 场空会话");
+        // 空会话 = 没有转录也没有答案，**与是否结束无关**。
+        // 这里有两场：「未结束那个」和「开了就停那个」——两者都没内容。
+        // （第一版断言写成 1，CI 直接红了：我把「未结束」和「有内容」混为一谈了。）
+        assert_eq!(h.empty, 2, "未结束的和开了就停的那两场都没有内容");
         assert_eq!(h.orphan_segments, 0, "正常库不该有孤儿转录");
         assert_eq!(h.orphan_answers, 0, "正常库不该有孤儿答案");
 
