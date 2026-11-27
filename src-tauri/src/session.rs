@@ -352,6 +352,32 @@ struct QueuedQuestion {
     is_regenerate: bool,
 }
 
+/// 队列满时丢弃新问题的用户提示。
+///
+/// ## 为什么必须提示、不能静默
+///
+/// 队列满（`ANSWER_QUEUE_LIMIT`）时**丢弃的是用户刚提的问题**。如果不提示，
+/// 用户会以为问题已入队、会等到回答——结果永远等不到。面试场景里这比报错更
+/// 伤体验：用户不确定是网络问题、模型问题，还是自己的问题没被接受。
+///
+/// ## 文案要点
+///
+/// - 说清**发生了什么**（积压较多，已忽略最新一条）；
+/// - 给**补救动作**（Ctrl+Shift+A 优先作答当前问题）；
+/// - 不暴露实现细节（不提「队列」「上限」），用户不需要知道内部结构。
+///
+/// 抽成常量是为了让文案可测：此前它内联在 `enqueue_question` 里，改错措辞
+/// （比如漏掉补救动作、或改成用户看不懂的术语）都不会让任何测试变红。
+const FULL_QUEUE_NOTICE: &str = "问题积压较多，已忽略最新一条；可按 Ctrl+Shift+A 优先作答当前问题";
+
+/// 队列满时丢弃新问题：面试里最新问题通常更重要，但连续丢会伤体验，
+/// 这里明确提示用户可手动作答。
+///
+/// 详见 [`FULL_QUEUE_NOTICE`]。
+fn full_queue_notice() -> &'static str {
+    FULL_QUEUE_NOTICE
+}
+
 /// 入队结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnqueueOutcome {
@@ -1261,11 +1287,7 @@ fn enqueue_question(
         EnqueueOutcome::Full => {
             // 队列满时丢弃新问题：面试里最新问题通常更重要，但连续丢会伤体验，
             // 这里明确提示用户可手动作答。
-            emit_notice(
-                app,
-                "info",
-                "问题积压较多，已忽略最新一条；可按 Ctrl+Shift+A 优先作答当前问题",
-            );
+            emit_notice(app, "info", full_queue_notice());
             return;
         }
     }
@@ -2127,6 +2149,60 @@ mod tests {
         assert_eq!(queue.pending(), ANSWER_QUEUE_LIMIT);
         assert_eq!(queue.enqueue(question("第六个问题")), EnqueueOutcome::Full);
         assert_eq!(queue.pending(), ANSWER_QUEUE_LIMIT);
+    }
+
+    /// 队列满时的提示文案要**完整可用**。
+    ///
+    /// 队列满丢弃的是用户刚提的问题——不提示的话，用户会以为问题已入队、
+    /// 会等到回答，结果永远等不到。面试场景里这比报错更伤体验。
+    ///
+    /// 三条判据：
+    /// 1. **说清发生了什么**（积压、已忽略最新一条）；
+    /// 2. **给补救动作**（Ctrl+Shift+A）；
+    /// 3. **不暴露实现细节**（不提「队列」「上限」这类内部术语）。
+    ///
+    /// 此前文案内联在 `enqueue_question` 里，改错措辞不会让测试变红。
+    #[test]
+    fn full_queue_notice_is_complete_and_actionable() {
+        let notice = full_queue_notice();
+
+        // 说清发生了什么
+        assert!(notice.contains("积压"), "应说明积压，实际：{notice}");
+        assert!(
+            notice.contains("已忽略最新一条"),
+            "应说明已忽略，实际：{notice}"
+        );
+
+        // 给补救动作
+        assert!(
+            notice.contains("Ctrl+Shift+A"),
+            "应给出 Ctrl+Shift+A 的补救动作，实际：{notice}"
+        );
+
+        // 不暴露实现细节
+        for term in ["队列", "上限", "ANSWER_QUEUE_LIMIT", "积压较多超过"] {
+            assert!(
+                !notice.contains(term) || term == "积压",
+                "不应暴露内部术语「{term}」，实际：{notice}"
+            );
+        }
+
+        // 文案长度合理（太短说明漏了要点，太长用户看不完）
+        assert!(
+            notice.chars().count() >= 15 && notice.chars().count() <= 80,
+            "文案长度应适中，实际 {} 字符：{notice}",
+            notice.chars().count()
+        );
+    }
+
+    /// 提示文案与常量一致（防止调用点另写一份，两处漂移）。
+    #[test]
+    fn full_queue_notice_matches_constant() {
+        assert_eq!(
+            full_queue_notice(),
+            FULL_QUEUE_NOTICE,
+            "调用点应使用 FULL_QUEUE_NOTICE 常量，不能另写一份"
+        );
     }
 
     #[test]
