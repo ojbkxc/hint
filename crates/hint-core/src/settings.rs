@@ -322,15 +322,42 @@ impl Settings {
     pub fn load(path: &Path) -> Self {
         Self::load_reporting(path).0
     }
-
     /// 与 [`load`](Self::load) 相同，但**额外告诉你配置文件是否损坏过**。
     ///
-    /// 为什么需要这个：`load` 在 `AppState::new` 里被调用，那时**日志还没初始化**
-    /// （`logging::init` 在 `.setup()` 里），所以「配置文件损坏」这件事在日志里
+    /// 为什么需要这个：`load` 在 `AppState::new` 里被调用，那时**日志还没初始化**    /// （`logging::init` 在 `.setup()` 里），所以「配置文件损坏」这件事在日志里
     /// 完全看不到；而损坏的代价是用户的简历、项目资料、接口配置全部回到默认值。
     /// 用户只会发现「我填的东西没了」，不知道是被备份了、也不知道 `.bad` 在哪。
     ///
     /// 壳层拿到 `true` 之后应该在日志就绪后给用户一条明确提示。
+    /// 给损坏的配置文件找一个**不会被覆盖**的备份名。
+    ///
+    /// ## 为什么不能固定 `settings.json.bad`
+    ///
+    /// 原来是 `std::fs::rename(path, path.with_extension("json.bad"))` 直接改名。
+    /// 真机验证过后果：连续两次损坏 → 第一次的备份被第二次 rename 覆盖，
+    /// `APPDATA` 下只剩一个 `.bad`，第一份资料（可能是用户写了很久的简历）
+    /// 永久消失。
+    ///
+    /// 而「连续两次损坏」不是罕见路径：磁盘坏道、强制关机、杀毒软件锁文件都
+    /// 可能连着触发；用户为了找回资料往往反复重启，正好踩中。
+    ///
+    /// 首个备份仍用 `settings.json.bad`（保持既有提示文案与用户习惯），
+    /// 之后依次 `.bad.1`、`.bad.2`…
+    fn unique_backup_path(path: &Path) -> std::path::PathBuf {
+        let first = path.with_extension("json.bad");
+        if !first.exists() {
+            return first;
+        }
+        for seq in 1..100 {
+            let candidate = path.with_extension(format!("json.bad.{seq}"));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        // 100 份都占满了：退回固定名（宁可覆盖最老的，也不能不备份）
+        first
+    }
+
     pub fn load_reporting(path: &Path) -> (Self, bool) {
         let raw = match std::fs::read_to_string(path) {
             Ok(raw) => raw,
@@ -339,8 +366,14 @@ impl Settings {
         match serde_json::from_str::<Self>(&raw) {
             Ok(settings) => (settings.migrate(), false),
             Err(error) => {
-                tracing::warn!(%error, path = %path.display(), "配置文件损坏，已备份并回退默认值");
-                let _ = std::fs::rename(path, path.with_extension("json.bad"));
+                let backup = Self::unique_backup_path(path);
+                tracing::warn!(
+                    %error,
+                    path = %path.display(),
+                    backup = %backup.display(),
+                    "配置文件损坏，已备份并回退默认值"
+                );
+                let _ = std::fs::rename(path, &backup);
                 (Self::default(), true)
             }
         }
@@ -508,6 +541,84 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 损坏配置的备份名必须唯一，绝不覆盖已有备份。
+    ///
+    /// 真机缺陷：原来是 `rename(path, path.with_extension("json.bad"))`，连续两次
+    /// 损坏时第二次覆盖第一次——APPDATA 下只剩一个 .bad，第一份资料永久消失。
+    ///
+    /// 这条测用临时目录真建文件（纯路径计算测不出「已存在」这个分支）。
+    #[test]
+    fn backup_path_never_overwrites() {
+        let dir =
+            std::env::temp_dir().join(format!("hint-settings-backup-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let original = dir.join("settings.json");
+
+        // 一份都没有 → 用 .bad
+        let first = Settings::unique_backup_path(&original);
+        assert_eq!(
+            first.file_name().unwrap().to_string_lossy(),
+            "settings.json.bad"
+        );
+
+        // 造出第一份 → 下一次必须是 .bad.1
+        std::fs::write(&first, b"first").expect("写第一份");
+        let second = Settings::unique_backup_path(&original);
+        assert_eq!(
+            second.file_name().unwrap().to_string_lossy(),
+            "settings.json.bad.1"
+        );
+
+        // 再造一份 → .bad.2
+        std::fs::write(&second, b"second").expect("写第二份");
+        let third = Settings::unique_backup_path(&original);
+        assert_eq!(
+            third.file_name().unwrap().to_string_lossy(),
+            "settings.json.bad.2"
+        );
+
+        // 第一份内容不能被后来的动作改动
+        assert_eq!(std::fs::read(&first).expect("读第一份"), b"first");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 损坏 → 备份 → 再损坏，两次的备份都要留下。
+    ///
+    /// 端到端复现真机路径：连续两次 load_reporting 拿到损坏文件。
+    #[test]
+    fn two_corruptions_leave_two_backups() {
+        let dir =
+            std::env::temp_dir().join(format!("hint-settings-corrupt-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let path = dir.join("settings.json");
+
+        std::fs::write(&path, b"{\"MARKER_A\": ").expect("写第一份坏配置");
+        let (_, a) = Settings::load_reporting(&path);
+        assert!(a, "第一份应判损坏");
+
+        std::fs::write(&path, b"{\"MARKER_B\": ").expect("写第二份坏配置");
+        let (_, b) = Settings::load_reporting(&path);
+        assert!(b, "第二份应判损坏");
+
+        let bad0 = dir.join("settings.json.bad");
+        let bad1 = dir.join("settings.json.bad.1");
+        assert!(bad0.exists(), "第一份备份应存在：{bad0:?}");
+        assert!(bad1.exists(), "第二份备份应存在：{bad1:?}");
+
+        let text0 = std::fs::read_to_string(&bad0).expect("读第一份备份");
+        let text1 = std::fs::read_to_string(&bad1).expect("读第二份备份");
+        assert!(
+            text0.contains("MARKER_A"),
+            "第一份备份内容被覆盖了：{text0}"
+        );
+        assert!(text1.contains("MARKER_B"), "第二份备份内容不对：{text1}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// 保存前的必填项校验：空值必须拒绝（否则空值会覆盖用户已填好的配置）。
     #[test]
