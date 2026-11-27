@@ -292,26 +292,8 @@ impl ModelManager {
         if needed > 0
             && let Some(free) = free_bytes(&self.layout.base)
         {
-            // 首次安装按清单总量 + 余量预检，语义上就是「约 300MB」；
-            // 已有 `.part` 的续传只预留剩余字节 + 64MB 暂存。
-            let budget = if needed >= assets::TOTAL_BYTES {
-                assets::REQUIRED_DISK_BYTES
-            } else {
-                needed + 64 * 1024 * 1024
-            };
-            if free < budget {
-                tracing::warn!(
-                    free_bytes = free,
-                    needed_bytes = budget,
-                    "可用磁盘空间不足，取消下载"
-                );
-                // 数字直接写进中文消息：续传时需求远小于首次的约 300MB，
-                // 固定文案会误导用户。
-                return Err(SttError::storage(format!(
-                    "磁盘空间不足：当前可用约 {} MB，本次还需要约 {} MB",
-                    free / 1024 / 1024,
-                    budget / 1024 / 1024
-                )));
+            if let Some(error) = disk_budget_error(free, needed) {
+                return Err(error);
             }
         }
         // 已完成文件累加到整体进度里。
@@ -955,6 +937,47 @@ pub fn parse_content_range(header: Option<&str>) -> Option<ContentRange> {
     Some(ContentRange { start, end, total })
 }
 
+/// 磁盘预检：可用空间是否够本次下载。
+///
+/// ## 预算怎么算
+///
+/// - **首次安装**（`needed >= TOTAL_BYTES`）：按清单总量 + 余量预检，语义上就是
+///   「约 300MB」（`REQUIRED_DISK_BYTES`）。
+/// - **续传**（已有 `.part`）：只预留剩余字节 + 64MB 暂存。
+///
+/// 两者分开是因为续传的需求**远小于**首次——固定文案会误导用户。
+///
+/// ## 返回值
+///
+/// `Ok(())` 表示空间足够（或拿不到可用空间、按未知处理不阻断）；
+/// `Err` 是可直接展示的中文错误。
+///
+/// 抽成纯函数是为了让「预算怎么算」和「边界在哪」能被单测钉住——此前这段逻辑
+/// 内联在 `prepare_inner` 里，改错预算公式或边界（`<` 写成 `<=`）都不会让任何
+/// 测试变红，而用户会在下载到一半时才发现磁盘不够。
+fn disk_budget_error(free: u64, needed: u64) -> Result<(), SttError> {
+    let budget = if needed >= assets::TOTAL_BYTES {
+        assets::REQUIRED_DISK_BYTES
+    } else {
+        needed + 64 * 1024 * 1024
+    };
+    if free < budget {
+        tracing::warn!(
+            free_bytes = free,
+            needed_bytes = budget,
+            "可用磁盘空间不足，取消下载"
+        );
+        // 数字直接写进中文消息：续传时需求远小于首次的约 300MB，
+        // 固定文案会误导用户。
+        return Err(SttError::storage(format!(
+            "磁盘空间不足：当前可用约 {} MB，本次还需要约 {} MB",
+            free / 1024 / 1024,
+            budget / 1024 / 1024
+        )));
+    }
+    Ok(())
+}
+
 /// 下载失败时的用户提示（包含分类文案 + 脱敏细节）。
 pub fn user_message_for(error: &SttError) -> String {
     // 用 user_message() 而不是 Display：后者是英文枚举前缀，
@@ -1103,5 +1126,66 @@ mod tests {
         // 重算 hash 会发现内容不对。
         assert!(manager.verify().is_err());
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 磁盘预检的边界：`free < budget` 这一侧。
+    ///
+    /// 预算公式分两条路径，两条都要覆盖：
+    /// - 首次安装：`needed >= TOTAL_BYTES` → `REQUIRED_DISK_BYTES`（约 300MB）
+    /// - 续传：其余 → `needed + 64MB`
+    ///
+    /// 改错公式或边界（`<` 写成 `<=`）都会让这些用例变红。
+    #[test]
+    fn disk_budget_allows_enough_and_blocks_short() {
+        let required = assets::REQUIRED_DISK_BYTES;
+
+        // 首次安装路径
+        let needed = assets::TOTAL_BYTES;
+        // 空间刚好等于预算 → 放行（判据是 <，等于不算不足）
+        assert!(disk_budget_error(required, needed).is_ok());
+        // 空间差 1 字节 → 拒绝
+        let err = disk_budget_error(required - 1, needed).unwrap_err();
+        let text = err.user_message();
+        assert!(
+            text.contains("磁盘空间不足"),
+            "应给出磁盘不足的中文提示，实际：{text}"
+        );
+
+        // 续传路径（needed 远小于 TOTAL_BYTES）
+        let needed_resume = 10 * 1024 * 1024; // 10MB 剩余
+        let budget_resume = needed_resume + 64 * 1024 * 1024;
+        assert!(disk_budget_error(budget_resume, needed_resume).is_ok());
+        assert!(disk_budget_error(budget_resume - 1, needed_resume).is_err());
+
+        // 续传的提示里数字应与实际预算一致，不是固定的 300MB
+        let err = disk_budget_error(10 * 1024 * 1024, needed_resume).unwrap_err();
+        let text = err.user_message();
+        assert!(
+            text.contains(&format!("{}", budget_resume / 1024 / 1024)),
+            "续传提示应写实际预算 MB，实际：{text}"
+        );
+    }
+
+    /// 边界：`needed == TOTAL_BYTES` 走首次安装那条路径（判据是 `>=`）。
+    ///
+    /// 若有人把 `>=` 写成 `>`，这个恰好相等的输入会走续传分支，预算变成
+    /// `needed + 64MB`（比 300MB 大），用户空间够 300MB 时被误拒。
+    #[test]
+    fn disk_budget_boundary_uses_first_install_branch() {
+        let needed = assets::TOTAL_BYTES;
+        let required = assets::REQUIRED_DISK_BYTES;
+
+        // 空间刚好是首次安装的预算 → 应放行
+        assert!(
+            disk_budget_error(required, needed).is_ok(),
+            "needed == TOTAL_BYTES 应走首次安装分支，预算 300MB"
+        );
+
+        // 反向对照：续传预算确实更大，两条路径不混。
+        let resume_budget = needed + 64 * 1024 * 1024;
+        assert!(
+            resume_budget > required,
+            "续传预算应大于首次预算，两条路径确实不同"
+        );
     }
 }
