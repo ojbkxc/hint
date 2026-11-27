@@ -245,7 +245,6 @@ fn apply_overlay_default_geometry(window: &tauri::WebviewWindow) {
 /// 2. **与当前显示器工作区求交**——换过显示器、拔掉副屏、改过分辨率之后，
 ///    上次的坐标可能整个落在屏幕外，那时用户既看不见浮层也拖不回来。
 ///    交集不足 1/3 就当作没有记录，回到默认几何。
-
 fn apply_saved_overlay_geometry(
     window: &tauri::WebviewWindow,
     bounds: hint_core::OverlayBounds,
