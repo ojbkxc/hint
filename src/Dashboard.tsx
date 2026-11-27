@@ -85,6 +85,25 @@ export default function Dashboard() {
   // 浮层可见性与切换中标志：徽章按钮据此显示「显示浮层 / 隐藏浮层」。
   // 初值 true 与 tauri.conf.json 的 overlay.visible 一致（1.0.10 起默认显示）。
   const [overlayVisible, setOverlayVisible] = useState(true);
+  /**
+   * 当前运行版本号。
+   *
+   * 从后端读而不是读 `package.json`：安装版运行时前端产物是打包进 exe 的，
+   * 读 package.json 拿到的是构建时那份，而真正该显示的是**正在跑的二进制**
+   * 版本。两者在正常流程下一致，但用户装了旧版时只有后端知道。
+   */
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const result = await safeInvoke<string>("app_version");
+      if (!active || !result.ok) return;
+      if (typeof result.data === "string") setAppVersion(result.data);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 按钮状态要跟浮层的**真实**可见性一致。
   //
@@ -660,6 +679,24 @@ export default function Dashboard() {
                           会话启动时会把配置取一份快照：面试中途换模型、换设备、改提示词都不会影响
                           当前这场（避免正在作答时接口突然变了，答案风格前后不一致）。浮层的
                           不透明度、字号与主题例外——它们是即时生效的。
+                        </p>
+                      </div>
+                      <div className="field-group">
+                        <p className="field-group-title">当前版本</p>
+                        <p className="muted small">
+                          {appVersion ? (
+                            <>
+                              正在运行 <strong>v{appVersion}</strong>。
+                            </>
+                          ) : (
+                            <>版本号读取中…</>
+                          )}
+                          自动更新会在启动时检查并直接升级到最新版；想手动确认是否有新版，
+                          点下面「运行环境自检」——报告第一段就是版本与模型状态。
+                        </p>
+                        <p className="muted small">
+                          反馈问题时请带上这个版本号：同一个缺陷在不同版本上是否已修，
+                          全看这个数。
                         </p>
                       </div>
                       <div className="field-group">

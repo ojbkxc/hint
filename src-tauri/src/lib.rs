@@ -777,6 +777,7 @@ pub fn run() {
             commands::delete_session,
             commands::delete_all_sessions,
             commands::hide_overlay,
+            commands::app_version,
             commands::overlay_is_visible,
             commands::toggle_overlay,
             commands::regenerate_answer,

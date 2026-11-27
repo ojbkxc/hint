@@ -996,6 +996,16 @@ pub fn hide_overlay(app: AppHandle) -> Result<(), String> {
 /// 与本命令的执行没有先后保证，真机实测重启后出现过「浮层实际隐藏、按钮却写
 /// 隐藏浮层」——那是读窗口状态时的竞争。配置里的 `overlay_visible` 是用户意图的
 /// 单一真相，窗口状态只是它的结果。
+/// 当前运行版本号（设置页「关于」区显示，配合「检查更新」判断新旧）。
+///
+/// 为什么要暴露它：用户手上是哪个版本，是反馈问题时**第一件**要说清的事
+/// （「我装的 1.1.44」/「1.1.57」决定了他遇到的缺陷是否已修）。而这个数原本
+/// 只在安装包文件名和日志里存在——装完之后界面上任何地方都看不到。
+#[tauri::command]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[tauri::command]
 pub fn overlay_is_visible(state: State<'_, AppState>) -> bool {
     Settings::load(&state.settings_path).overlay_visible

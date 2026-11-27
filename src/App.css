@@ -1587,11 +1587,26 @@ button.preset.active {
 .profile-fact-list li {
   margin-bottom: 2px;
   word-break: break-word;
+  /* 每条事实改成 flex 行：标签固定宽，正文吃掉剩余空间并允许收缩。
+     原来 li 是普通块、标签 inline-block、正文 `width: calc(100% - 62px)`——
+     这是「用算术猜布局」，标签宽度一变（字体缺字回退、语言切换、内边距调整）
+     正文就顶出容器。flex 让浏览器自己算，不会再有这种溢出。 */
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
 }
 
 .profile-fact-kind {
   display: inline-block;
   min-width: 52px;
+  /* 类型标签宽度**固定**，不靠 max-content 撑开。
+     原来只有 min-width，实际宽度取决于文字长度；而下面的 .profile-fact-body
+     用 `calc(100% - 62px)` 按固定值扣除。两者一旦不一致（比如标签文字长于
+     52px，或标签内边距让实际宽度超过 52+6），正文那一行就会往右溢出容器——
+     真机截图里「简历与项目资料」标签后面那几行就是这么被顶出去的。 */
+  width: 52px;
+  box-sizing: border-box;
   margin-right: 6px;
   padding: 0 6px;
   border-radius: 4px;
@@ -1601,6 +1616,9 @@ button.preset.active {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
   vertical-align: top;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 每条事实：正文可点改，右侧 × 删除。
@@ -1610,7 +1628,11 @@ button.preset.active {
   display: inline-flex;
   align-items: flex-start;
   gap: 6px;
-  width: calc(100% - 62px);
+  /* 宽度交给 flex 分配（父级 li 已是 flex 容器）。
+     原来写 `calc(100% - 62px)`——那是按标签宽度猜出来的算术值，标签一旦变宽
+     （字体回退 / 内边距调整）正文就顶出容器。 */
+  flex: 1 1 auto;
+  min-width: 0;
   vertical-align: top;
 }
 
