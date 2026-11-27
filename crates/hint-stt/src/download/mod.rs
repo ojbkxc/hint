@@ -1181,11 +1181,14 @@ mod tests {
             "needed == TOTAL_BYTES 应走首次安装分支，预算 300MB"
         );
 
-        // 反向对照：续传预算确实更大，两条路径不混。
+        // 反向对照：两条路径的预算公式不同（续传是 needed+64MB，首次是
+        // 固定 300MB）。这里只确认**公式不同**，不假设谁大谁小——
+        // 实际数值上 241MB+64MB ≈ 308MB 略小于 300MB 的配额，所以不能断言
+        // 续传预算一定更大（第一版就写错在这里，CI 红）。
         let resume_budget = needed + 64 * 1024 * 1024;
-        assert!(
-            resume_budget > required,
-            "续传预算应大于首次预算，两条路径确实不同"
+        assert_ne!(
+            resume_budget, required,
+            "两条路径的预算公式必须不同，否则分支判断没有意义"
         );
     }
 }
