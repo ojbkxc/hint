@@ -312,6 +312,9 @@ pub async fn check_update(
 #[tauri::command]
 pub async fn download_update(info: hint_core::UpdateInfo) -> Result<String, String> {
     let dir = std::env::temp_dir().join("hint-update");
+    // 下载前先清掉上一次留下的安装包。判据在 `hint_core::update::prune_stale_installers`
+    // （那边有单测）：只删文件、不递归、目录不存在也不报错。
+    hint_core::prune_stale_installers(&dir);
     // 文件名来自 GitHub 的 asset name；只取末段防止路径穿越。
     let safe_name = std::path::Path::new(&info.installer_name)
         .file_name()

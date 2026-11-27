@@ -108,6 +108,36 @@ fn pick_installer(release: &Release) -> Option<&Asset> {
         .find(|asset| asset.name.ends_with("_x64-setup.exe"))
 }
 
+/// 清理临时目录里上一次留下的安装包。
+///
+/// ## 为什么需要
+///
+/// 真机查过 `%TEMP%\hint-update`：**从来没有被清理过**。每次更新都往这儿丢一个
+/// 约 8.4MB 的 `hint_x.y.z_x64-setup.exe`，失败的下载还留 `.part`。用户更新十几次
+/// 就是 100MB 死重量，而 Temp 目录很少被主动看——只有磁盘满了才会被发现。
+///
+/// ## 为什么在「下载前」清而不是「安装后」清
+///
+/// 安装成功后本进程会立即退出（要腾出 exe 让安装器替换），那时再删已经来不及；
+/// 而失败重试的路径也走不到「安装成功」。放在下载前是唯一覆盖全部分支的位置。
+///
+/// ## 只删文件，不递归
+///
+/// 这是临时目录，正常情况下不该有子目录。万一有（用户误放），留给用户——
+/// 清理工具最忌讳「顺手删了不该删的东西」。
+pub fn prune_stale_installers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        // 目录不存在是首次运行的正常状态，不是错误。
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// 多久之内不重复查更新。
 ///
 /// ## 为什么需要
@@ -302,6 +332,47 @@ mod tests {
             back.is_fresh(original.checked_at + 1000),
             "刚写的缓存应新鲜"
         );
+    }
+
+    /// 清理旧安装包：只删文件，保留子目录。
+    ///
+    /// 真机查过 `%TEMP%\hint-update` **从来没被清理过**——每次更新丢一个 8.4MB
+    /// 的安装包，失败的下载还留 `.part`。用户更新十几次就是 100MB 死重量。
+    ///
+    /// 这里测的是纯逻辑（`prune_stale_installers`），真删盘的部分由命令层调它。
+    #[test]
+    fn prune_stale_installers_removes_files_only() {
+        let dir =
+            std::env::temp_dir().join(format!("hint-update-prune-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建目录");
+
+        let setup = dir.join("hint_1.0.0_x64-setup.exe");
+        let part = dir.join("hint_1.1.0_x64-setup.exe.part");
+        let keep = dir.join("我的重要文件");
+        std::fs::write(&setup, b"fake installer").expect("写 setup");
+        std::fs::write(&part, b"half").expect("写 part");
+        // 子目录不该被递归删——万一是用户误放的
+        std::fs::create_dir_all(&keep).expect("建子目录");
+        std::fs::write(keep.join("inside.txt"), b"x").expect("写子目录文件");
+
+        prune_stale_installers(&dir);
+
+        assert!(!setup.exists(), "旧安装包该被删掉：{setup:?}");
+        assert!(!part.exists(), "半截下载该被删掉：{part:?}");
+        assert!(keep.exists(), "子目录不该被删：{keep:?}");
+        assert!(keep.join("inside.txt").exists(), "子目录里的文件不该被动");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 目录不存在时不能 panic（首次运行就是这个状态）。
+    #[test]
+    fn prune_stale_installers_tolerates_missing_dir() {
+        let dir = std::env::temp_dir().join("hint-update-never-existed-xyz-9999");
+        let _ = std::fs::remove_dir_all(&dir);
+        prune_stale_installers(&dir); // 不该 panic
+        assert!(!dir.exists(), "不该凭空建目录");
     }
 
     /// 缓存只在 TTL 内新鲜；未来时间戳当作过期。
