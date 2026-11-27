@@ -1918,7 +1918,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hint"
-version = "1.1.80"
+version = "1.1.81"
 dependencies = [
  "chrono",
  "encoding_rs",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "hint-audio"
-version = "1.1.80"
+version = "1.1.81"
 dependencies = [
  "cpal",
  "hint-core",
@@ -1956,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "hint-core"
-version = "1.1.80"
+version = "1.1.81"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "hint-store"
-version = "1.1.80"
+version = "1.1.81"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "hint-stt"
-version = "1.1.80"
+version = "1.1.81"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
