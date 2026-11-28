@@ -1106,8 +1106,12 @@ mod tests {
         }
 
         // 并发读：每个线程只读自己那个会话
+        //
+        // 用 `ids.clone()` 而不是 `ids.iter()`：闭包被移进 `thread::spawn` 后，
+        // 借用 `ids` 的生命周期不够（E0597）。克隆一份让每个线程按值持有自己的 id。
         let handles: Vec<_> = ids
-            .iter()
+            .clone()
+            .into_iter()
             .map(|id| {
                 let store = Arc::clone(&store);
                 let want_seg = format!("会话{id}的唯一转录内容");
@@ -1116,7 +1120,7 @@ mod tests {
                     let d = store
                         .lock()
                         .expect("锁")
-                        .session_detail(*id)
+                        .session_detail(id)
                         .expect("detail");
                     // 段数与答案数都该是 1
                     assert_eq!(d.segments.len(), 1, "会话 {id} 段数不对");
