@@ -811,7 +811,11 @@ mod tests {
     #[test]
     fn truncation_respects_utf8_char_boundaries() {
         // 混合中英文，确保按字符而非字节截断，不会切坏 UTF-8。
-        let text = "a面".repeat(4_000);
+        //
+        // 长度必须**超过当前上限**才会触发截断——写死 4_000 次重复在
+        // `RESUME_CHAR_LIMIT` 从 6000 提到 25000 后就落在上限内，断言会失效
+        // （曾因此让 CI 红）。按上限反推，保证换任何上限都成立。
+        let text = "a面".repeat(RESUME_CHAR_LIMIT);
         let settings = Settings {
             resume: text,
             ..Settings::default()
