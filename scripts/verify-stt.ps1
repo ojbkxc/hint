@@ -89,6 +89,11 @@ $cases = @(
     @{ Name = 'zh-short'; Text = '大家好，我是候选人。'; Expect = '大家好，我是候选人' }
     @{ Name = 'zh-long';  Text = '我在上一个项目里负责自动化测试工作。'; Expect = '我在上一个项目里负责自动化测试' }
     @{ Name = 'zh-mixed'; Text = '主要使用 Playwright 和 Python 做接口测试。'; Expect = '做接口测试' }
+    # 语气词 + 长句：真实面试里说话不会是工整的单句，会有「嗯」「那个」这类填充。
+    # 验证填充词不会把后半句吞掉，也不该被单独切成一段噪声。
+    @{ Name = 'zh-filler'; Text = '嗯，那个，我在上一家公司主要做的是自动化测试。'; Expect = '自动化测试' }
+    # 停顿长句：一句话中间有明显停顿，验证断句后内容仍完整（不因停顿丢字）。
+    @{ Name = 'zh-paused'; Text = '我负责过，两个大型项目，的自动化测试工作。'; Expect = '自动化测试' }
 )
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("hint-stt-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
