@@ -76,6 +76,36 @@ pub fn store_degraded_notice(state: State<'_, AppState>) -> bool {
     state.store_degraded
 }
 
+/// 计算保存后的 `materials_changed_at`。
+///
+/// ## 为什么抽成纯函数
+///
+/// 判据只有一条：**资料真的变了才更新时间戳**。但这条判据有两个容易写错的后果：
+///
+/// - 写成「每次保存都刷新」→ 「档案早于资料」永远不成立，过期提示形同虚设；
+/// - 写成「只在特定字段变时刷新」而漏了 `projects` → 用户改了项目资料却不提示。
+///
+/// 内联在 `save_settings` 里时，这两类错误都不会让任何测试变红（壳层测试跑不了）。
+///
+/// ## 判据
+///
+/// - `resume` 或 `projects` 与磁盘上的值不同 → 返回 `now`（标记资料已改）
+/// - 两者都没变 → 返回 `previous`（保留原时间戳，前端载荷里该字段通常缺省）
+fn materials_changed_at_after(
+    previous_stamp: i64,
+    previous_resume: &str,
+    previous_projects: &str,
+    next_resume: &str,
+    next_projects: &str,
+    now: i64,
+) -> i64 {
+    if previous_resume != next_resume || previous_projects != next_projects {
+        now
+    } else {
+        previous_stamp
+    }
+}
+
 #[tauri::command(async)]
 pub fn save_settings(
     app: AppHandle,
@@ -116,18 +146,22 @@ pub fn save_settings(
     // 只在内容真的变了时才更新，避免每次保存都刷新时间戳把「过期」掩盖掉。
     {
         let previous = Settings::load(&state.settings_path);
-        let materials_changed =
-            previous.resume != settings.resume || previous.projects != settings.projects;
-        if materials_changed {
-            settings.materials_changed_at = chrono::Utc::now().timestamp_millis();
+        let now = chrono::Utc::now().timestamp_millis();
+        let changed = materials_changed_at_after(
+            previous.materials_changed_at,
+            &previous.resume,
+            &previous.projects,
+            &settings.resume,
+            &settings.projects,
+            now,
+        );
+        if changed != previous.materials_changed_at {
             tracing::info!(
                 has_profile = settings.profile.as_ref().is_some_and(|p| !p.is_empty()),
                 "简历/项目资料已修改，标记整理档案可能过期"
             );
-        } else {
-            // 资料没变：保留磁盘上已有的时间戳（前端载荷里这个字段通常缺省）。
-            settings.materials_changed_at = previous.materials_changed_at;
         }
+        settings.materials_changed_at = changed;
     }
     settings.save(&state.settings_path).map_err(|error| {
         tracing::error!(
@@ -1876,6 +1910,59 @@ pub(crate) fn emit_hotkey_failure(app: &AppHandle, error: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 资料修改时间戳：只有资料真的变了才更新。
+    ///
+    /// ## 两个必须守住的后果
+    ///
+    /// - **每次保存都刷新** → 「档案早于资料」永远不成立，过期提示形同虚设；
+    /// - **漏判 projects** → 用户改了项目资料却不提示，答案继续基于旧档案。
+    ///
+    /// 这两类错误都不会让其他测试变红（壳层测试跑不了 `save_settings`），
+    /// 所以判据抽成纯函数在这里钉住。
+    #[test]
+    fn materials_stamp_updates_only_when_materials_change() {
+        const PREV: i64 = 1_000;
+        const NOW: i64 = 9_000;
+
+        // 什么都没改 → 保留原时间戳
+        assert_eq!(
+            materials_changed_at_after(PREV, "旧简历", "旧项目", "旧简历", "旧项目", NOW),
+            PREV,
+            "资料没变时不该刷新时间戳，否则过期提示永远不出现"
+        );
+
+        // 改简历 → 更新
+        assert_eq!(
+            materials_changed_at_after(PREV, "旧简历", "旧项目", "新简历", "旧项目", NOW),
+            NOW
+        );
+
+        // 只改项目资料 → 也必须更新（漏判 projects 是最容易犯的错）
+        assert_eq!(
+            materials_changed_at_after(PREV, "旧简历", "旧项目", "旧简历", "新项目", NOW),
+            NOW,
+            "只改项目资料也要标记，否则用户改了项目却不提示过期"
+        );
+
+        // 两者都改 → 更新
+        assert_eq!(
+            materials_changed_at_after(PREV, "旧简历", "旧项目", "新简历", "新项目", NOW),
+            NOW
+        );
+
+        // 从空变成有内容（首次填写）→ 更新
+        assert_eq!(
+            materials_changed_at_after(0, "", "", "第一份简历", "", NOW),
+            NOW
+        );
+
+        // 清空资料也算变化 → 更新（档案变得没意义了，该提示重整理）
+        assert_eq!(
+            materials_changed_at_after(PREV, "旧简历", "旧项目", "", "", NOW),
+            NOW
+        );
+    }
 
     /// 事件 payload 的字段名与语义是前后端契约：改名或改语义会让截图答案在
     /// 前端静默消失（前端只认这几个 key，不会报错）。
