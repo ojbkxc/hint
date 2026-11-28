@@ -1050,6 +1050,95 @@ mod tests {
         assert!(text_b.contains("面试官说了话"), "{text_b}");
     }
 
+    /// 并发读取多会话时**不能串数据**。
+    ///
+    /// 用户在复盘页快速切换会话、或同时打开多个页面时，`session_detail` 会被
+    /// 并发调用。如果实现里有共享的「当前会话」状态或缓存，并发下会返回错的
+    /// 会话数据——而且**每次单独读都是对的**，只有并发时才错，最难排查。
+    ///
+    /// ## 判据
+    ///
+    /// 用多线程并发读 N 个会话，每个线程只读自己那个 id，验证返回的
+    /// `segments`/`answers` 与该会话的内容一致。**串数据会让内容对不上。**
+    ///
+    /// `Store` 内部持有 `rusqlite::Connection`（非 `Sync`），跨线程共享必须包
+    /// `Mutex`——这也是应用侧的做法（`lock(&state.store)`）。
+    #[test]
+    fn concurrent_session_detail_does_not_mix_sessions() {
+        use std::sync::{Arc, Mutex};
+
+        let store = Arc::new(Mutex::new(Store::open_in_memory().expect("open")));
+
+        // 造 5 个会话，每个会话的转录文本都**唯一可辨识**
+        const N: i64 = 5;
+        let mut ids = Vec::new();
+        for k in 1..=N {
+            let id = store
+                .lock()
+                .expect("锁")
+                .create_session("openai", "m", None)
+                .expect("create");
+            store
+                .lock()
+                .expect("锁")
+                .add_segment(
+                    id,
+                    "mic",
+                    0,
+                    1000,
+                    &format!("会话{k}的唯一转录内容"),
+                    false,
+                    false,
+                )
+                .expect("seg");
+            store
+                .lock()
+                .expect("锁")
+                .add_answer(
+                    id,
+                    None,
+                    &format!("会话{k}的唯一答案内容"),
+                    "m",
+                    AnswerMetrics::default(),
+                )
+                .expect("ans");
+            ids.push(id);
+        }
+
+        // 并发读：每个线程只读自己那个会话
+        let handles: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let store = Arc::clone(&store);
+                let want_seg = format!("会话{id}的唯一转录内容");
+                let want_ans = format!("会话{id}的唯一答案内容");
+                std::thread::spawn(move || {
+                    let d = store
+                        .lock()
+                        .expect("锁")
+                        .session_detail(*id)
+                        .expect("detail");
+                    // 段数与答案数都该是 1
+                    assert_eq!(d.segments.len(), 1, "会话 {id} 段数不对");
+                    assert_eq!(d.answers.len(), 1, "会话 {id} 答案数不对");
+                    // **内容必须属于这个会话**，不能是别的会话的
+                    assert_eq!(
+                        d.segments[0].text, want_seg,
+                        "会话 {id} 读到了别的会话的转录"
+                    );
+                    assert_eq!(
+                        d.answers[0].text, want_ans,
+                        "会话 {id} 读到了别的会话的答案"
+                    );
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("线程不应 panic");
+        }
+    }
+
     /// 数据健康摘要要能数出「结构完好但内容不对」的几类情况。
     ///
     /// `PRAGMA integrity_check` 只查文件结构；孤儿数据、未结束会话、空会话它
