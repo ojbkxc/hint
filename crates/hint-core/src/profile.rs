@@ -1093,4 +1093,156 @@ mod organize_tests {
             r.matched
         );
     }
+
+    /// 多轮提问各自命中**该命中的那条**，不串味。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 面试是连续多轮问答，同一个档案会被十几个不同问题反复检索。单条提问能
+    /// 命中不能说明问题——真正的风险是**跨问题串味**：问 A 时命中了 B 的事实，
+    /// 模型拿着不相关的经历作答，比 0 命中更糟（0 命中时模型会说「这块我接触
+    /// 不深」，误命中会让它自信地跑偏）。
+    ///
+    /// ## 判据
+    ///
+    /// 每个提问命中自己的事实，且**不命中其他问题的专属事实**。用互不重叠的
+    /// 关键词（kafka / 稳定性 / 离职）保证判据能区分。
+    #[test]
+    fn different_questions_hit_their_own_facts_only() {
+        let raw = concat!(
+            "basics\t李四 6年测试开发\t李四\n",
+            "project\t[P-kafka] 消息队列压测 kafka 百万级吞吐\tkafka,压测\n",
+            "project\t[P-stab] 稳定性治理 线上故障率下降八成\t稳定性,治理\n",
+            "qa\t离职原因 想深耕工程效能\t离职\n",
+        );
+        let facts = parse_organized(raw);
+        let profile = Profile {
+            organized_at: 1,
+            sources: vec![],
+            facts,
+        };
+
+        // 问 kafka：命中 kafka 那条，不命中稳定性与离职
+        let r1 = profile.retrieve("kafka 那块你们怎么压测的");
+        assert!(
+            r1.matched.contains("kafka"),
+            "kafka 提问应命中：{}",
+            r1.matched
+        );
+        assert!(
+            !r1.matched.contains("故障率"),
+            "kafka 提问不该命中稳定性事实：{}",
+            r1.matched
+        );
+        assert!(
+            !r1.matched.contains("离职"),
+            "kafka 提问不该命中离职问答：{}",
+            r1.matched
+        );
+
+        // 问稳定性：命中稳定性那条，不命中 kafka
+        let r2 = profile.retrieve("稳定性治理你做了什么");
+        assert!(
+            r2.matched.contains("故障率"),
+            "稳定性提问应命中：{}",
+            r2.matched
+        );
+        assert!(
+            !r2.matched.contains("kafka"),
+            "稳定性提问不该命中 kafka 事实：{}",
+            r2.matched
+        );
+
+        // 问离职：命中离职那条
+        let r3 = profile.retrieve("你为什么离职");
+        assert!(
+            r3.matched.contains("离职"),
+            "离职提问应命中：{}",
+            r3.matched
+        );
+        assert!(
+            !r3.matched.contains("kafka"),
+            "离职提问不该命中 kafka 事实：{}",
+            r3.matched
+        );
+    }
+
+    /// 长档案（大量事实）下预算仍然守住，且命中的是**相关**的那条而不是前几条。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 真实档案整理后可能有几十条事实。若预算判断或排序有问题，会出现两种坏情况：
+    /// ① 超预算（token 爆炸，首字变慢）；② 因为按原顺序截断而命中的全是无关的
+    /// 前几条——用户看到「检索到了」但内容与问题无关。
+    ///
+    /// ## 判据
+    ///
+    /// 造 30 条无关事实 + 1 条相关事实（放在**最后**），验证：
+    /// 预算守住，且那条相关的**一定在**命中结果里。
+    #[test]
+    fn long_profile_keeps_budget_and_finds_the_relevant_tail_fact() {
+        let mut facts = vec![Fact::new(
+            FactKind::Basics,
+            "王五 8年经验",
+            vec!["王五".into()],
+        )];
+        // 30 条无关事实，占满预算
+        for i in 0..30 {
+            facts.push(Fact::new(
+                FactKind::Project,
+                format!("[PX{i}] 无关项目{i} 描述内容填充若干字符用于占位"),
+                vec![format!("px{i}")],
+            ));
+        }
+        // 相关事实放**最后**
+        facts.push(Fact::new(
+            FactKind::Project,
+            "[PTarget] 灰度发布体系 支持按流量比例逐步放量",
+            vec!["灰度".into(), "发布".into()],
+        ));
+
+        let profile = Profile {
+            organized_at: 1,
+            sources: vec![],
+            facts,
+        };
+        let r = profile.retrieve("灰度发布怎么做的");
+
+        // 预算守住
+        assert!(
+            r.matched.chars().count() <= RETRIEVED_CHAR_BUDGET + 40,
+            "检索段超预算：{} 字符（上限 {}）",
+            r.matched.chars().count(),
+            RETRIEVED_CHAR_BUDGET
+        );
+        // 相关的那条必须在（不能因为排在最后就被预算截掉）
+        assert!(
+            r.matched.contains("灰度发布"),
+            "排在最后的相关事实应被命中：{}",
+            r.matched
+        );
+    }
+
+    /// 纯标点提问不带检索段（省 token），但常驻段仍保留。
+    #[test]
+    fn punctuation_only_question_keeps_always_but_skips_retrieved() {
+        let raw = concat!(
+            "basics\t赵六 5年经验\t赵六\n",
+            "project\t[P1] 某个项目 描述\t项目\n",
+        );
+        let facts = parse_organized(raw);
+        let profile = Profile {
+            organized_at: 1,
+            sources: vec![],
+            facts,
+        };
+        let r = profile.retrieve("。。。？！");
+        assert!(r.always.contains("赵六"), "常驻段应保留");
+        assert!(
+            r.matched.is_empty(),
+            "纯标点提问不该带检索段：{}",
+            r.matched
+        );
+        assert!(r.matched_indices.is_empty());
+    }
 }
