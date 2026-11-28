@@ -169,7 +169,13 @@ fn overlay_default_geometry(
         .max(1);
     let height = (available_height / OVERLAY_HEIGHT_RATIO).max(1);
     // 水平居中：左右各留相同空白；余数为奇数时左边多 1px 也无明显偏差。
-    let x = origin_x + ((available_width.saturating_sub(width)) / 2) as i32;
+    //
+    // **x 必须乘缩放比**：`width` 是物理像素，而 `available_width - width` 是逻辑
+    // 像素减物理像素、单位不统一。高 DPI 机器（scale=1.25）上浮层会整体偏左——
+    // 日志里 `x=640`（未换算的逻辑偏移）与窗口实际 `left=512` 对不上，就是这个原因。
+    // `origin_x` 本身是显示器工作区的物理原点，不参与换算。
+    let x = origin_x + (((available_width.saturating_sub(width)) as f64) * scale).round() as i32;
+    // y 同口径：工作区原点是物理坐标，偏移量同样要换算。
     let y = origin_y;
     (
         tauri::PhysicalSize::new(width, height),
