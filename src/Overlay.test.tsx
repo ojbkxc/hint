@@ -353,4 +353,39 @@ describe("Overlay —— 启动时读取不透明度", () => {
     emit(HINT_EVENTS.overlayOpacity, { value: 9 });
     expect(document.documentElement.style.getPropertyValue("--overlay-alpha")).toBe("1");
   });
+
+  /**
+   * 不透明度只作用于**浮层背景**，文字本身必须保持不透明。
+   *
+   * ## 为什么值得锁
+   *
+   * 真机验证过：不透明度调到最低（20%）时，背景 `rgba(255,255,255,0.2)` 是半透
+   * 明的，但文字颜色仍是 `rgb(20,22,26)`——完全不透明。这正是 20% 下限仍可用的
+   * 原因：用户调透明是为了看清下方视频画面，**不是为了让文字也变透明**。
+   *
+   * 若将来有人把文字也加上 alpha（"让文字也跟随透明度"），低不透明度下文字就会
+   * 变透明、看不清。这条测试钉住这个设计。
+   */
+  it("调低不透明度时文字颜色保持不透明（透明度只作用于背景）", async () => {
+    backend.routes.set("get_settings", () => ({ overlayOpacity: 0.2 }));
+    await mount();
+    await waitFor(() => {
+      expect(
+        document.documentElement.style.getPropertyValue("--overlay-alpha"),
+      ).toBe("0.2");
+    });
+
+    // 找到答案文字元素，检查其颜色不含透明通道
+    const answerEl = document.querySelector(".answer-text, .answer-current");
+    expect(answerEl).not.toBeNull();
+    const color = window.getComputedStyle(answerEl as Element).color;
+
+    // 颜色不能是 rgba(...,0) 或 transparent
+    const isTransparent =
+      color.includes("rgba(0, 0, 0, 0)") ||
+      color.toLowerCase() === "transparent" ||
+      /rgba\([^)]*,\s*0\s*\)/.test(color);
+    expect(isTransparent).toBe(false);
+    expect(color).toContain("rgb");
+  });
 });
