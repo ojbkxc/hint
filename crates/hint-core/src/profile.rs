@@ -113,6 +113,43 @@ pub struct Profile {
     pub facts: Vec<Fact>,
 }
 
+impl Profile {
+    /// 档案是否**早于**当前资料（即资料改过、档案没跟着重整理）。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 档案是「简历 + 项目资料」的一次性压缩结果。用户改完简历或项目资料后，
+    /// 档案不会自动重建——保存配置时完全没碰 `profile`。于是答案继续基于**过期
+    /// 档案**：用户明明补了新项目，问到时却答不出来，只会怀疑「整理没用」。
+    ///
+    /// ## 判据
+    ///
+    /// `organized_at` 早于「资料最后一次修改时间」即视为过期。
+    /// 资料修改时间由调用方传入（`Settings` 没有资料级的 mtime，只能由保存侧
+    /// 在写盘时记录，或由这里比较 `organized_at` 与调用方给的时刻）。
+    ///
+    /// - 档案没整理过（`organized_at == 0`）→ 不算过期（本来就没有档案）
+    /// - `organized_at >= 资料修改时间` → 新鲜
+    /// - 任一时刻非有限/非正 → 无法判断，按新鲜处理（宁可不多提示）
+    pub fn is_stale_against(&self, materials_changed_at: i64) -> bool {
+        if self.organized_at <= 0 {
+            return false;
+        }
+        if materials_changed_at <= 0 {
+            return false;
+        }
+        self.organized_at < materials_changed_at
+    }
+
+    /// 档案的年龄（毫秒）；没整理过时返回 `None`。
+    pub fn age_ms(&self, now: i64) -> Option<i64> {
+        if self.organized_at <= 0 || now <= 0 {
+            return None;
+        }
+        Some((now - self.organized_at).max(0))
+    }
+}
+
 /// 常驻部分的字符预算：基本信息 + 技能。
 pub const ALWAYS_CHAR_BUDGET: usize = 600;
 
@@ -1359,5 +1396,57 @@ mod organize_tests {
             "围栏与空行不该计入分母，否则解析率会被格式噪音拉低"
         );
         assert!(!p.is_mostly_dropped());
+    }
+
+    /// 档案过期判据：资料改过之后，早先整理的档案要被认出来。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 档案是「简历 + 项目资料」的一次性压缩结果，保存配置时不会自动重建。
+    /// 用户补了新项目、改了简历，档案还停在旧内容——答案继续基于过期资料，
+    /// 用户只会怀疑「整理没用」。这条判据让界面能提示「资料改过了，建议重新整理」。
+    ///
+    /// ## 判据边界
+    ///
+    /// - 没整理过（`organized_at == 0`）→ 不算过期（本来就没有档案）
+    /// - 资料修改时间未知（`<= 0`）→ 不算过期（宁可不多提示）
+    /// - `organized_at < materials_changed_at` → 过期
+    /// - `organized_at >= materials_changed_at` → 新鲜（同一毫秒保存也算新鲜）
+    #[test]
+    fn profile_is_stale_when_materials_changed_after_organizing() {
+        let mut profile = Profile {
+            organized_at: 1_000,
+            sources: vec!["简历.txt".into()],
+            facts: vec![Fact::new(FactKind::Basics, "张三", vec![])],
+        };
+
+        // 资料在整理之后改动 → 过期
+        assert!(profile.is_stale_against(2_000));
+        // 资料在整理之前改动 → 新鲜
+        assert!(!profile.is_stale_against(500));
+        // 同一毫秒 → 新鲜（不算过期，避免刚整理完就提示）
+        assert!(!profile.is_stale_against(1_000));
+
+        // 没整理过 → 不算过期
+        profile.organized_at = 0;
+        assert!(!profile.is_stale_against(9_999));
+
+        // 资料修改时间未知 → 不算过期（旧配置没有这个字段）
+        profile.organized_at = 1_000;
+        assert!(!profile.is_stale_against(0));
+        assert!(!profile.is_stale_against(-5));
+    }
+
+    /// 档案年龄：没整理过时给 `None`，时钟回拨时不出现负数。
+    #[test]
+    fn profile_age_is_none_when_never_organized() {
+        let mut p = Profile::default();
+        assert_eq!(p.age_ms(5_000), None, "没整理过应返回 None");
+
+        p.organized_at = 1_000;
+        assert_eq!(p.age_ms(5_000), Some(4_000));
+        // 时钟回拨（now < organized_at）不该产生负数
+        assert_eq!(p.age_ms(500), Some(0));
+        assert_eq!(p.age_ms(0), None);
     }
 }

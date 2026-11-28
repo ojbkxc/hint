@@ -132,6 +132,20 @@ pub struct Settings {
     pub resume: String,
     #[serde(default)]
     pub projects: String,
+    /// 简历/项目资料最后一次修改的时间（毫秒时间戳）。`0` 表示未知。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 整理出来的 `profile` 是这两段资料的一次性压缩结果。用户改完资料后档案
+    /// 不会自动重建（保存配置时不碰 `profile`），于是答案继续基于**过期档案**：
+    /// 用户补了新项目，问到时却答不出来，只会怀疑「整理没用」。
+    ///
+    /// 有了这个时间戳，就能判断档案是否早于资料（`Profile::is_stale_against`），
+    /// 在界面上提示「资料改过了，建议重新整理」。
+    ///
+    /// 旧配置没有这个字段 → 取 0（未知）→ 不做过期判断，不误报。
+    #[serde(default)]
+    pub materials_changed_at: i64,
     pub answer_style: AnswerStyle,
     pub trigger_mode: TriggerMode,
     /// 麦克风设备 ID；空串表示系统默认输入设备。
@@ -306,6 +320,7 @@ impl Default for Settings {
             model: "deepseek-chat".to_string(),
             resume: String::new(),
             projects: String::new(),
+            materials_changed_at: 0,
             answer_style: AnswerStyle::Concise,
             trigger_mode: TriggerMode::Auto,
             mic_device: String::new(),

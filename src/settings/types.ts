@@ -66,6 +66,8 @@ export type Settings = {
   model: string;
   resume: string;
   projects: string;
+  /** 简历/项目资料最后一次修改的时间（毫秒时间戳）；0 表示未知。 */
+  materialsChangedAt: number;
   answerStyle: AnswerStyle;
   triggerMode: TriggerMode;
   /** 后端尚未实现时保留空字符串。 */
@@ -312,6 +314,7 @@ export const EMPTY_SETTINGS: Settings = {
   model: "",
   resume: "",
   projects: "",
+  materialsChangedAt: 0,
   answerStyle: "concise",
   triggerMode: "auto",
   micDevice: "",
@@ -334,6 +337,11 @@ export function normalizeSettings(raw: unknown): Settings {
   const value = raw as Record<string, unknown>;
   const str = (key: string) =>
     typeof value[key] === "string" ? (value[key] as string) : "";
+  /** 非负有限数；缺省或非法时取 `fallback`（时间戳字段用）。 */
+  const stamp = (key: string, fallback: number): number => {
+    const v = value[key];
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : fallback;
+  };
   const provider =
     value.provider === "anthropic" || value.provider === "gemini"
       ? value.provider
@@ -344,6 +352,7 @@ export function normalizeSettings(raw: unknown): Settings {
     model: str("model"),
     resume: str("resume"),
     projects: str("projects"),
+    materialsChangedAt: stamp("materialsChangedAt", 0),
     answerStyle: value.answerStyle === "outline" ? "outline" : "concise",
     triggerMode: value.triggerMode === "manual" ? "manual" : "auto",
     micDevice: str("micDevice"),

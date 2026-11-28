@@ -109,6 +109,26 @@ pub fn save_settings(
 
     // 保存成功/失败都要落日志：用户反馈「配置存不住」时，日志里
     // 完全没有痕迹就没法判断到底是没点到、被拒绝，还是写盘失败。
+    //
+    // **资料改了就记下时间**：`profile` 是简历+项目资料的一次性压缩结果，
+    // 保存配置时不会自动重建。不记录修改时间的话，界面上无从判断「档案早于
+    // 资料」——用户补了新项目，答案仍基于过期档案，只会怀疑「整理没用」。
+    // 只在内容真的变了时才更新，避免每次保存都刷新时间戳把「过期」掩盖掉。
+    {
+        let previous = Settings::load(&state.settings_path);
+        let materials_changed =
+            previous.resume != settings.resume || previous.projects != settings.projects;
+        if materials_changed {
+            settings.materials_changed_at = chrono::Utc::now().timestamp_millis();
+            tracing::info!(
+                has_profile = settings.profile.as_ref().is_some_and(|p| !p.is_empty()),
+                "简历/项目资料已修改，标记整理档案可能过期"
+            );
+        } else {
+            // 资料没变：保留磁盘上已有的时间戳（前端载荷里这个字段通常缺省）。
+            settings.materials_changed_at = previous.materials_changed_at;
+        }
+    }
     settings.save(&state.settings_path).map_err(|error| {
         tracing::error!(
             %error,

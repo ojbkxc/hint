@@ -21,6 +21,64 @@ fix: 浮层几何恢复偏差诊断（临时调试日志）
 
 605 用例、tsc 0 错、eslint 0/0、rustfmt 干净。
 
+## [1.1.97] - 2026-11-29
+
+### 修复：改了资料后整理档案不会失效，答案继续基于过期内容
+
+#### 发现
+
+验「面试档案」的失效逻辑时发现：`save_settings` **完全不碰 `profile`**。
+
+```rust
+pub fn save_settings(...) -> Result<(), String> {
+    settings.overlay_visible = Settings::load(...).overlay_visible;  // 只保留这一个字段
+    // ... 校验、保存
+    // profile 原样写回
+}
+```
+
+后果：用户改完简历或项目资料后，档案仍是旧的，答案继续基于**过期档案**——用户
+明明补了新项目，问到时却答不出来，只会怀疑「整理没用」。而检索时也没有任何新鲜度
+校验（`retrieve` 不看 `sources` 也不看时间）。
+
+#### 改法
+
+**1. 记录资料修改时间**（`Settings::materials_changed_at`）
+
+保存配置时比较磁盘上的旧值与新值，**只在资料真的变了**时更新时间戳：
+
+```rust
+let materials_changed = previous.resume != settings.resume
+    || previous.projects != settings.projects;
+if materials_changed {
+    settings.materials_changed_at = now_ms();
+} else {
+    settings.materials_changed_at = previous.materials_changed_at;  // 保留原值
+}
+```
+
+资料没变时保留原时间戳很关键——否则每次保存都刷新时间戳，「档案早于资料」这个
+判据就永远不成立，过期提示形同虚设。
+
+**2. 过期判据**（`Profile::is_stale_against`）
+
+| 条件 | 结论 |
+|---|---|
+| 没整理过（`organized_at == 0`）| 不算过期（本来就没有档案）|
+| 资料修改时间未知（`<= 0`）| 不算过期（旧配置没有该字段，不误报）|
+| `organized_at < materials_changed_at` | **过期** |
+| `organized_at >= materials_changed_at` | 新鲜（同一毫秒保存也算新鲜）|
+
+另加 `age_ms()` 返回档案年龄，时钟回拨时不产生负数。
+
+#### 兼容性
+
+`materials_changed_at` 带 `#[serde(default)]`，旧配置缺字段时取 0 → 不做判断 →
+**不误报**。前端类型同步加 `materialsChangedAt`（`settingsFieldParity` 守卫当场
+抓到漏加，这正是它存在的意义）。
+
+Rust 测试 38 条（+2）、605 前端用例、tsc 0 错、eslint 0/0、rustfmt 干净。
+
 ## [1.1.96] - 2026-11-29
 
 ### 修复：整理结果部分解析时静默接受残缺档案
