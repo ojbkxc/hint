@@ -34,7 +34,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 import ProfileCard from "./ProfileCard";
 import { EMPTY_SETTINGS, type Settings } from "./types";
 
-const LIMIT = 6000;
+const LIMIT = 25000;
 
 function makeForm(overrides: Partial<Settings> = {}): Settings {
   return { ...EMPTY_SETTINGS, resume: "", projects: "", ...overrides };
@@ -78,10 +78,10 @@ describe("ProfileCard —— 两个 textarea 双向绑定", () => {
     expect(patch).toHaveBeenLastCalledWith({ projects: "支付网关迁移" });
   });
 
-  it("字数提示按当前值与 6000 上限展示", () => {
+  it("字数提示按当前值与 25000 上限展示", () => {
     renderCard(makeForm({ resume: "abcdef", projects: "12" }));
-    expect(screen.getByText("6 / 6000")).toBeInTheDocument();
-    expect(screen.getByText("2 / 6000")).toBeInTheDocument();
+    expect(screen.getByText("6 / 25000")).toBeInTheDocument();
+    expect(screen.getByText("2 / 25000")).toBeInTheDocument();
   });
 });
 
@@ -92,7 +92,7 @@ describe("ProfileCard —— 字数超限提示", () => {
     expect(container.querySelectorAll(".char-count.is-over")).toHaveLength(0);
   });
 
-  it("超过 6000 字时两个计数字段各自变红（is-over）", () => {
+  it("超过 20000 字时两个计数字段各自变红（is-over）", () => {
     const { container } = renderCard(
       makeForm({ resume: "a".repeat(LIMIT + 1), projects: "b".repeat(LIMIT + 5) }),
     );
@@ -157,7 +157,7 @@ describe("ProfileCard —— 从文件导入", () => {
     expect(patch).not.toHaveBeenCalled();
   });
 
-  it("导入超过 6000 字时截断并附提示，状态里写明原文字数", async () => {
+  it("导入超过 20000 字时截断并附提示，状态里写明原文字数", async () => {
     const user = userEvent.setup();
     dialog.state.nextSelection = "D:\\docs\\长简历.txt";
     backend.state.importText = () => "字".repeat(LIMIT + 500);
@@ -177,7 +177,7 @@ describe("ProfileCard —— 从文件导入", () => {
     ).toBeInTheDocument();
   });
 
-  it("恰好 6000 字不触发截断", async () => {
+  it("恰好 20000 字不触发截断", async () => {
     const user = userEvent.setup();
     dialog.state.nextSelection = "C:\\a.txt";
     backend.state.importText = () => "字".repeat(LIMIT);

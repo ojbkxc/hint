@@ -10,7 +10,7 @@ use hint_core::import::{clean_extracted, decode_text, docx_text};
 
 /// 单个资料文件上限：再大也不适合塞进提示词，且避免一次性读爆内存。
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
-/// 返回给前端的文本上限（提示词本身只取前 6000 字符）。
+/// 返回给前端的文本上限（提示词本身只取前 25000 字符）。
 const MAX_CHARS: usize = 200_000;
 /// `word/document.xml` 解压后的上限：20 MB 的压缩包可以膨胀到数 GB，
 /// 必须先限量再读，否则解压炸弹会把内存吃满。

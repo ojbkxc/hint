@@ -5,10 +5,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::Result;
 
 /// 简历注入 system prompt 的字符上限（超出截断并标注）。
-pub const RESUME_CHAR_LIMIT: usize = 6_000;
+///
+/// ## 为什么是 25000
+///
+/// 原先 6000 字对「真实简历」够用，但对**项目资料**不够：用户整理完整项目经历
+/// （背景、技术栈、个人职责、难点、量化结果）很容易过万。6000 字截断意味着
+/// 后半段资料永远进不了提示词，而界面上资料明明写全了——用户看到的是「资料已
+/// 保存」，实际参与作答的只有前 6000 字。
+///
+/// 25000 字覆盖真实简历 + 项目资料的常见规模，并留出余量（实测一份完整的
+/// 2 万字项目资料仍在上限内，不会触发截断）。同时仍在主流模型的上下文窗口内：
+/// 25000 中文字符约 18~25k token，加上转录与答案预算仍有余量。
+pub const RESUME_CHAR_LIMIT: usize = 25_000;
 
 /// 项目资料注入 system prompt 的字符上限（超出截断并标注）。
-pub const PROJECTS_CHAR_LIMIT: usize = 6_000;
+///
+/// 与 [`RESUME_CHAR_LIMIT`] 同值：两者是并列的输入源，任一被截断都会让答案
+/// 缺料。分开定义是为了将来能独立调整，当前保持一致。
+pub const PROJECTS_CHAR_LIMIT: usize = 25_000;
 
 /// 截断后追加的提示，让模型知道资料不完整。
 const TRUNCATED_SUFFIX: &str = "\n（内容过长已截断）";

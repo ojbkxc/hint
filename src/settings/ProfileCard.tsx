@@ -4,8 +4,8 @@ import { describeError, isTauri, safeInvoke } from "../lib/tauri";
 import type { ProfileRetrieval, Settings } from "./types";
 import { deriveStatusTone, statusToneClass } from "./statusTone";
 
-/** 与后端提示词截断保持一致：简历与项目资料各最多 6000 字。 */
-const IMPORT_LIMIT = 6000;
+/** 与后端提示词截断保持一致：简历与项目资料各最多 25000 字。 */
+const IMPORT_LIMIT = 25000;
 
 type Props = {
   form: Settings;
@@ -239,7 +239,7 @@ export default function ProfileCard({ form, patch }: Props) {
             value={form.resume}
             onChange={(event) => patch({ resume: event.target.value })}
             aria-label="简历"
-            placeholder="粘贴简历文本，或点右上角「从文件导入」选择 TXT / MD / DOCX / PDF。简历与项目资料各最多 6000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
+            placeholder="粘贴简历文本，或点右上角「从文件导入」选择 TXT / MD / DOCX / PDF。简历与项目资料各最多 25000 字，超出部分会截断，并在给模型的提示词里标注「内容过长已截断」。"
           />
           <p
             className={`char-count${form.resume.length > IMPORT_LIMIT ? " is-over" : ""}`}
@@ -271,7 +271,7 @@ export default function ProfileCard({ form, patch }: Props) {
             value={form.projects}
             onChange={(event) => patch({ projects: event.target.value })}
             aria-label="项目资料"
-            placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。也可从 TXT / MD / DOCX / PDF 导入；最多 6000 字，超出会截断并标注。"
+            placeholder="项目背景、技术栈、你负责的部分、难点与量化结果。也可从 TXT / MD / DOCX / PDF 导入；最多 25000 字，超出会截断并标注。"
           />
           <p
             className={`char-count${form.projects.length > IMPORT_LIMIT ? " is-over" : ""}`}
@@ -289,9 +289,9 @@ export default function ProfileCard({ form, patch }: Props) {
       </div>
 
       {/* 整理：把多份文档压成可检索的紧凑档案。
-          为什么值得单独一步——见 docs：原来简历+项目各 6000 字**每次请求全量发送**，
-          中文 12000 字约 8–12k tokens，首字延迟与 prompt 长度近似成正比。整理之后
-          每轮只发常驻段 + 命中片段（约 2600 字）。 */}
+          为什么值得单独一步——见 docs：不整理时简历+项目各最多 25000 字**每次请求
+          全量发送**，中文两万五千字约 18–25k tokens，首字延迟与 prompt 长度近似成正比。
+          整理之后每轮只发常驻段 + 命中片段（约 2600 字）。 */}
       <div className="field-group">
         <p className="field-group-title">面试档案（整理，可选）</p>
         <p className="muted small">

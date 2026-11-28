@@ -277,7 +277,7 @@ Rust 现注册 **26** 个 `#[tauri::command]`。前端调用覆盖情况：
 - **日志落盘**：新增 `src-tauri/src/logging.rs`，stderr + `%APPDATA%\com.ojbkxc.hint\logs\hint.log` 双写，>5MB 轮转为 `hint.1.log`；新增命令 `open_log_dir`（已在 `invoke_handler` 注册，设置页已接线）。
 - **音频健壮性**：单通道降级明确提示「仅麦克风可用 / 仅系统声可用」；切换默认输出设备有提示；短暂切设备/蓝牙重连有 15 秒宽限；模型损坏提示「删除后重新下载」；磁盘不足中文提示。
 - **提示词重写**：防穿帮、多问题按序回答、150/250 字自适应、防注入、语言跟随、追问不重复。
-- **配置/资料边界**：简历与项目资料各 6000 字上限，超出截断并标注。
+- **配置/资料边界**：简历与项目资料各 25000 字上限，超出截断并标注。
 - **版本与发布**：版本号统一为 1.0.1；新增 `release.yml`（tag `v*` 触发）。
 
 本轮复核命令：`npx tsc --noEmit`（通过）、`npm run build`（通过）、`cargo test -p hint-core -p hint-store -p hint-audio`（61 + 24 + 25，audio 1 ignored，doctest 1 通过）、`cargo test -p hint-stt --no-default-features`（38 通过）、`cargo fmt --all -- --check`（通过）。`cargo check -p hint --bins` 仍受本机缺 `windres` 限制，以 CI 为准。
