@@ -706,7 +706,16 @@ pub fn export_session_file(
         std::fs::create_dir_all(dir).map_err(|error| format!("创建目录失败：{error}"))?;
     }
     let tmp = target.with_extension("tmp-export");
-    std::fs::write(&tmp, markdown.as_bytes()).map_err(|error| format!("写入失败：{error}"))?;
+    // 写入失败的提示要**可行动**：只写「写入失败：{原始错误}」用户不知道该做什么
+    // （磁盘满了？目录没权限？路径不对？）。附加常见原因，与批量导出的语义一致。
+    // 原始错误保留在末尾，便于排查时定位具体错误码。
+    let write_err = |error: std::io::Error| {
+        format!(
+            "写入失败：{}。可能原因：磁盘空间不足、目录无写入权限，或目标路径不可用",
+            error
+        )
+    };
+    std::fs::write(&tmp, markdown.as_bytes()).map_err(write_err)?;
     match std::fs::rename(&tmp, &target) {
         Ok(()) => {}
         Err(error) => {
