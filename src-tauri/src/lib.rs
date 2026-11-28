@@ -550,6 +550,13 @@ fn schedule_overlay_bounds_save(app: tauri::AppHandle, state: &AppState) {
         let Some(bounds) = overlay_physical_rect(&window) else {
             return;
         };
+        tracing::debug!(
+            x = bounds.x,
+            y = bounds.y,
+            w = bounds.width,
+            h = bounds.height,
+            "[DEBUG schedule_overlay_bounds_save] 防抖后读到的窗口矩形"
+        );
         let Some(state) = app.try_state::<AppState>() else {
             return;
         };
