@@ -550,7 +550,27 @@ pub fn organize_user_prompt(documents: &[(String, String)]) -> String {
 /// - 正文里的竖线替换成斜杠（防止后续拼接时被误当分隔符）；
 /// - 完全解析不出任何事实才算失败，让调用方给出可读提示。
 pub fn parse_organized(raw: &str) -> Vec<Fact> {
+    parse_organized_reporting(raw).facts
+}
+
+/// 解析整理结果，并报告**解析率**。
+///
+/// ## 为什么需要报告解析率
+///
+/// `parse_organized` 对不符合格式的行是**逐行静默跳过**的（空行、围栏、无制表符、
+/// 未知类型、正文为空）。这个设计本身对：模型偶尔多输出一行表头或说明文字，不该
+/// 让整次整理失败。
+///
+/// 但它有一个盲区：**部分解析**。实测一份 20 行的回复里只有 1 行格式正确时，
+/// 解析出 1 条事实、丢掉 19 行，而调用方只判 `facts.is_empty()`——非空就当作
+/// 成功。用户看到「整理完成 1 条事实」，不知道 19 行内容被扔了。
+///
+/// 所以把「读了多少行、成了多少条」一起返回，让调用方能按解析率给提示。
+pub fn parse_organized_reporting(raw: &str) -> OrganizedParse {
     let mut facts = Vec::new();
+    // 计入「尝试解析」的行数：排除空行与围栏行（那两类是模型正常输出的格式噪音，
+    // 不是「内容被丢弃」）。
+    let mut considered = 0usize;
     for line in raw.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("```") {
@@ -563,6 +583,7 @@ pub fn parse_organized(raw: &str) -> Vec<Fact> {
         if cleaned.is_empty() {
             continue;
         }
+        considered += 1;
         let mut parts = cleaned.split('\t');
         let (Some(kind_raw), Some(text_raw)) = (parts.next(), parts.next()) else {
             continue;
@@ -592,7 +613,38 @@ pub fn parse_organized(raw: &str) -> Vec<Fact> {
             .unwrap_or_default();
         facts.push(Fact::new(kind, text, tags));
     }
-    facts
+    OrganizedParse { facts, considered }
+}
+
+/// `parse_organized_reporting` 的结果：解析出的事实 + 参与解析的行数。
+///
+/// `considered` 不含空行与围栏行——那两类是模型正常输出的格式噪音，不算内容丢弃。
+pub struct OrganizedParse {
+    /// 成功解析出的事实。
+    pub facts: Vec<Fact>,
+    /// 参与解析的非空、非围栏行数（用于算解析率）。
+    pub considered: usize,
+}
+
+impl OrganizedParse {
+    /// 解析率（0.0–1.0）；没有任何可解析行时返回 1.0（空输入不算「解析失败」）。
+    pub fn success_ratio(&self) -> f32 {
+        if self.considered == 0 {
+            return 1.0;
+        }
+        self.facts.len() as f32 / self.considered as f32
+    }
+
+    /// 是否「大部分内容被丢弃」。
+    ///
+    /// ## 判据：低于 50% 才算异常
+    ///
+    /// 模型输出里夹一两行表头/说明是常见的（分母小、丢一两行就到 50% 以下），
+    /// 所以阈值不能太高。实测真实整理结果通常 90% 以上行都能解析，低于 50%
+    /// 说明模型**整体没按格式输出**，这时候静默接受会让用户拿到一份残缺档案。
+    pub fn is_mostly_dropped(&self) -> bool {
+        self.considered > 0 && self.success_ratio() < 0.5
+    }
 }
 
 #[cfg(test)]
@@ -1244,5 +1296,68 @@ mod organize_tests {
             r.matched
         );
         assert!(r.matched_indices.is_empty());
+    }
+
+    /// 解析率：能区分「全部解析成功」「少量行被跳过」「大部分被丢弃」。
+    ///
+    /// ## 为什么需要
+    ///
+    /// 调用方原先只判 `facts.is_empty()`。20 行里只成功 1 行时 `facts` 非空，
+    /// 于是**静默接受**——用户看到「整理完成 1 条事实」，不知道 19 行内容被扔了。
+    /// 这种残缺档案会让后续检索几乎命中不到东西，比整理失败更难察觉。
+    #[test]
+    fn parse_reports_how_much_was_dropped() {
+        // 全部合格 → 解析率 1.0，不算丢弃
+        let all_ok = parse_organized_reporting(concat!(
+            "basics\t张三 5年\t张三\n",
+            "skill\tPlaywright 熟练\tplaywright\n",
+        ));
+        assert_eq!(all_ok.facts.len(), 2);
+        assert_eq!(all_ok.considered, 2);
+        assert!(!all_ok.is_mostly_dropped());
+
+        // 4 行里 3 行合格 → 75%，不算异常（表头/说明行被跳过是正常的）
+        let mostly_ok = parse_organized_reporting(concat!(
+            "类型\t正文\t标签\n",
+            "basics\t张三\t张三\n",
+            "skill\tRust\t\n",
+            "project\t[P1] 某项目\tp1\n",
+        ));
+        assert_eq!(mostly_ok.facts.len(), 3);
+        assert_eq!(mostly_ok.considered, 4);
+        assert!(!mostly_ok.is_mostly_dropped());
+
+        // 20 行里只 1 行合格 → 5%，必须判为「大部分被丢弃」
+        let mut raw = String::from("basics\t张三 5年\t张三\n");
+        for i in 0..19 {
+            raw.push_str(&format!("这是模型自由发挥的第{i}行，没有制表符\n"));
+        }
+        let bad = parse_organized_reporting(&raw);
+        assert_eq!(bad.facts.len(), 1, "只有 1 行能解析");
+        assert_eq!(bad.considered, 20, "20 行都参与了尝试");
+        assert!(
+            bad.is_mostly_dropped(),
+            "解析率 {:.0}% 应判为大部分丢弃",
+            bad.success_ratio() * 100.0
+        );
+
+        // 空输入不算「解析失败」（没有内容可丢）
+        let empty = parse_organized_reporting("");
+        assert_eq!(empty.considered, 0);
+        assert!(!empty.is_mostly_dropped());
+        assert_eq!(empty.success_ratio(), 1.0);
+    }
+
+    /// 围栏行与空行不计入分母（它们是模型正常输出的格式噪音，不是内容丢弃）。
+    #[test]
+    fn parse_ignores_fences_and_blank_lines_in_ratio() {
+        let raw = concat!("```\n", "\n", "basics\t张三 5年\t张三\n", "\n", "```\n",);
+        let p = parse_organized_reporting(raw);
+        assert_eq!(p.facts.len(), 1);
+        assert_eq!(
+            p.considered, 1,
+            "围栏与空行不该计入分母，否则解析率会被格式噪音拉低"
+        );
+        assert!(!p.is_mostly_dropped());
     }
 }

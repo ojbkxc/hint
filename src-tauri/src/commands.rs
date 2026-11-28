@@ -477,14 +477,36 @@ pub async fn organize_profile(
     .await
     .map_err(|error| format!("整理失败（模型调用出错）：{error}"))?;
 
-    let facts = hint_core::profile::parse_organized(&response.text);
-    if facts.is_empty() {
+    let parsed = hint_core::profile::parse_organized_reporting(&response.text);
+    if parsed.facts.is_empty() {
         // 模型没按格式回。把原文前 200 字带出来，用户能看出是「模型不听话」
         // 还是「文档里确实没内容」——只说「解析失败」等于让人猜。
         let preview: String = response.text.chars().take(200).collect();
         return Err(format!(
             "整理失败：模型没有按「类型 + 制表符 + 正文」的格式输出，无法解析。原始回复开头：{preview}"
         ));
+    }
+    // **部分解析要告知**：只判「全空」会漏掉「20 行里只成功 1 行」——用户看到
+    // 「整理完成 1 条事实」，不知道 19 行内容被扔了，还以为是自己的文档没内容。
+    // 这种残缺档案会让后续检索几乎命中不到东西，比整理失败更难察觉。
+    if parsed.is_mostly_dropped() {
+        let preview: String = response.text.chars().take(200).collect();
+        return Err(format!(
+            "整理结果不可用：模型回复里只有 {}/{} 行符合「类型 + 制表符 + 正文」格式（解析率 {:.0}%）。\
+             请重试，或换一个模型。原始回复开头：{preview}",
+            parsed.facts.len(),
+            parsed.considered,
+            parsed.success_ratio() * 100.0
+        ));
+    }
+    let facts = parsed.facts;
+    if parsed.considered > facts.len() {
+        // 少量行被跳过是正常的（表头、说明文字），记一条日志便于排查。
+        tracing::info!(
+            parsed = facts.len(),
+            considered = parsed.considered,
+            "整理结果里有部分行未按格式输出，已跳过"
+        );
     }
 
     let sources = loaded.into_iter().map(|(name, _)| name).collect();
