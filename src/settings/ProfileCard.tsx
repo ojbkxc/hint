@@ -32,6 +32,35 @@ function organizedLabel(organizedAt: number): string {
   return `上次整理于 ${days} 天前（${stamp}）`;
 }
 
+/**
+ * 档案是否早于当前资料（资料改过、档案没跟着重整理）。
+ *
+ * ## 为什么要在界面提示
+ *
+ * 后端 `Profile::is_stale_against` 判据已经有了，但界面不显示的话等于没有——
+ * 用户改完简历/项目资料，档案还是旧的，答案继续基于过期内容，而界面上只写着
+ * 「上次整理于 N 天前」，看不出问题。用户会以为「整理没用」或「模型不行」。
+ *
+ * ## 判据与后端一致
+ *
+ * - 没整理过（`organizedAt <= 0`）→ 不算过期
+ * - 资料修改时间未知（`materialsChangedAt <= 0`）→ 不算过期（旧配置无此字段，
+ *   不能误报）
+ * - `organizedAt < materialsChangedAt` → 过期
+ *
+ * 时间戳都是毫秒。
+ */
+export function isProfileStale(
+  organizedAt: number,
+  materialsChangedAt: number,
+): boolean {
+  if (!Number.isFinite(organizedAt) || organizedAt <= 0) return false;
+  if (!Number.isFinite(materialsChangedAt) || materialsChangedAt <= 0) {
+    return false;
+  }
+  return organizedAt < materialsChangedAt;
+}
+
 export default function ProfileCard({ form, patch }: Props) {
   const [importing, setImporting] = useState<ImportField | "">("");
   const [status, setStatus] = useState("");
@@ -345,6 +374,12 @@ export default function ProfileCard({ form, patch }: Props) {
               整理难免有偏差（写错数字、编出不存在的细节），**逐条可改可删**——留下
               不准确的条目，面试时会被直接念出去。
             </p>
+            {isProfileStale(form.profile.organizedAt, form.materialsChangedAt) && (
+              <p className="status-warning small">
+                简历 / 项目资料在整理之后改过，当前档案还是旧内容——答案会基于过期
+                资料作答。建议点上方「选择文档并整理」重新整理一次。
+              </p>
+            )}
             <ul className="profile-fact-list">
               {form.profile.facts.map((fact, index) => (
                 <li key={index}>

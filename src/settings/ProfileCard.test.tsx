@@ -31,7 +31,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(() => Promise.resolve(dialog.state.nextSelection)),
 }));
 
-import ProfileCard from "./ProfileCard";
+import ProfileCard, { isProfileStale } from "./ProfileCard";
 import { EMPTY_SETTINGS, type Settings } from "./types";
 
 const LIMIT = 25000;
@@ -400,5 +400,73 @@ describe("ProfileCard —— 检索标签编辑", () => {
     const next = patchLast() as { profile: Settings["profile"] };
     expect(next.profile?.facts[1].text).toBe("[X1] 内部系统 负责中间件选型");
     expect(next.profile?.facts[1].tags).toEqual(["kafka", "mq"]);
+  });
+});
+
+
+describe("ProfileCard —— 档案过期提示", () => {
+  const staleProfile: Settings["profile"] = {
+    organizedAt: 1_000,
+    sources: ["简历.md"],
+    facts: [{ kind: "basics", text: "李四 3年测试", tags: [] }],
+  };
+
+  it("资料在整理之后改过时，显示「档案是旧内容」的提示", () => {
+    renderCard(
+      makeForm({
+        profile: staleProfile,
+        materialsChangedAt: 2_000,
+      }),
+    );
+    expect(
+      screen.getByText(/简历 \/ 项目资料在整理之后改过/),
+    ).toBeInTheDocument();
+  });
+
+  it("资料没改过（整理时间晚于资料修改）时不提示", () => {
+    renderCard(
+      makeForm({
+        profile: staleProfile,
+        materialsChangedAt: 500,
+      }),
+    );
+    expect(
+      screen.queryByText(/简历 \/ 项目资料在整理之后改过/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("旧配置没有 materialsChangedAt（0）时不误报", () => {
+    renderCard(
+      makeForm({
+        profile: staleProfile,
+        materialsChangedAt: 0,
+      }),
+    );
+    expect(
+      screen.queryByText(/简历 \/ 项目资料在整理之后改过/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("isProfileStale 判据", () => {
+  it("整理时间早于资料修改 → 过期", () => {
+    expect(isProfileStale(1_000, 2_000)).toBe(true);
+  });
+
+  it("整理时间晚于资料修改 → 新鲜", () => {
+    expect(isProfileStale(2_000, 1_000)).toBe(false);
+  });
+
+  it("同一毫秒 → 新鲜（刚整理完不该提示）", () => {
+    expect(isProfileStale(1_000, 1_000)).toBe(false);
+  });
+
+  it("没整理过（0）→ 不算过期", () => {
+    expect(isProfileStale(0, 9_999)).toBe(false);
+  });
+
+  it("资料修改时间未知（0 / 负数）→ 不算过期，不误报", () => {
+    expect(isProfileStale(1_000, 0)).toBe(false);
+    expect(isProfileStale(1_000, -5)).toBe(false);
   });
 });
