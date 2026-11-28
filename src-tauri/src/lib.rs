@@ -496,6 +496,13 @@ fn set_overlay_physical_rect(
     let y = bounds.y.round() as i32;
     let width = bounds.width.round() as i32;
     let height = bounds.height.round() as i32;
+    tracing::debug!(
+        x,
+        y,
+        width,
+        height,
+        "[DEBUG set_overlay_physical_rect] 传入 SetWindowPos 的参数"
+    );
     unsafe {
         SetWindowPos(
             handle,
