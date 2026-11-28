@@ -293,6 +293,46 @@ describe("useOverlayEvents —— 其他事件路径", () => {
     expect(result.current.answer.text).toBe("已有正文");
   });
 
+  /**
+   * 重新生成后，旧答案要在**下一轮 reset 帧**被归档到「更早的回答」，不能凭空消失。
+   *
+   * ## 为什么单独测这条
+   *
+   * `regenerate` 里有一条硬约束（见实现注释）：**前端不能提前清空正文**。因为
+   * 归档发生在后端 reset 帧到达时，那时它读 `previous.text` 决定要不要归档——
+   * 若前端提前清了，`previous.text` 是空串，旧答案就永远不进「更早的回答」。
+   *
+   * 这个错误在界面上表现为「重新生成一次，上一轮答案就没了」，而流式本身完全
+   * 正常，用户只会觉得是丢数据。
+   */
+  it("重新生成后旧答案在下一轮 reset 时归档，不丢失", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = vi.mocked(invoke);
+
+    const { result } = await mount();
+
+    // 第一轮：完整答完
+    startAnswer("第一轮答案正文", "第一个问题");
+    emit(HINT_EVENTS.answerDone, { text: "第一轮答案正文", model: "m" });
+    const beforeCount = result.current.answeredTotal;
+
+    // 重新生成（成功）
+    invokeMock.mockResolvedValueOnce(null);
+    await act(async () => {
+      expect(await result.current.regenerate()).toBeNull();
+    });
+    // 关键：此时正文还在（没被提前清空），否则归档会读到空串
+    expect(result.current.answer.text).toBe("第一轮答案正文");
+
+    // 后端发来新一轮 reset：这一刻才归档上一轮
+    startAnswer("第二轮答案正文", "第二个问题");
+
+    expect(result.current.answeredTotal).toBe(beforeCount + 1);
+    const history = result.current.answerHistory;
+    expect(history.length).toBeGreaterThan(0);
+    expect(history[history.length - 1]?.text).toBe("第一轮答案正文");
+  });
+
   it("get_settings 启动读取成功时把不透明度写进 CSS 变量", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     vi.mocked(invoke).mockResolvedValueOnce({ overlayOpacity: 0.5 });
